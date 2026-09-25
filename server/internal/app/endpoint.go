@@ -405,38 +405,37 @@ func (a *App) approvalStatus(r *http.Request, tx pgx.Tx, org string, domains []m
 	if e != nil {
 		return "", e
 	}
-	switch cfg.Config.Enrollment.Approval {
-	case "automatic":
+	if cfg.Config.Enrollment.Approval == "automatic" ||
+		(cfg.Config.Enrollment.Approval == "network" && networkApproval(r, cfg.Config.Enrollment, domains)) {
 		return "approved", nil
-	case "network":
-		// The rule matches the socket peer. Behind a reverse proxy, Ingress or Gateway
-		// that peer is the proxy, often inside the very range an administrator names,
-		// which approved every enrollment from the internet (audit of 2026-09-24). A
-		// request carrying forwarding headers therefore never approves by network: it
-		// waits for manual approval. A caller adding the header only makes it stricter.
-		if r.Header.Get("Forwarded") != "" || r.Header.Get("X-Forwarded-For") != "" || r.Header.Get("X-Real-IP") != "" {
-			return "pending", nil
-		}
-		ipRaw, _, _ := net.SplitHostPort(r.RemoteAddr)
-		ip := net.ParseIP(ipRaw)
-		for _, raw := range cfg.Config.Enrollment.CIDRs {
-			if _, network, e := net.ParseCIDR(raw); e == nil && network.Contains(ip) {
-				return "approved", nil
-			}
-		}
-		// A rule's network always applies; its domain, when set, narrows it. The domain is
-		// declared by the machine, so it can never approve on its own.
-		for _, rule := range cfg.Config.Enrollment.Rules {
-			_, network, e := net.ParseCIDR(rule.CIDR)
-			if e != nil || !network.Contains(ip) {
-				continue
-			}
-			if rule.Domain == "" || slices.ContainsFunc(domains, func(d machineDomain) bool { return strings.EqualFold(d.Name, rule.Domain) }) {
-				return "approved", nil
-			}
-		}
 	}
 	return "pending", nil
+}
+
+func networkApproval(r *http.Request, cfg EnrollmentConfig, domains []machineDomain) bool {
+	// The socket peer may be a trusted reverse proxy. Forwarding headers therefore
+	// require manual approval instead of treating the proxy's address as the device's.
+	if r.Header.Get("Forwarded") != "" || r.Header.Get("X-Forwarded-For") != "" || r.Header.Get("X-Real-IP") != "" {
+		return false
+	}
+	ipRaw, _, _ := net.SplitHostPort(r.RemoteAddr)
+	ip := net.ParseIP(ipRaw)
+	for _, raw := range cfg.CIDRs {
+		if _, network, e := net.ParseCIDR(raw); e == nil && network.Contains(ip) {
+			return true
+		}
+	}
+	// A declared machine domain may narrow a matching network, but never approve alone.
+	for _, rule := range cfg.Rules {
+		_, network, e := net.ParseCIDR(rule.CIDR)
+		if e != nil || !network.Contains(ip) {
+			continue
+		}
+		if rule.Domain == "" || slices.ContainsFunc(domains, func(d machineDomain) bool { return strings.EqualFold(d.Name, rule.Domain) }) {
+			return true
+		}
+	}
+	return false
 }
 
 // machineDomain is what an enrolling agent declares about the directory its machine is

@@ -117,45 +117,7 @@ func TestPublisherDialRejectsDNSLoopback(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer dns.Close()
-	go func() {
-		for {
-			buf := make([]byte, 1500)
-			n, addr, e := dns.ReadFrom(buf)
-			if e != nil {
-				return
-			}
-			q := buf[:n]
-			if len(q) < 17 {
-				continue
-			}
-			end := 12
-			for end < len(q) && q[end] != 0 {
-				end += 1 + int(q[end])
-			}
-			end += 5
-			if end > len(q) {
-				continue
-			}
-			kind := uint16(q[end-4])<<8 | uint16(q[end-3])
-			answer := []byte{127, 0, 0, 1}
-			if kind == 28 {
-				answer = make([]byte, 16)
-				answer[15] = 1
-			}
-			reply := append([]byte{}, q[:end]...)
-			reply[2] = 0x81
-			reply[3] = 0x80
-			reply[6] = 0
-			reply[7] = 1
-			reply[8] = 0
-			reply[9] = 0
-			reply[10] = 0
-			reply[11] = 0
-			reply = append(reply, 0xc0, 0x0c, byte(kind>>8), byte(kind), 0, 1, 0, 0, 0, 0, 0, byte(len(answer)))
-			reply = append(reply, answer...)
-			_, _ = dns.WriteTo(reply, addr)
-		}
-	}()
+	go servePublisherLoopbackDNS(dns)
 	previous := net.DefaultResolver
 	net.DefaultResolver = &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "udp", dns.LocalAddr().String())
@@ -170,6 +132,55 @@ func TestPublisherDialRejectsDNSLoopback(t *testing.T) {
 		t.Fatalf("did not exercise address guard: %v", e)
 	}
 }
+func servePublisherLoopbackDNS(dns net.PacketConn) {
+	for {
+		buf := make([]byte, 1500)
+		n, addr, e := dns.ReadFrom(buf)
+		if e != nil {
+			return
+		}
+		q := buf[:n]
+		if len(q) < 17 {
+			continue
+		}
+		end := 12
+		for end < len(q) && q[end] != 0 {
+			end += 1 + int(q[end])
+		}
+		end += 5
+		if end > len(q) {
+			continue
+		}
+		kind := uint16(q[end-4])<<8 | uint16(q[end-3])
+		answer := []byte{127, 0, 0, 1}
+		if kind == 28 {
+			answer = make([]byte, 16)
+			answer[15] = 1
+		}
+		reply := append([]byte{}, q[:end]...)
+		reply[2] = 0x81
+		reply[3] = 0x80
+		reply[6] = 0
+		reply[7] = 1
+		reply[8] = 0
+		reply[9] = 0
+		reply[10] = 0
+		reply[11] = 0
+		reply = append(reply, 0xc0, 0x0c, byte(kind>>8), byte(kind), 0, 1, 0, 0, 0, 0, 0, byte(len(answer)))
+		reply = append(reply, answer...)
+		_, _ = dns.WriteTo(reply, addr)
+	}
+}
+
+func setPublisherPrivacyConfig(t *testing.T, f *observabilityFixture, ctx context.Context, c IdentityPrivacyConfig) {
+	t.Helper()
+	raw, _ := json.Marshal(c)
+	tag, e := f.admin.Exec(ctx, "INSERT INTO privacy_settings(organization_id,configuration,updated_at) VALUES($1,$2,now()-interval '3 days') ON CONFLICT(organization_id) DO UPDATE SET configuration=excluded.configuration,revision=privacy_settings.revision+1,updated_at=excluded.updated_at", f.org, raw)
+	if e != nil || tag.RowsAffected() != 1 {
+		t.Fatalf("consent not stored: %v", e)
+	}
+}
+
 func TestPublisherClientDatabase(t *testing.T) {
 	f := newObservabilityFixture(t)
 	ctx := context.Background()
@@ -178,14 +189,7 @@ func TestPublisherClientDatabase(t *testing.T) {
 	if e := f.admin.QueryRow(ctx, "INSERT INTO devices(organization_id,credential_hash,hostname,platform,version,status,last_seen) VALUES($1,$2,'synthetic-device','windows','0.5.0','approved',now()) RETURNING id", f.org, hash(randomToken())).Scan(&device); e != nil {
 		t.Fatal(e)
 	}
-	setConfig := func(t *testing.T, c IdentityPrivacyConfig) {
-		t.Helper()
-		raw, _ := json.Marshal(c)
-		tag, e := f.admin.Exec(ctx, "INSERT INTO privacy_settings(organization_id,configuration,updated_at) VALUES($1,$2,now()-interval '3 days') ON CONFLICT(organization_id) DO UPDATE SET configuration=excluded.configuration,revision=privacy_settings.revision+1,updated_at=excluded.updated_at", f.org, raw)
-		if e != nil || tag.RowsAffected() != 1 {
-			t.Fatalf("consent not stored: %v", e)
-		}
-	}
+
 	var requests atomic.Int32
 	var fail atomic.Bool
 	var bodies [][]byte
@@ -203,73 +207,85 @@ func TestPublisherClientDatabase(t *testing.T) {
 	f.a.config.PublisherURL = remote.URL
 	f.a.config.PublisherCredential = strings.Repeat("fixture", 6)
 	t.Run("off_means_zero_requests", func(t *testing.T) {
-		setConfig(t, defaultPrivacy())
-		if e := f.a.publisherPass(ctx); e != nil {
-			t.Fatal(e)
-		}
-		if requests.Load() != 0 {
-			t.Fatal("disabled telemetry sent a request")
-		}
+		testPublisherTelemetryDisabled(t, f, ctx, &requests)
 	})
 	t.Run("fleet_only_and_daily_limit", func(t *testing.T) {
-		cfg := defaultPrivacy()
-		cfg.ShareFleet = true
-		setConfig(t, cfg)
-		if e := f.a.publisherPass(ctx); e != nil {
-			t.Fatal(e)
-		}
-		if requests.Load() != 1 {
-			t.Fatalf("expected one request, got %d", requests.Load())
-		}
-		var b publisherBatch
-		if e := json.Unmarshal(bodies[0], &b); e != nil {
-			t.Fatal(e)
-		}
-		if b.Fleet == nil || b.Fleet.Enrolled != 1 || b.Fleet.Active30d != 1 || len(b.ProviderHealth) != 0 {
-			t.Fatalf("incorrect fleet batch %+v", b)
-		}
-		for _, sentinel := range []string{device, f.org, "synthetic-device"} {
-			if bytes.Contains(bodies[0], []byte(sentinel)) {
-				t.Fatal("local identity leaked")
-			}
-		}
-		if e := f.a.publisherPass(ctx); e != nil {
-			t.Fatal(e)
-		}
-		if requests.Load() != 1 {
-			t.Fatal("daily batch duplicated")
-		}
+		testPublisherFleetDaily(t, f, ctx, device, &requests, &bodies)
 	})
 	t.Run("retry_is_immutable_and_optout_cancels", func(t *testing.T) {
-		if _, e := f.admin.Exec(ctx, "UPDATE publisher_client_state SET last_telemetry_day=NULL"); e != nil {
-			t.Fatal(e)
-		}
-		fail.Store(true)
-		if e := f.a.publisherPass(ctx); e != nil {
-			t.Fatal(e)
-		}
-		first := append([]byte{}, bodies[len(bodies)-1]...)
-		tag, e := f.admin.Exec(ctx, "UPDATE publisher_client_outbox SET next_attempt=now()-interval '1 second'")
-		if e != nil || tag.RowsAffected() != 1 {
-			t.Fatal("no durable retry row")
-		}
-		if e = f.a.publisherPass(ctx); e != nil {
-			t.Fatal(e)
-		}
-		if !bytes.Equal(first, bodies[len(bodies)-1]) {
-			t.Fatal("retry changed signed batch")
-		}
-		before := requests.Load()
-		setConfig(t, defaultPrivacy())
-		if e = f.a.publisherPass(ctx); e != nil {
-			t.Fatal(e)
-		}
-		if requests.Load() != before {
-			t.Fatal("optout sent pending batch")
-		}
-		var count int
-		if e = f.admin.QueryRow(ctx, "SELECT count(*) FROM publisher_client_outbox").Scan(&count); e != nil || count != 0 {
-			t.Fatal("optout retained pending telemetry")
-		}
+		testPublisherRetryOptout(t, f, ctx, &requests, &fail, &bodies)
 	})
+}
+
+func testPublisherTelemetryDisabled(t *testing.T, f *observabilityFixture, ctx context.Context, requests *atomic.Int32) {
+	setPublisherPrivacyConfig(t, f, ctx, defaultPrivacy())
+	if e := f.a.publisherPass(ctx); e != nil {
+		t.Fatal(e)
+	}
+	if requests.Load() != 0 {
+		t.Fatal("disabled telemetry sent a request")
+	}
+}
+
+func testPublisherFleetDaily(t *testing.T, f *observabilityFixture, ctx context.Context, device string, requests *atomic.Int32, bodies *[][]byte) {
+	cfg := defaultPrivacy()
+	cfg.ShareFleet = true
+	setPublisherPrivacyConfig(t, f, ctx, cfg)
+	if e := f.a.publisherPass(ctx); e != nil {
+		t.Fatal(e)
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("expected one request, got %d", requests.Load())
+	}
+	var b publisherBatch
+	if e := json.Unmarshal((*bodies)[0], &b); e != nil {
+		t.Fatal(e)
+	}
+	if b.Fleet == nil || b.Fleet.Enrolled != 1 || b.Fleet.Active30d != 1 || len(b.ProviderHealth) != 0 {
+		t.Fatalf("incorrect fleet batch %+v", b)
+	}
+	for _, sentinel := range []string{device, f.org, "synthetic-device"} {
+		if bytes.Contains((*bodies)[0], []byte(sentinel)) {
+			t.Fatal("local identity leaked")
+		}
+	}
+	if e := f.a.publisherPass(ctx); e != nil {
+		t.Fatal(e)
+	}
+	if requests.Load() != 1 {
+		t.Fatal("daily batch duplicated")
+	}
+}
+
+func testPublisherRetryOptout(t *testing.T, f *observabilityFixture, ctx context.Context, requests *atomic.Int32, fail *atomic.Bool, bodies *[][]byte) {
+	if _, e := f.admin.Exec(ctx, "UPDATE publisher_client_state SET last_telemetry_day=NULL"); e != nil {
+		t.Fatal(e)
+	}
+	fail.Store(true)
+	if e := f.a.publisherPass(ctx); e != nil {
+		t.Fatal(e)
+	}
+	first := append([]byte{}, (*bodies)[len(*bodies)-1]...)
+	tag, e := f.admin.Exec(ctx, "UPDATE publisher_client_outbox SET next_attempt=now()-interval '1 second'")
+	if e != nil || tag.RowsAffected() != 1 {
+		t.Fatal("no durable retry row")
+	}
+	if e = f.a.publisherPass(ctx); e != nil {
+		t.Fatal(e)
+	}
+	if !bytes.Equal(first, (*bodies)[len(*bodies)-1]) {
+		t.Fatal("retry changed signed batch")
+	}
+	before := requests.Load()
+	setPublisherPrivacyConfig(t, f, ctx, defaultPrivacy())
+	if e = f.a.publisherPass(ctx); e != nil {
+		t.Fatal(e)
+	}
+	if requests.Load() != before {
+		t.Fatal("optout sent pending batch")
+	}
+	var count int
+	if e = f.admin.QueryRow(ctx, "SELECT count(*) FROM publisher_client_outbox").Scan(&count); e != nil || count != 0 {
+		t.Fatal("optout retained pending telemetry")
+	}
 }

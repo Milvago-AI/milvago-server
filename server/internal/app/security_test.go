@@ -50,6 +50,14 @@ func validateRules(rules []Rule) error {
 	return nil
 }
 
+type subsystemFixture struct {
+	a               *App
+	admin           *pgxpool.Pool
+	cookie          *http.Cookie
+	csrf, org, user string
+	identity        *testIdentity
+}
+
 type testIdentity struct {
 	refreshes                                  int
 	server                                     *httptest.Server
@@ -718,18 +726,19 @@ func TestDatabaseSecurityAndHTTP(t *testing.T) {
 	// That is what made the suite report a different first failure on every run,
 	// and what hid a real 204 in the update path behind an unrelated stale
 	// expectation. Their order is now irrelevant, so none is documented.
+	subsystem := subsystemFixture{a: a, admin: admin, cookie: sessionCookie, csrf: session.CSRF, org: session.Organization.ID, user: session.User.ID, identity: p}
 	t.Run("api keys", func(t *testing.T) {
-		testAPIKeySubsystem(t, a, admin, sessionCookie, session.CSRF, session.Organization.ID, session.User.ID, p)
+		testAPIKeySubsystem(t, subsystem)
 	})
 	// No-op in Community, where the MCP endpoint is not compiled.
 	t.Run("mcp", func(t *testing.T) {
-		testMCPSubsystem(t, a, admin, sessionCookie, session.CSRF, session.Organization.ID, session.User.ID, p)
+		testMCPSubsystem(t, subsystem)
 	})
 	t.Run("shadow", func(t *testing.T) {
-		testShadowSubsystem(t, a, admin, sessionCookie, session.CSRF, session.Organization.ID, session.User.ID, p)
+		testShadowSubsystem(t, subsystem)
 	})
 	t.Run("identity", func(t *testing.T) {
-		testIdentitySubsystem(t, a, admin, sessionCookie, session.CSRF, session.Organization.ID, session.User.ID, p)
+		testIdentitySubsystem(t, subsystem)
 	})
 	t.Run("edition routes", func(t *testing.T) {
 		if Edition == "community" {

@@ -36,12 +36,12 @@ func TestAttachmentRecordCountsWithItsSend(t *testing.T) {
 		f, subject, device := privacyFixture(t)
 		// The attachment first, the text next, under the same correlation: the real order.
 		addAttachmentRecord(t, f, subject, device, base, "correlation-file", []string{"schema-synthetique.png"})
-		addThreadEvent(t, f, subject, device, base.Add(time.Second), "prompt", "", "correlation-file", "observed", "Analyse ce document.")
-		addThreadEvent(t, f, subject, device, base.Add(2*time.Second), "response", "", "correlation-file", "observed", "Réponse de test.")
+		addThreadEvent(t, f, subject, device, threadEvent{base.Add(time.Second), "prompt", "", "correlation-file", "observed", "Analyse ce document."})
+		addThreadEvent(t, f, subject, device, threadEvent{base.Add(2 * time.Second), "response", "", "correlation-file", "observed", "Réponse de test."})
 		// The same exchange with no name reporting: the attachment record carries no
 		// files, and must still be recognized.
 		addAttachmentRecord(t, f, subject, device, base.Add(3*time.Second), "correlation-silent", nil)
-		addThreadEvent(t, f, subject, device, base.Add(4*time.Second), "prompt", "", "correlation-silent", "observed", "Et celui-ci ?")
+		addThreadEvent(t, f, subject, device, threadEvent{base.Add(4 * time.Second), "prompt", "", "correlation-silent", "observed", "Et celui-ci ?"})
 
 		items := readConversations(t, f, window)
 		byKey := map[string]ConversationView{}
@@ -79,9 +79,9 @@ func TestAttachmentRecordCountsWithItsSend(t *testing.T) {
 		f, subject, device := privacyFixture(t)
 		recent := time.Now().UTC().Add(-time.Minute)
 		addAttachmentRecord(t, f, subject, device, recent, "correlation-metrics", []string{"schema-synthetique.png"})
-		addThreadEvent(t, f, subject, device, recent.Add(time.Second), "prompt", "", "correlation-metrics", "observed", "Analyse ce document.")
-		addThreadEvent(t, f, subject, device, recent.Add(2*time.Second), "response", "", "correlation-metrics", "observed", "Réponse de test.")
-		addThreadEvent(t, f, subject, device, recent.Add(3*time.Second), "navigation", "", "correlation-metrics", "observed", "")
+		addThreadEvent(t, f, subject, device, threadEvent{recent.Add(time.Second), "prompt", "", "correlation-metrics", "observed", "Analyse ce document."})
+		addThreadEvent(t, f, subject, device, threadEvent{recent.Add(2 * time.Second), "response", "", "correlation-metrics", "observed", "Réponse de test."})
+		addThreadEvent(t, f, subject, device, threadEvent{recent.Add(3 * time.Second), "navigation", "", "correlation-metrics", "observed", ""})
 
 		// The route is gated by MILVAGO_SHADOW_METRICS, which the harness leaves closed.
 		f.a.config.ShadowMetrics = true

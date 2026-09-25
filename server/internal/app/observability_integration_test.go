@@ -117,6 +117,21 @@ func requireHTTP(t *testing.T, w *httptest.ResponseRecorder, status int) {
 		t.Fatalf("HTTP %d, want %d: %s", w.Code, status, w.Body.String())
 	}
 }
+func checkCommunityObservability(t *testing.T, f *observabilityFixture) {
+	t.Helper()
+	if Edition == "community" {
+		requireHTTP(t, f.call("GET", "/api/observability", nil, ""), 404)
+		requireHTTP(t, f.call("PUT", "/api/observability", map[string]any{"edition": "commercial"}, f.csrf), 404)
+		if hasPermission(permissionCatalog, "observability.manage") {
+			t.Fatal("Enterprise permission in Community catalog")
+		}
+		var absent bool
+		if e := f.admin.QueryRow(context.Background(), "SELECT to_regclass('public.observability_settings') IS NULL").Scan(&absent); e != nil || !absent {
+			t.Fatal("Enterprise tables in Community")
+		}
+	}
+}
+
 func TestDefaultLanguageIntegration(t *testing.T) {
 	f := newObservabilityFixture(t)
 	bootstrap := httptest.NewRecorder()
@@ -177,15 +192,5 @@ func TestDefaultLanguageIntegration(t *testing.T) {
 	if e := f.admin.QueryRow(context.Background(), "SELECT default_language FROM app_config").Scan(&language); e != nil || language != "fr" {
 		t.Fatal("unauthorized language change")
 	}
-	if Edition == "community" {
-		requireHTTP(t, f.call("GET", "/api/observability", nil, ""), 404)
-		requireHTTP(t, f.call("PUT", "/api/observability", map[string]any{"edition": "commercial"}, f.csrf), 404)
-		if hasPermission(permissionCatalog, "observability.manage") {
-			t.Fatal("Enterprise permission in Community catalog")
-		}
-		var absent bool
-		if e := f.admin.QueryRow(context.Background(), "SELECT to_regclass('public.observability_settings') IS NULL").Scan(&absent); e != nil || !absent {
-			t.Fatal("Enterprise tables in Community")
-		}
-	}
+	checkCommunityObservability(t, f)
 }

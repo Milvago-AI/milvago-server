@@ -269,31 +269,35 @@ func (a *App) assignDeviceGroup(w http.ResponseWriter, r *http.Request, tx pgx.T
 	}
 	unchanged := (current == nil && body.GroupID == nil) || (current != nil && body.GroupID != nil && *current == *body.GroupID)
 	if !unchanged {
-		// Moving a device into a group that retains prompts switches retention on for
-		// it: the same guard as switching it on in the settings themselves.
-		before, e := a.effectiveShadow(r.Context(), tx, s.OrganizationID, id)
-		if e != nil {
-			return e
-		}
-		if _, e := tx.Exec(r.Context(), `UPDATE devices SET group_id=$2,group_revision=nextval('shadow_revision') WHERE id=$1`, id, body.GroupID); e != nil {
-			return e
-		}
-		after, e := a.effectiveShadow(r.Context(), tx, s.OrganizationID, id)
-		if e != nil {
-			return e
-		}
-		if after.Config.Collection.StoreContent && !before.Config.Collection.StoreContent {
-			if e = a.requireFreshPerson(r, tx, s); e != nil {
-				return e
-			}
-		}
-		if e := audit(r.Context(), tx, s.OrganizationID, s.UserID, "device.group", id); e != nil {
-			return e
-		}
-		if e := tx.Commit(r.Context()); e != nil {
+		if e := a.moveDeviceGroup(r, tx, s, id, body.GroupID); e != nil {
 			return e
 		}
 	}
 	reply(w, 200, map[string]any{"id": id, "group_id": body.GroupID})
 	return nil
+}
+
+// moveDeviceGroup commits only after the effective policy and audit are updated.
+func (a *App) moveDeviceGroup(r *http.Request, tx pgx.Tx, s *Session, id string, groupID *string) error {
+	// A group retaining prompts enables content storage for the device.
+	before, e := a.effectiveShadow(r.Context(), tx, s.OrganizationID, id)
+	if e != nil {
+		return e
+	}
+	if _, e := tx.Exec(r.Context(), "UPDATE devices SET group_id=$2,group_revision=nextval('shadow_revision') WHERE id=$1", id, groupID); e != nil {
+		return e
+	}
+	after, e := a.effectiveShadow(r.Context(), tx, s.OrganizationID, id)
+	if e != nil {
+		return e
+	}
+	if after.Config.Collection.StoreContent && !before.Config.Collection.StoreContent {
+		if e = a.requireFreshPerson(r, tx, s); e != nil {
+			return e
+		}
+	}
+	if e := audit(r.Context(), tx, s.OrganizationID, s.UserID, "device.group", id); e != nil {
+		return e
+	}
+	return tx.Commit(r.Context())
 }

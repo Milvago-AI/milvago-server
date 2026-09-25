@@ -34,8 +34,8 @@ func TestDetectorState(t *testing.T) {
 }
 
 type detectorHealthFixture struct {
-	f       *observabilityFixture
-	ctx     context.Context
+	f *observabilityFixture
+
 	devices []string
 }
 
@@ -62,10 +62,10 @@ func newDetectorHealthFixture(t *testing.T) detectorHealthFixture {
 		}
 		devices = append(devices, id)
 	}
-	return detectorHealthFixture{f: f, ctx: ctx, devices: devices}
+	return detectorHealthFixture{f: f, devices: devices}
 }
 
-func (fixture detectorHealthFixture) report(t *testing.T) map[string]any {
+func (fixture detectorHealthFixture) report(t *testing.T, ctx context.Context) map[string]any {
 	t.Helper()
 	w := fixture.f.call("GET", "/api/detection/health", nil, "")
 	requireHTTP(t, w, 200)
@@ -88,19 +88,19 @@ func detectorHealthState(t *testing.T, out map[string]any, provider string, revi
 	return ""
 }
 
-func (fixture detectorHealthFixture) batch(t *testing.T, sample detectorHealthBatch) {
+func (fixture detectorHealthFixture) batch(t *testing.T, ctx context.Context, sample detectorHealthBatch) {
 	t.Helper()
 	end := time.Now().Add(-sample.receivedAgo)
 	payload, _ := json.Marshal(map[string]any{"id": randomToken(), "tool": "chrome", "extension_version": "0.5.0", "catalog_revision": sample.revision, "catalog_state": "ok",
 		"window_start": end.Add(-time.Hour), "window_end": end,
 		"providers": []map[string]any{{"provider": sample.provider, "navigations": sample.navigations, "prompts_network": sample.network, "prompts_dom": sample.dom, "responses_dom": sample.dom, "candidates": 0}}, "candidates": []any{}})
-	if _, err := fixture.f.admin.Exec(fixture.ctx, "INSERT INTO detector_health(organization_id,device_id,id,payload,received_at) VALUES($1,$2,gen_random_uuid(),$3,$4)", fixture.f.org, sample.device, payload, end); err != nil {
+	if _, err := fixture.f.admin.Exec(ctx, "INSERT INTO detector_health(organization_id,device_id,id,payload,received_at) VALUES($1,$2,gen_random_uuid(),$3,$4)", fixture.f.org, sample.device, payload, end); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func (fixture detectorHealthFixture) assertSilent(t *testing.T) {
-	out := fixture.report(t)
+func (fixture detectorHealthFixture) assertSilent(t *testing.T, ctx context.Context) {
+	out := fixture.report(t, ctx)
 	transport := out["transport"].(map[string]any)
 	if transport["state"] != "no_transport" || transport["devices_approved"].(float64) != 3 || transport["devices_reporting"].(float64) != 0 {
 		t.Fatal("silent fleet misreported", transport)
@@ -110,11 +110,11 @@ func (fixture detectorHealthFixture) assertSilent(t *testing.T) {
 	}
 }
 
-func (fixture detectorHealthFixture) assertVerdicts(t *testing.T) {
+func (fixture detectorHealthFixture) assertVerdicts(t *testing.T, ctx context.Context) {
 	// Two devices on revision 7: below the default threshold of three.
-	fixture.batch(t, detectorHealthBatch{fixture.devices[0], 7, time.Hour, "claude", 5, 10, 1})
-	fixture.batch(t, detectorHealthBatch{fixture.devices[1], 7, time.Hour, "claude", 5, 10, 1})
-	out := fixture.report(t)
+	fixture.batch(t, ctx, detectorHealthBatch{fixture.devices[0], 7, time.Hour, "claude", 5, 10, 1})
+	fixture.batch(t, ctx, detectorHealthBatch{fixture.devices[1], 7, time.Hour, "claude", 5, 10, 1})
+	out := fixture.report(t, ctx)
 	if detectorHealthState(t, out, "claude", 7) != "insufficient_data" {
 		t.Fatal("two devices must not yield a verdict at threshold three", out)
 	}
@@ -122,59 +122,59 @@ func (fixture detectorHealthFixture) assertVerdicts(t *testing.T) {
 		t.Fatal("two of three devices reporting is partial", out["transport"])
 	}
 	// A third device: the DOM captured one prompt for twenty network prompts.
-	fixture.batch(t, detectorHealthBatch{fixture.devices[2], 7, time.Hour, "claude", 5, 10, 1})
-	out = fixture.report(t)
+	fixture.batch(t, ctx, detectorHealthBatch{fixture.devices[2], 7, time.Hour, "claude", 5, 10, 1})
+	out = fixture.report(t, ctx)
 	if detectorHealthState(t, out, "claude", 7) != "degraded_dom" {
 		t.Fatal("dom at ten percent of network must be degraded", out)
 	}
 	// Revision 8 on the same devices behaves: both revisions are reported apart.
 	for _, device := range fixture.devices {
-		fixture.batch(t, detectorHealthBatch{device, 8, 30 * time.Minute, "claude", 5, 10, 9})
+		fixture.batch(t, ctx, detectorHealthBatch{device, 8, 30 * time.Minute, "claude", 5, 10, 9})
 	}
-	out = fixture.report(t)
+	out = fixture.report(t, ctx)
 	if detectorHealthState(t, out, "claude", 8) != "ok" || detectorHealthState(t, out, "claude", 7) != "degraded_dom" {
 		t.Fatal("revisions must be judged separately", out)
 	}
 	// A provider only captured by the DOM has no network rule in force.
 	for _, device := range fixture.devices {
-		fixture.batch(t, detectorHealthBatch{device, 8, 30 * time.Minute, "gemini", 4, 0, 6})
+		fixture.batch(t, ctx, detectorHealthBatch{device, 8, 30 * time.Minute, "gemini", 4, 0, 6})
 	}
-	if detectorHealthState(t, fixture.report(t), "gemini", 8) != "dom_only" {
+	if detectorHealthState(t, fixture.report(t, ctx), "gemini", 8) != "dom_only" {
 		t.Fatal("dom-only capture must be named")
 	}
 	// Visited, nothing captured now, captured last week: suspect.
 	for _, device := range fixture.devices {
-		fixture.batch(t, detectorHealthBatch{device, 8, 3 * 24 * time.Hour, "chatgpt", 4, 6, 6})
-		fixture.batch(t, detectorHealthBatch{device, 8, 30 * time.Minute, "chatgpt", 4, 0, 0})
+		fixture.batch(t, ctx, detectorHealthBatch{device, 8, 3 * 24 * time.Hour, "chatgpt", 4, 6, 6})
+		fixture.batch(t, ctx, detectorHealthBatch{device, 8, 30 * time.Minute, "chatgpt", 4, 0, 0})
 	}
-	if detectorHealthState(t, fixture.report(t), "chatgpt", 8) != "suspect" {
+	if detectorHealthState(t, fixture.report(t, ctx), "chatgpt", 8) != "suspect" {
 		t.Fatal("a provider that stopped capturing must be suspect")
 	}
-	if fixture.report(t)["transport"].(map[string]any)["state"] != "ok" {
+	if fixture.report(t, ctx)["transport"].(map[string]any)["state"] != "ok" {
 		t.Fatal("every approved device reported")
 	}
 }
 
-func (fixture detectorHealthFixture) assertLateDelivery(t *testing.T) {
+func (fixture detectorHealthFixture) assertLateDelivery(t *testing.T, ctx context.Context) {
 	for _, device := range fixture.devices {
-		fixture.batch(t, detectorHealthBatch{device, 99, 72 * time.Hour, "late-provider", 4, 9, 9})
-		fixture.batch(t, detectorHealthBatch{device, 99, time.Hour, "late-provider", 4, 0, 0})
+		fixture.batch(t, ctx, detectorHealthBatch{device, 99, 72 * time.Hour, "late-provider", 4, 9, 9})
+		fixture.batch(t, ctx, detectorHealthBatch{device, 99, time.Hour, "late-provider", 4, 0, 0})
 	}
-	tag, err := fixture.f.admin.Exec(fixture.ctx, "UPDATE detector_health SET received_at=clock_timestamp() WHERE (payload->>'catalog_revision')::int=99")
+	tag, err := fixture.f.admin.Exec(ctx, "UPDATE detector_health SET received_at=clock_timestamp() WHERE (payload->>'catalog_revision')::int=99")
 	if err != nil || tag.RowsAffected() != 6 {
 		t.Fatal("late receipt fixture missing", err)
 	}
-	if detectorHealthState(t, fixture.report(t), "late-provider", 99) != "suspect" {
+	if detectorHealthState(t, fixture.report(t, ctx), "late-provider", 99) != "suspect" {
 		t.Fatal("receipt time counted old prompts as current")
 	}
 }
 
-func (fixture detectorHealthFixture) assertThresholds(t *testing.T) {
+func (fixture detectorHealthFixture) assertThresholds(t *testing.T, ctx context.Context) {
 	cfg := defaultPrivacy()
 	cfg.HealthMinDevices = 1
 	cfg.HealthDOMRatio = 5
 	requireHTTP(t, putPrivacyTest(t, fixture.f, cfg), 200)
-	out := fixture.report(t)
+	out := fixture.report(t, ctx)
 	if out["thresholds"].(map[string]any)["min_devices"].(float64) != 1 || detectorHealthState(t, out, "claude", 7) != "ok" {
 		t.Fatal("a five percent threshold must accept ten percent", out)
 	}
@@ -188,8 +188,9 @@ func (fixture detectorHealthFixture) assertThresholds(t *testing.T) {
 // reported as silent rather than as zero prompts.
 func TestDetectorHealthReport(t *testing.T) {
 	fixture := newDetectorHealthFixture(t)
-	t.Run("silent fleet is no transport", fixture.assertSilent)
-	t.Run("verdicts follow devices and revision", fixture.assertVerdicts)
-	t.Run("late delivery keeps its observation window", fixture.assertLateDelivery)
-	t.Run("thresholds are the organization's", fixture.assertThresholds)
+	ctx := context.Background()
+	t.Run("silent fleet is no transport", func(t *testing.T) { fixture.assertSilent(t, ctx) })
+	t.Run("verdicts follow devices and revision", func(t *testing.T) { fixture.assertVerdicts(t, ctx) })
+	t.Run("late delivery keeps its observation window", func(t *testing.T) { fixture.assertLateDelivery(t, ctx) })
+	t.Run("thresholds are the organization's", func(t *testing.T) { fixture.assertThresholds(t, ctx) })
 }

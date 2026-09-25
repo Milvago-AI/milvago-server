@@ -12,8 +12,8 @@ import (
 )
 
 type detectionImportFixture struct {
-	p        *projectionFixture
-	ctx      context.Context
+	p *projectionFixture
+
 	revision int64
 	envelope publisherEnvelope
 	body     map[string]any
@@ -35,11 +35,11 @@ func newDetectionImportFixture(t *testing.T) *detectionImportFixture {
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		t.Fatal(err)
 	}
-	return &detectionImportFixture{p: p, ctx: ctx, revision: revision, envelope: envelope,
+	return &detectionImportFixture{p: p, revision: revision, envelope: envelope,
 		body: map[string]any{"expected_revision": revision, "envelope": envelope, "publish": false}}
 }
 
-func (fixture *detectionImportFixture) assertPreview(t *testing.T) {
+func (fixture *detectionImportFixture) assertPreview(t *testing.T, ctx context.Context) {
 	w := fixture.p.as("owner", "POST", "/api/detection/catalog/import", fixture.body)
 	requireHTTP(t, w, 200)
 	var out struct {
@@ -50,21 +50,21 @@ func (fixture *detectionImportFixture) assertPreview(t *testing.T) {
 		t.Fatal("preview missing", err)
 	}
 	var got, remote int64
-	if err := fixture.p.admin.QueryRow(fixture.ctx, "SELECT max(revision),(SELECT publisher_revision FROM publisher_client_state) FROM detection_catalogs").Scan(&got, &remote); err != nil || got != fixture.revision || remote != 0 {
+	if err := fixture.p.admin.QueryRow(ctx, "SELECT max(revision),(SELECT publisher_revision FROM publisher_client_state) FROM detection_catalogs").Scan(&got, &remote); err != nil || got != fixture.revision || remote != 0 {
 		t.Fatal("preview mutated state", got, remote, err)
 	}
 }
 
-func (fixture *detectionImportFixture) assertInvalidImports(t *testing.T) {
+func (fixture *detectionImportFixture) assertInvalidImports(t *testing.T, ctx context.Context) {
 	badEnvelope := fixture.envelope
 	badEnvelope.Signature = base64.StdEncoding.EncodeToString(make([]byte, ed25519.SignatureSize))
 	requireHTTP(t, fixture.p.as("owner", "POST", "/api/detection/catalog/import", map[string]any{"expected_revision": fixture.revision, "envelope": badEnvelope, "publish": true}), 400)
 	requireHTTP(t, fixture.p.as("owner", "POST", "/api/detection/catalog/import", map[string]any{"expected_revision": fixture.revision + 1, "envelope": fixture.envelope, "publish": true}), 409)
 }
 
-func (fixture *detectionImportFixture) assertImportedForDevice(t *testing.T) {
+func (fixture *detectionImportFixture) assertImportedForDevice(t *testing.T, ctx context.Context) {
 	credential := randomToken()
-	if tag, err := fixture.p.admin.Exec(fixture.ctx, "UPDATE devices SET credential_hash=$1 WHERE id=$2", hash(credential), fixture.p.device); err != nil || tag.RowsAffected() != 1 {
+	if tag, err := fixture.p.admin.Exec(ctx, "UPDATE devices SET credential_hash=$1 WHERE id=$2", hash(credential), fixture.p.device); err != nil || tag.RowsAffected() != 1 {
 		t.Fatal("device credential fixture missing", err)
 	}
 	request := httptest.NewRequest("GET", "/v3/detection-catalog", nil)
@@ -94,7 +94,7 @@ func (fixture *detectionImportFixture) assertImportedForDevice(t *testing.T) {
 	}
 }
 
-func (fixture *detectionImportFixture) assertPublication(t *testing.T) {
+func (fixture *detectionImportFixture) assertPublication(t *testing.T, ctx context.Context) {
 	fixture.body["publish"] = true
 	w := fixture.p.as("owner", "POST", "/api/detection/catalog/import", fixture.body)
 	requireHTTP(t, w, 200)
@@ -109,14 +109,14 @@ func (fixture *detectionImportFixture) assertPublication(t *testing.T) {
 	fixture.body["expected_revision"] = fixture.revision
 	requireHTTP(t, fixture.p.as("owner", "POST", "/api/detection/catalog/import", fixture.body), 409)
 	var count int
-	if err := fixture.p.admin.QueryRow(fixture.ctx, "SELECT count(*) FROM audit WHERE action='detection.catalog.import'").Scan(&count); err != nil || count != 1 {
+	if err := fixture.p.admin.QueryRow(ctx, "SELECT count(*) FROM audit WHERE action='detection.catalog.import'").Scan(&count); err != nil || count != 1 {
 		t.Fatal("publication audit missing or replay wrote", err, count)
 	}
-	fixture.assertImportedForDevice(t)
+	fixture.assertImportedForDevice(t, ctx)
 }
 
-func (fixture *detectionImportFixture) assertFreshMFA(t *testing.T) {
-	if tag, err := fixture.p.admin.Exec(fixture.ctx, "UPDATE sessions SET mfa_verified_at=clock_timestamp()-interval '6 minutes' WHERE token_hash=$1", hash(fixture.p.owner.Value)); err != nil || tag.RowsAffected() != 1 {
+func (fixture *detectionImportFixture) assertFreshMFA(t *testing.T, ctx context.Context) {
+	if tag, err := fixture.p.admin.Exec(ctx, "UPDATE sessions SET mfa_verified_at=clock_timestamp()-interval '6 minutes' WHERE token_hash=$1", hash(fixture.p.owner.Value)); err != nil || tag.RowsAffected() != 1 {
 		t.Fatal("stale MFA fixture missing", err)
 	}
 	fixture.body["publish"] = false
@@ -125,13 +125,14 @@ func (fixture *detectionImportFixture) assertFreshMFA(t *testing.T) {
 
 func TestDetectionCatalogImport(t *testing.T) {
 	fixture := newDetectionImportFixture(t)
+	ctx := context.Background()
 	for _, actor := range []string{"admin", "viewer", "reporter", "key"} {
 		t.Run("refuse_"+actor, func(t *testing.T) {
 			requireHTTP(t, fixture.p.as(actor, "POST", "/api/detection/catalog/import", fixture.body), 403)
 		})
 	}
-	t.Run("preview_has_no_writes", fixture.assertPreview)
-	t.Run("invalid_and_conflicting_imports_are_refused", fixture.assertInvalidImports)
-	t.Run("publication_is_signed_for_the_organization_and_replay_is_refused", fixture.assertPublication)
-	t.Run("fresh_mfa_required", fixture.assertFreshMFA)
+	t.Run("preview_has_no_writes", func(t *testing.T) { fixture.assertPreview(t, ctx) })
+	t.Run("invalid_and_conflicting_imports_are_refused", func(t *testing.T) { fixture.assertInvalidImports(t, ctx) })
+	t.Run("publication_is_signed_for_the_organization_and_replay_is_refused", func(t *testing.T) { fixture.assertPublication(t, ctx) })
+	t.Run("fresh_mfa_required", func(t *testing.T) { fixture.assertFreshMFA(t, ctx) })
 }

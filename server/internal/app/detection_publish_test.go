@@ -20,8 +20,8 @@ import (
 )
 
 type detectionPublishFixture struct {
-	p        *projectionFixture
-	ctx      context.Context
+	p *projectionFixture
+
 	revision int64
 	content  DetectionContent
 	target   int
@@ -58,15 +58,15 @@ func newDetectionPublishFixture(t *testing.T) *detectionPublishFixture {
 		EffortPath: "thinking_effort", ConversationPath: "conversation_id",
 		TextPaths: []string{"messageInput[*].text", "content[*].text"},
 	}}
-	return &detectionPublishFixture{p: p, ctx: ctx, revision: revision, content: content,
+	return &detectionPublishFixture{p: p, revision: revision, content: content,
 		target: target, body: map[string]any{"revision": revision, "content": content}}
 }
 
-func (fixture *detectionPublishFixture) assertStaleRevision(t *testing.T) {
+func (fixture *detectionPublishFixture) assertStaleRevision(t *testing.T, ctx context.Context) {
 	requireHTTP(t, fixture.p.as("owner", "PUT", "/api/detection/catalog", map[string]any{"revision": fixture.revision + 1, "content": fixture.content}), 409)
 }
 
-func (fixture *detectionPublishFixture) assertInvalidCatalog(t *testing.T) {
+func (fixture *detectionPublishFixture) assertInvalidCatalog(t *testing.T, ctx context.Context) {
 	broken := fixture.content
 	broken.Providers = append([]DetectionProvider{}, fixture.content.Providers...)
 	broken.Providers[fixture.target].Network = []DetectionNetwork{{
@@ -77,7 +77,7 @@ func (fixture *detectionPublishFixture) assertInvalidCatalog(t *testing.T) {
 	requireHTTP(t, fixture.p.as("owner", "PUT", "/api/detection/catalog", map[string]any{"revision": fixture.revision, "content": broken}), 400)
 }
 
-func (fixture *detectionPublishFixture) assertTextFallbacks(t *testing.T) {
+func (fixture *detectionPublishFixture) assertTextFallbacks(t *testing.T, ctx context.Context) {
 	for _, paths := range [][]string{
 		{"a", "b", "c", "d", "e"},
 		{"messageInput[*].text", ""},
@@ -93,7 +93,7 @@ func (fixture *detectionPublishFixture) assertTextFallbacks(t *testing.T) {
 	}
 }
 
-func (fixture *detectionPublishFixture) assertForeignHost(t *testing.T) {
+func (fixture *detectionPublishFixture) assertForeignHost(t *testing.T, ctx context.Context) {
 	foreign := fixture.content
 	foreign.Providers = append([]DetectionProvider{}, fixture.content.Providers...)
 	foreign.Providers[fixture.target].Network = []DetectionNetwork{{
@@ -102,7 +102,7 @@ func (fixture *detectionPublishFixture) assertForeignHost(t *testing.T) {
 	requireHTTP(t, fixture.p.as("owner", "PUT", "/api/detection/catalog", map[string]any{"revision": fixture.revision, "content": foreign}), 400)
 }
 
-func (fixture *detectionPublishFixture) assertRequestSizeCeiling(t *testing.T) {
+func (fixture *detectionPublishFixture) assertRequestSizeCeiling(t *testing.T, ctx context.Context) {
 	// The request body reaches its 128 KiB limit before the catalog's 512 KiB limit.
 	wide := "textarea" + string(bytes.Repeat([]byte("a"), 500))
 	big := fixture.content
@@ -141,9 +141,9 @@ func assertPublishedRule(t *testing.T, content DetectionContent) {
 	t.Fatal("chatgpt missing from the served catalogue")
 }
 
-func (fixture *detectionPublishFixture) assertDeviceCatalog(t *testing.T, revision int64) {
+func (fixture *detectionPublishFixture) assertDeviceCatalog(t *testing.T, ctx context.Context, revision int64) {
 	credential := randomToken()
-	if tag, err := fixture.p.admin.Exec(fixture.ctx, "UPDATE devices SET credential_hash=$1 WHERE id=$2", hash(credential), fixture.p.device); err != nil || tag.RowsAffected() != 1 {
+	if tag, err := fixture.p.admin.Exec(ctx, "UPDATE devices SET credential_hash=$1 WHERE id=$2", hash(credential), fixture.p.device); err != nil || tag.RowsAffected() != 1 {
 		t.Fatal("device credential fixture missing", err)
 	}
 	request := httptest.NewRequest("GET", "/v3/detection-catalog", nil)
@@ -184,7 +184,7 @@ func (fixture *detectionPublishFixture) assertDeviceCatalog(t *testing.T, revisi
 	assertPublishedRule(t, round)
 }
 
-func (fixture *detectionPublishFixture) assertPublished(t *testing.T) {
+func (fixture *detectionPublishFixture) assertPublished(t *testing.T, ctx context.Context) {
 	response := fixture.p.as("owner", "PUT", "/api/detection/catalog", fixture.body)
 	requireHTTP(t, response, 200)
 	var out struct {
@@ -194,18 +194,18 @@ func (fixture *detectionPublishFixture) assertPublished(t *testing.T) {
 		t.Fatal("publication did not advance the revision", err, out.Revision)
 	}
 	var audited int
-	if err := fixture.p.admin.QueryRow(fixture.ctx, "SELECT count(*) FROM audit WHERE action='detection.catalog.publish'").Scan(&audited); err != nil || audited != 1 {
+	if err := fixture.p.admin.QueryRow(ctx, "SELECT count(*) FROM audit WHERE action='detection.catalog.publish'").Scan(&audited); err != nil || audited != 1 {
 		t.Fatal("publication not audited exactly once", err, audited)
 	}
-	fixture.assertDeviceCatalog(t, out.Revision)
+	fixture.assertDeviceCatalog(t, ctx, out.Revision)
 }
 
-func (fixture *detectionPublishFixture) assertStaleMFA(t *testing.T) {
-	if tag, err := fixture.p.admin.Exec(fixture.ctx, "UPDATE sessions SET mfa_verified_at=clock_timestamp()-interval '6 minutes' WHERE token_hash=$1", hash(fixture.p.owner.Value)); err != nil || tag.RowsAffected() != 1 {
+func (fixture *detectionPublishFixture) assertStaleMFA(t *testing.T, ctx context.Context) {
+	if tag, err := fixture.p.admin.Exec(ctx, "UPDATE sessions SET mfa_verified_at=clock_timestamp()-interval '6 minutes' WHERE token_hash=$1", hash(fixture.p.owner.Value)); err != nil || tag.RowsAffected() != 1 {
 		t.Fatal("stale MFA fixture missing", err)
 	}
 	var current int64
-	if err := fixture.p.admin.QueryRow(fixture.ctx, "SELECT max(revision) FROM detection_catalogs").Scan(&current); err != nil {
+	if err := fixture.p.admin.QueryRow(ctx, "SELECT max(revision) FROM detection_catalogs").Scan(&current); err != nil {
 		t.Fatal(err)
 	}
 	requireHTTP(t, fixture.p.as("owner", "PUT", "/api/detection/catalog", map[string]any{"revision": current, "content": fixture.content}), 403)
@@ -214,18 +214,19 @@ func (fixture *detectionPublishFixture) assertStaleMFA(t *testing.T) {
 // The catalogue edited in the console must reach the device as signed bytes.
 func TestDetectionCatalogPublish(t *testing.T) {
 	fixture := newDetectionPublishFixture(t)
+	ctx := context.Background()
 	for _, actor := range []string{"admin", "viewer", "reporter", "key"} {
 		t.Run("refuse_"+actor, func(t *testing.T) {
 			requireHTTP(t, fixture.p.as(actor, "PUT", "/api/detection/catalog", fixture.body), 403)
 		})
 	}
-	t.Run("a stale revision is refused rather than overwriting a concurrent edit", fixture.assertStaleRevision)
-	t.Run("an invalid catalogue never reaches the fleet", fixture.assertInvalidCatalog)
-	t.Run("the text fallbacks are bounded and never empty", fixture.assertTextFallbacks)
-	t.Run("a network rule on a host the provider does not own is refused", fixture.assertForeignHost)
-	t.Run("the effective size ceiling is the request body, not the documented catalogue limit", fixture.assertRequestSizeCeiling)
-	t.Run("a published catalogue reaches a device, signed for its organization", fixture.assertPublished)
-	t.Run("a stale second factor cannot publish", fixture.assertStaleMFA)
+	t.Run("a stale revision is refused rather than overwriting a concurrent edit", func(t *testing.T) { fixture.assertStaleRevision(t, ctx) })
+	t.Run("an invalid catalogue never reaches the fleet", func(t *testing.T) { fixture.assertInvalidCatalog(t, ctx) })
+	t.Run("the text fallbacks are bounded and never empty", func(t *testing.T) { fixture.assertTextFallbacks(t, ctx) })
+	t.Run("a network rule on a host the provider does not own is refused", func(t *testing.T) { fixture.assertForeignHost(t, ctx) })
+	t.Run("the effective size ceiling is the request body, not the documented catalogue limit", func(t *testing.T) { fixture.assertRequestSizeCeiling(t, ctx) })
+	t.Run("a published catalogue reaches a device, signed for its organization", func(t *testing.T) { fixture.assertPublished(t, ctx) })
+	t.Run("a stale second factor cannot publish", func(t *testing.T) { fixture.assertStaleMFA(t, ctx) })
 }
 
 // The factory catalogue ships twice: once for the extension build and once

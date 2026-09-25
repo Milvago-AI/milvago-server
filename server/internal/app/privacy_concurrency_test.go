@@ -59,39 +59,7 @@ func awaitPrivacyRequest(t *testing.T, done <-chan *httptest.ResponseRecorder) *
 // fresh-MFA check -- commits nothing.
 func TestPrivacyConcurrentSessionWithdrawal(t *testing.T) {
 	for _, operation := range []string{"reveal", "rotate"} {
-		t.Run(operation, func(t *testing.T) {
-			f, subject, _ := privacyFixture(t)
-			ctx := context.Background()
-			path := "/api/subjects/" + subject + "/reveal"
-			if operation == "rotate" {
-				path = "/api/privacy/alias-key/rotate"
-			}
-			// The organization's barrier held exclusively: the request authenticates, then
-			// waits on the barrier before its authority and its fresh-MFA check.
-			holder := lockHolder(t)
-			if _, e := holder.Exec(ctx, "SELECT pg_advisory_xact_lock("+barrierKeySQL+")", f.org); e != nil {
-				t.Fatal(e)
-			}
-			done := make(chan *httptest.ResponseRecorder, 1)
-			go func() {
-				done <- f.call("POST", path, map[string]string{"reason": "Synthetic concurrency verification"}, f.csrf)
-			}()
-			awaitLockWait(t, f, "advisory")
-			// DELETE is the same durable session withdrawal performed by logout.
-			tag, e := f.admin.Exec(ctx, "DELETE FROM sessions WHERE token_hash=$1", hash(f.owner.Value))
-			if e != nil || tag.RowsAffected() != 1 {
-				t.Fatal("session withdrawal failed", e)
-			}
-			if _, e := holder.Exec(ctx, "ROLLBACK"); e != nil {
-				t.Fatal(e)
-			}
-			w := awaitPrivacyRequest(t, done)
-			requireHTTP(t, w, 403)
-			var n int
-			if e = f.admin.QueryRow(ctx, "SELECT count(*) FROM audit WHERE action IN ('identity.reveal','privacy.alias_key.rotated')").Scan(&n); e != nil || n != 0 {
-				t.Fatal("withdrawn request committed", n, e)
-			}
-		})
+		t.Run(operation, func(t *testing.T) { testPrivacyConcurrentSessionWithdrawal(t, operation) })
 	}
 }
 
@@ -144,50 +112,86 @@ func TestPrivacyConcurrentRoleWithdrawal(t *testing.T) {
 
 func TestPrivacyAPIKeyLockOrder(t *testing.T) {
 	for _, withdrawal := range []string{"revoke", "expire"} {
-		t.Run(withdrawal, func(t *testing.T) {
-			p := newProjectionFixture(t)
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			tx, e := tenantTx(ctx, p.a.db, p.org)
-			if e != nil {
-				t.Fatal(e)
-			}
-			defer tx.Rollback(context.Background())
-			if _, e = tx.Exec(ctx, "SELECT pg_advisory_xact_lock_shared("+barrierKeySQL+")", p.org); e != nil {
-				t.Fatal(e)
-			}
-			done := make(chan *httptest.ResponseRecorder, 1)
-			go func() {
-				done <- p.as("key", "PUT", "/api/roles/synthetic-lock-order", map[string]any{"permissions": []string{"events.read"}})
-			}()
-			waiting := false
-			for ctx.Err() == nil {
-				if e := p.admin.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted)").Scan(&waiting); e != nil {
-					t.Fatal(e)
-				}
-				if waiting {
-					break
-				}
-				time.Sleep(time.Millisecond)
-			}
-			if !waiting {
-				t.Fatal("key mutation did not reach permission lock")
-			}
-			// A completed revocation must not deadlock behind a credential row acquired
-			// before that lock. This reproduces the former opposite lock order.
-			sql := "UPDATE api_keys SET revoked_at=clock_timestamp() WHERE secret_hash=$1"
-			if withdrawal == "expire" {
-				sql = "UPDATE api_keys SET expires_at=clock_timestamp() WHERE secret_hash=$1"
-			}
-			tag, e := tx.Exec(ctx, sql, hash(p.key))
-			if e != nil || tag.RowsAffected() != 1 {
-				t.Fatal("key revocation blocked or absent", e)
-			}
-			if e = tx.Commit(ctx); e != nil {
-				t.Fatal(e)
-			}
-			requireHTTP(t, awaitPrivacyRequest(t, done), 401)
-
-		})
+		t.Run(withdrawal, func(t *testing.T) { testPrivacyAPIKeyLockOrder(t, withdrawal) })
 	}
+}
+
+func testPrivacyConcurrentSessionWithdrawal(t *testing.T, operation string) {
+	f, subject, _ := privacyFixture(t)
+	ctx := context.Background()
+	path := "/api/subjects/" + subject + "/reveal"
+	if operation == "rotate" {
+		path = "/api/privacy/alias-key/rotate"
+	}
+	// The organization's barrier held exclusively: the request authenticates, then
+	// waits on the barrier before its authority and its fresh-MFA check.
+	holder := lockHolder(t)
+	if _, e := holder.Exec(ctx, "SELECT pg_advisory_xact_lock("+barrierKeySQL+")", f.org); e != nil {
+		t.Fatal(e)
+	}
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- f.call("POST", path, map[string]string{"reason": "Synthetic concurrency verification"}, f.csrf)
+	}()
+	awaitLockWait(t, f, "advisory")
+	// DELETE is the same durable session withdrawal performed by logout.
+	tag, e := f.admin.Exec(ctx, "DELETE FROM sessions WHERE token_hash=$1", hash(f.owner.Value))
+	if e != nil || tag.RowsAffected() != 1 {
+		t.Fatal("session withdrawal failed", e)
+	}
+	if _, e := holder.Exec(ctx, "ROLLBACK"); e != nil {
+		t.Fatal(e)
+	}
+	w := awaitPrivacyRequest(t, done)
+	requireHTTP(t, w, 403)
+	var n int
+	if e = f.admin.QueryRow(ctx, "SELECT count(*) FROM audit WHERE action IN ('identity.reveal','privacy.alias_key.rotated')").Scan(&n); e != nil || n != 0 {
+		t.Fatal("withdrawn request committed", n, e)
+	}
+}
+
+func testPrivacyAPIKeyLockOrder(t *testing.T, withdrawal string) {
+	p := newProjectionFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tx, e := tenantTx(ctx, p.a.db, p.org)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer tx.Rollback(context.Background())
+	if _, e = tx.Exec(ctx, "SELECT pg_advisory_xact_lock_shared("+barrierKeySQL+")", p.org); e != nil {
+		t.Fatal(e)
+	}
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- p.as("key", "PUT", "/api/roles/synthetic-lock-order", map[string]any{"permissions": []string{"events.read"}})
+	}()
+	waiting := false
+	for ctx.Err() == nil {
+		if e := p.admin.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted)").Scan(&waiting); e != nil {
+			t.Fatal(e)
+		}
+		if waiting {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !waiting {
+		t.Fatal("key mutation did not reach permission lock")
+	}
+	// A completed revocation must not deadlock behind a credential row acquired
+	// before that lock. This reproduces the former opposite lock order.
+	sql := "UPDATE api_keys SET revoked_at=clock_timestamp() WHERE secret_hash=$1"
+	if withdrawal == "expire" {
+		sql = "UPDATE api_keys SET expires_at=clock_timestamp() WHERE secret_hash=$1"
+	}
+	tag, e := tx.Exec(ctx, sql, hash(p.key))
+	if e != nil || tag.RowsAffected() != 1 {
+		t.Fatal("key revocation blocked or absent", e)
+	}
+	if e = tx.Commit(ctx); e != nil {
+		t.Fatal(e)
+	}
+	requireHTTP(t, awaitPrivacyRequest(t, done), 401)
+
 }

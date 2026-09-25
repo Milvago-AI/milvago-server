@@ -13,8 +13,14 @@ import (
 // the exact shape a browser produces -- including the opening prompt that carries
 // no conversation identifier because the tab was still on /new when the gesture
 // was captured. A non empty text is sealed the way ingestion seals it.
-func addThreadEvent(t *testing.T, f *observabilityFixture, subject, device string, at time.Time, kind, conversation, correlation, action, text string) string {
+type threadEvent struct {
+	at                                            time.Time
+	kind, conversation, correlation, action, text string
+}
+
+func addThreadEvent(t *testing.T, f *observabilityFixture, subject, device string, event threadEvent) string {
 	t.Helper()
+	at, kind, conversation, correlation, action, text := event.at, event.kind, event.conversation, event.correlation, event.action, event.text
 	ctx := context.Background()
 	var id string
 	e := f.admin.QueryRow(ctx, `INSERT INTO shadow_events(organization_id,device_id,id,occurred_at,kind,provider,tool,source,action,policy_revision,characters,sensitivity,collaborator_id,conversation_id,correlation_id)
@@ -108,17 +114,17 @@ func TestShadowConversations(t *testing.T) {
 		f, subject, device := privacyFixture(t)
 		// The opening prompt has no conversation identifier: only the correlation it
 		// shares with the navigation that followed the URL assignment links it.
-		opening := addThreadEvent(t, f, subject, device, base, "prompt", "", "correlation-1", "observed", "")
-		addThreadEvent(t, f, subject, device, base.Add(time.Second), "navigation", "thread-a", "correlation-1", "observed", "")
-		addThreadEvent(t, f, subject, device, base.Add(2*time.Second), "response", "thread-a", "correlation-1", "observed", "")
+		opening := addThreadEvent(t, f, subject, device, threadEvent{base, "prompt", "", "correlation-1", "observed", ""})
+		addThreadEvent(t, f, subject, device, threadEvent{base.Add(time.Second), "navigation", "thread-a", "correlation-1", "observed", ""})
+		addThreadEvent(t, f, subject, device, threadEvent{base.Add(2 * time.Second), "response", "thread-a", "correlation-1", "observed", ""})
 		// An exchange where nothing ever carried a conversation identifier, which is
 		// what real captures look like today: the correlation alone holds it together.
-		addThreadEvent(t, f, subject, device, base.Add(3*time.Second), "prompt", "", "correlation-2", "observed", "")
-		addThreadEvent(t, f, subject, device, base.Add(4*time.Second), "response", "", "correlation-2", "observed", "")
-		addThreadEvent(t, f, subject, device, base.Add(5*time.Second), "navigation", "", "correlation-2", "observed", "")
+		addThreadEvent(t, f, subject, device, threadEvent{base.Add(3 * time.Second), "prompt", "", "correlation-2", "observed", ""})
+		addThreadEvent(t, f, subject, device, threadEvent{base.Add(4 * time.Second), "response", "", "correlation-2", "observed", ""})
+		addThreadEvent(t, f, subject, device, threadEvent{base.Add(5 * time.Second), "navigation", "", "correlation-2", "observed", ""})
 		// A site opened without a word typed is not a conversation.
-		addThreadEvent(t, f, subject, device, base.Add(6*time.Second), "navigation", "", "", "observed", "")
-		addThreadEvent(t, f, subject, device, base.Add(7*time.Second), "navigation", "thread-empty", "", "observed", "")
+		addThreadEvent(t, f, subject, device, threadEvent{base.Add(6 * time.Second), "navigation", "", "", "observed", ""})
+		addThreadEvent(t, f, subject, device, threadEvent{base.Add(7 * time.Second), "navigation", "thread-empty", "", "observed", ""})
 		items := readConversations(t, f, "?from="+base.Add(-time.Minute).Format(time.RFC3339Nano)+"&to="+base.Add(time.Minute).Format(time.RFC3339Nano))
 		byKey := map[string]ConversationView{}
 		for _, item := range items {
@@ -176,8 +182,8 @@ func TestShadowConversations(t *testing.T) {
 		f, subject, device := privacyFixture(t)
 		for i := 0; i < 7; i++ {
 			at := base.Add(time.Duration(i) * time.Second)
-			addThreadEvent(t, f, subject, device, at, "prompt", fmt.Sprintf("thread-%d", i), "", "observed", "")
-			addThreadEvent(t, f, subject, device, at.Add(500*time.Millisecond), "response", fmt.Sprintf("thread-%d", i), "", "observed", "")
+			addThreadEvent(t, f, subject, device, threadEvent{at, "prompt", fmt.Sprintf("thread-%d", i), "", "observed", ""})
+			addThreadEvent(t, f, subject, device, threadEvent{at.Add(500 * time.Millisecond), "response", fmt.Sprintf("thread-%d", i), "", "observed", ""})
 		}
 		period := "?from=" + base.Add(-time.Minute).Format(time.RFC3339Nano) + "&to=" + base.Add(time.Minute).Format(time.RFC3339Nano)
 		first, total := readConversationPage(t, f, period+"&limit=3&offset=0")
@@ -221,11 +227,11 @@ func TestShadowConversations(t *testing.T) {
 		// identifier appears from the second exchange on. What keeps the thread whole is
 		// the navigation emitted once the URL is assigned, which carries the new
 		// identifier and the correlation of the exchange that just happened.
-		first := addThreadEvent(t, f, subject, device, base, "prompt", "", "corr-first", "observed", "")
-		addThreadEvent(t, f, subject, device, base.Add(time.Second), "response", "", "corr-first", "observed", "")
-		addThreadEvent(t, f, subject, device, base.Add(2*time.Second), "navigation", "chatgpt-thread", "corr-first", "observed", "")
-		addThreadEvent(t, f, subject, device, base.Add(3*time.Second), "prompt", "chatgpt-thread", "corr-second", "observed", "")
-		addThreadEvent(t, f, subject, device, base.Add(4*time.Second), "response", "chatgpt-thread", "corr-second", "observed", "")
+		first := addThreadEvent(t, f, subject, device, threadEvent{base, "prompt", "", "corr-first", "observed", ""})
+		addThreadEvent(t, f, subject, device, threadEvent{base.Add(time.Second), "response", "", "corr-first", "observed", ""})
+		addThreadEvent(t, f, subject, device, threadEvent{base.Add(2 * time.Second), "navigation", "chatgpt-thread", "corr-first", "observed", ""})
+		addThreadEvent(t, f, subject, device, threadEvent{base.Add(3 * time.Second), "prompt", "chatgpt-thread", "corr-second", "observed", ""})
+		addThreadEvent(t, f, subject, device, threadEvent{base.Add(4 * time.Second), "response", "chatgpt-thread", "corr-second", "observed", ""})
 		items := readConversations(t, f, "?from="+base.Add(-time.Minute).Format(time.RFC3339Nano)+"&to="+base.Add(time.Minute).Format(time.RFC3339Nano))
 		if len(items) != 1 {
 			keys := []string{}
@@ -246,7 +252,7 @@ func TestShadowConversations(t *testing.T) {
 	t.Run("returns ten messages by default and reaches further back by cursor", func(t *testing.T) {
 		f, subject, device := privacyFixture(t)
 		for i := 0; i < 25; i++ {
-			addThreadEvent(t, f, subject, device, base.Add(time.Duration(i)*time.Second), "prompt", "thread-long", "", "observed", "")
+			addThreadEvent(t, f, subject, device, threadEvent{base.Add(time.Duration(i) * time.Second), "prompt", "thread-long", "", "observed", ""})
 		}
 		first, older := readThread(t, f, "conv:thread-long", device, "")
 		if len(first) != 10 || older == "" {
@@ -268,8 +274,8 @@ func TestShadowConversations(t *testing.T) {
 	t.Run("names each reason a text is withheld and audits every text it decrypts", func(t *testing.T) {
 		f, subject, device := privacyFixture(t)
 		ctx := context.Background()
-		withText := addThreadEvent(t, f, subject, device, base, "prompt", "thread-b", "", "observed", "Synthetic thread request")
-		addThreadEvent(t, f, subject, device, base.Add(time.Second), "response", "thread-b", "", "observed", "")
+		withText := addThreadEvent(t, f, subject, device, threadEvent{base, "prompt", "thread-b", "", "observed", "Synthetic thread request"})
+		addThreadEvent(t, f, subject, device, threadEvent{base.Add(time.Second), "response", "thread-b", "", "observed", ""})
 		// Pseudonymous by default and no live reveal: the identity barrier answers
 		// before the content grant is even consulted.
 		messages, _ := readThread(t, f, "conv:thread-b", device, "")
@@ -318,7 +324,7 @@ func TestShadowConversations(t *testing.T) {
 	})
 	t.Run("refuses a malformed key and never crosses an organization", func(t *testing.T) {
 		f, subject, device := privacyFixture(t)
-		addThreadEvent(t, f, subject, device, base, "prompt", "thread-c", "", "observed", "")
+		addThreadEvent(t, f, subject, device, threadEvent{base, "prompt", "thread-c", "", "observed", ""})
 		for _, key := range []string{"thread-c", "conv:", "event:not-a-uuid", "conv:" + strings.Repeat("x", 201)} {
 			requireHTTP(t, f.call("GET", "/api/shadow/conversation?key="+key+"&device_id="+device, nil, ""), 400)
 		}

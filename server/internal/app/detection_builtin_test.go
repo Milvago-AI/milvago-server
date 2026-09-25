@@ -12,7 +12,6 @@ import (
 
 type builtinUpgradeFixture struct {
 	f            *observabilityFixture
-	ctx          context.Context
 	content      DetectionContent
 	factory      []byte
 	expectedHash string
@@ -32,51 +31,51 @@ func newBuiltinUpgradeFixture(t *testing.T) builtinUpgradeFixture {
 		t.Fatal(err)
 	}
 	digest := sha256.Sum256(factory)
-	return builtinUpgradeFixture{f: f, ctx: context.Background(), content: content, factory: factory, expectedHash: hex.EncodeToString(digest[:])}
+	return builtinUpgradeFixture{f: f, content: content, factory: factory, expectedHash: hex.EncodeToString(digest[:])}
 }
 
-func (fixture builtinUpgradeFixture) initialize(t *testing.T) {
+func (fixture builtinUpgradeFixture) initialize(t *testing.T, ctx context.Context) {
 	t.Helper()
-	tx, err := fixture.f.admin.Begin(fixture.ctx)
+	tx, err := fixture.f.admin.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback(fixture.ctx)
-	if err = initializeDetection(fixture.ctx, tx, "milvago_runtime"); err != nil {
+	defer tx.Rollback(ctx)
+	if err = initializeDetection(ctx, tx, "milvago_runtime"); err != nil {
 		t.Fatal(err)
 	}
-	if err = tx.Commit(fixture.ctx); err != nil {
+	if err = tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func (fixture builtinUpgradeFixture) current(t *testing.T) (int64, int, []byte, string, string) {
+func (fixture builtinUpgradeFixture) current(t *testing.T, ctx context.Context) (int64, int, []byte, string, string) {
 	t.Helper()
 	var revision int64
 	var count int
 	var raw []byte
 	var hash, source string
-	if err := fixture.f.admin.QueryRow(fixture.ctx, "SELECT revision,content,content_hash,source,(SELECT count(*) FROM detection_catalogs) FROM detection_catalogs ORDER BY revision DESC LIMIT 1").Scan(&revision, &raw, &hash, &source, &count); err != nil {
+	if err := fixture.f.admin.QueryRow(ctx, "SELECT revision,content,content_hash,source,(SELECT count(*) FROM detection_catalogs) FROM detection_catalogs ORDER BY revision DESC LIMIT 1").Scan(&revision, &raw, &hash, &source, &count); err != nil {
 		t.Fatal(err)
 	}
 	return revision, count, raw, hash, source
 }
 
-func (fixture builtinUpgradeFixture) assertInitial(t *testing.T) int64 {
+func (fixture builtinUpgradeFixture) assertInitial(t *testing.T, ctx context.Context) int64 {
 	t.Helper()
-	initial, count, raw, hash, source := fixture.current(t)
+	initial, count, raw, hash, source := fixture.current(t, ctx)
 	if count != 1 || !bytes.Equal(raw, fixture.factory) || hash != fixture.expectedHash || source != "builtin" {
 		t.Fatal("initial builtin fixture missing", count, source)
 	}
-	fixture.initialize(t)
-	revision, count, _, _, _ := fixture.current(t)
+	fixture.initialize(t, ctx)
+	revision, count, _, _, _ := fixture.current(t, ctx)
 	if revision != initial || count != 1 {
 		t.Fatal("unchanged builtin duplicated")
 	}
 	return initial
 }
 
-func (fixture builtinUpgradeFixture) persistOlder(t *testing.T, initial int64) ([]byte, string) {
+func (fixture builtinUpgradeFixture) persistOlder(t *testing.T, ctx context.Context, initial int64) ([]byte, string) {
 	t.Helper()
 	changed := fixture.content
 	changed.Providers = append([]DetectionProvider(nil), fixture.content.Providers...)
@@ -93,39 +92,39 @@ func (fixture builtinUpgradeFixture) persistOlder(t *testing.T, initial int64) (
 	}
 	oldDigest := sha256.Sum256(older)
 	oldHash := hex.EncodeToString(oldDigest[:])
-	if tag, err := fixture.f.admin.Exec(fixture.ctx, "UPDATE detection_catalogs SET content=$1,content_hash=$2 WHERE revision=$3", older, oldHash, initial); err != nil || tag.RowsAffected() != 1 {
+	if tag, err := fixture.f.admin.Exec(ctx, "UPDATE detection_catalogs SET content=$1,content_hash=$2 WHERE revision=$3", older, oldHash, initial); err != nil || tag.RowsAffected() != 1 {
 		t.Fatal("older builtin not obtained", err)
 	}
-	_, _, raw, hash, _ := fixture.current(t)
+	_, _, raw, hash, _ := fixture.current(t, ctx)
 	if !bytes.Equal(raw, older) || hash == fixture.expectedHash {
 		t.Fatal("older builtin not persisted")
 	}
 	return older, oldHash
 }
 
-func (fixture builtinUpgradeFixture) assertReplacement(t *testing.T, initial int64) {
+func (fixture builtinUpgradeFixture) assertReplacement(t *testing.T, ctx context.Context, initial int64) {
 	t.Helper()
-	fixture.initialize(t)
-	revision, count, raw, hash, source := fixture.current(t)
+	fixture.initialize(t, ctx)
+	revision, count, raw, hash, source := fixture.current(t, ctx)
 	if revision <= initial || count != 2 || !bytes.Equal(raw, fixture.factory) || hash != fixture.expectedHash || source != "builtin" {
 		t.Fatal("changed builtin not replaced exactly once", revision, count, source)
 	}
 	upgraded := revision
-	fixture.initialize(t)
-	revision, count, _, _, _ = fixture.current(t)
+	fixture.initialize(t, ctx)
+	revision, count, _, _, _ = fixture.current(t, ctx)
 	if revision != upgraded || count != 2 {
 		t.Fatal("restart duplicated upgrade", revision, count)
 	}
 }
 
-func (fixture builtinUpgradeFixture) assertEditedPreserved(t *testing.T, older []byte, oldHash string) {
+func (fixture builtinUpgradeFixture) assertEditedPreserved(t *testing.T, ctx context.Context, older []byte, oldHash string) {
 	t.Helper()
 	var edited int64
-	if err := fixture.f.admin.QueryRow(fixture.ctx, "INSERT INTO detection_catalogs(content,content_hash,source) VALUES($1,$2,'edited') RETURNING revision", older, oldHash).Scan(&edited); err != nil {
+	if err := fixture.f.admin.QueryRow(ctx, "INSERT INTO detection_catalogs(content,content_hash,source) VALUES($1,$2,'edited') RETURNING revision", older, oldHash).Scan(&edited); err != nil {
 		t.Fatal(err)
 	}
-	fixture.initialize(t)
-	revision, count, raw, hash, source := fixture.current(t)
+	fixture.initialize(t, ctx)
+	revision, count, raw, hash, source := fixture.current(t, ctx)
 	if revision != edited || count != 3 || !bytes.Equal(raw, older) || hash != oldHash || source != "edited" {
 		t.Fatal("edited latest catalog overwritten", revision, count, source)
 	}
@@ -135,10 +134,11 @@ func (fixture builtinUpgradeFixture) assertEditedPreserved(t *testing.T, older [
 // successful SQL execution alone cannot prove that a replacement was inserted.
 func TestDetectionBuiltinUpgrade(t *testing.T) {
 	fixture := newBuiltinUpgradeFixture(t)
-	initial := fixture.assertInitial(t)
-	older, oldHash := fixture.persistOlder(t, initial)
-	fixture.assertReplacement(t, initial)
-	fixture.assertEditedPreserved(t, older, oldHash)
+	ctx := context.Background()
+	initial := fixture.assertInitial(t, ctx)
+	older, oldHash := fixture.persistOlder(t, ctx, initial)
+	fixture.assertReplacement(t, ctx, initial)
+	fixture.assertEditedPreserved(t, ctx, older, oldHash)
 }
 
 func waitForBuiltinPublication(t *testing.T, ctx context.Context, f *observabilityFixture, finished <-chan error, pid int) {

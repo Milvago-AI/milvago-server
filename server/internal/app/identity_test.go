@@ -13,8 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // admin serves every "/admin/realms/test/..." request issued by the product's
@@ -344,8 +342,9 @@ func configHas(cfg map[string]any, key, value string) bool {
 // login, and the organization's LDAP directory (settings, import, tenant
 // isolation). It runs after testShadowSubsystem, reusing the same fake
 // OIDC/administration server and owner session.
-func testIdentitySubsystem(t *testing.T, a *App, admin *pgxpool.Pool, ownerCookie *http.Cookie, ownerCSRF, org, user string, p *testIdentity) {
+func testIdentitySubsystem(t *testing.T, f subsystemFixture) {
 	t.Helper()
+	a, admin, ownerCookie, ownerCSRF, org, user, p := f.a, f.admin, f.cookie, f.csrf, f.org, f.user, f.identity
 	ctx := context.Background()
 	type profileView struct {
 		IdentityType  string `json:"identity_type"`

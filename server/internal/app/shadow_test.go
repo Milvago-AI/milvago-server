@@ -17,8 +17,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestShadowValidation(t *testing.T) {
@@ -102,8 +100,9 @@ func TestDesktopAgentCollectorEditionBoundary(t *testing.T) {
 	}
 }
 
-func testShadowSubsystem(t *testing.T, a *App, admin *pgxpool.Pool, cookie *http.Cookie, csrf, org, user string, p *testIdentity) {
+func testShadowSubsystem(t *testing.T, f subsystemFixture) {
 	t.Helper()
+	a, admin, cookie, csrf, org, user, p := f.a, f.admin, f.cookie, f.csrf, f.org, f.user, f.identity
 	ctx := context.Background()
 	call := func(method, path string, body any, bearer string) *httptest.ResponseRecorder {
 		var raw []byte

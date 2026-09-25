@@ -43,359 +43,23 @@ func sessionCall(f *observabilityFixture, cookie *http.Cookie, csrf, method, pat
 }
 
 func TestPrivacyRevealLifecycle(t *testing.T) {
-	t.Run("custom role loses reveal on demotion", func(t *testing.T) {
-		f, subject, device := privacyFixture(t)
-		ctx := context.Background()
-		id := addPrivacyEvent(t, f, subject, device, time.Now(), "claude.ai")
-		detail := "/api/shadow/events/" + id + "?device_id=" + device
+	t.Run("custom role loses reveal on demotion", testCustomRoleRevealDemotion)
 
-		w := f.call("POST", "/api/roles", map[string]any{"name": "synthetic-reader", "permissions": []string{"events.read", "devices.read", "identity.reveal"}}, f.csrf)
-		requireHTTP(t, w, 201)
+	t.Run("privacy update revokes reveals", testPrivacyUpdateRevokesReveals)
 
-		var user string
-		if e := f.admin.QueryRow(ctx, "INSERT INTO users(subject,email,display_name) VALUES('synthetic-custom-role-user','custom-role@example.test','Synthetic custom role user') RETURNING id").Scan(&user); e != nil {
-			t.Fatal(e)
-		}
-		if _, e := f.admin.Exec(ctx, "INSERT INTO memberships(organization_id,user_id,role) VALUES($1,$2,'synthetic-reader')", f.org, user); e != nil {
-			t.Fatal(e)
-		}
-		token, csrf := randomToken(), randomToken()
-		cookie := &http.Cookie{Name: cookieName("session"), Value: token}
-		if _, e := f.admin.Exec(ctx, `INSERT INTO sessions(token_hash,user_id,organization_id,csrf_token,encrypted_tokens,mfa,expires_at,identity_expires_at) VALUES($1,$2,$3,$4,$5,true,$6,$6)`, hash(token), user, f.org, csrf, []byte("synthetic-session"), time.Now().Add(time.Hour)); e != nil {
-			t.Fatal(e)
-		}
-		if tag, e := f.admin.Exec(ctx, "UPDATE sessions SET mfa_verified_at=clock_timestamp() WHERE token_hash=$1", hash(token)); e != nil || tag.RowsAffected() != 1 {
-			t.Fatal("fresh authentication fixture missing", e)
-		}
+	t.Run("api key and aggregate-only cannot reveal", testPrivacyRevealRefusals)
 
-		requireHTTP(t, sessionCall(f, cookie, csrf, "POST", "/api/subjects/"+subject+"/reveal", map[string]string{"reason": "Synthetic verification purpose"}), 200)
-		w = sessionCall(f, cookie, csrf, "GET", detail, nil)
-		requireHTTP(t, w, 200)
-		if !strings.Contains(w.Body.String(), "Synthetic identity") {
-			t.Fatal("reveal did not apply for the custom role", w.Body.String())
-		}
+	t.Run("two reveals then boundary expiry", testPrivacyRevealBoundaryExpiry)
 
-		if tag, e := f.admin.Exec(ctx, "UPDATE memberships SET role='viewer' WHERE organization_id=$1 AND user_id=$2", f.org, user); e != nil || tag.RowsAffected() != 1 {
-			t.Fatal("demotion fixture missing", e)
-		}
-		w = sessionCall(f, cookie, csrf, "GET", detail, nil)
-		requireHTTP(t, w, 200)
-		if strings.Contains(w.Body.String(), "Synthetic identity") {
-			t.Fatal("a demoted role still sees a previously revealed identity", w.Body.String())
-		}
-	})
+	t.Run("session switch revokes reveals", testPrivacySessionSwitchRevokesReveals)
 
-	t.Run("privacy update revokes reveals", func(t *testing.T) {
-		f, subject, device := privacyFixture(t)
-		ctx := context.Background()
-		id := addPrivacyEvent(t, f, subject, device, time.Now(), "claude.ai")
-		detail := "/api/shadow/events/" + id + "?device_id=" + device
-
-		requireHTTP(t, f.call("POST", "/api/subjects/"+subject+"/reveal", map[string]string{"reason": "Synthetic verification purpose"}, f.csrf), 200)
-		w := f.call("GET", detail, nil, "")
-		requireHTTP(t, w, 200)
-		if !strings.Contains(w.Body.String(), "Synthetic identity") {
-			t.Fatal("reveal did not apply", w.Body.String())
-		}
-
-		// An unchanged configuration still counts as an update: only the reason and
-		// the revision bump are new, and that alone must revoke every reveal.
-		requireHTTP(t, putPrivacyTest(t, f, defaultPrivacy()), 200)
-
-		w = f.call("GET", detail, nil, "")
-		requireHTTP(t, w, 200)
-		if strings.Contains(w.Body.String(), "Synthetic identity") {
-			t.Fatal("a reveal survived a privacy settings update", w.Body.String())
-		}
-		var n int
-		if e := f.admin.QueryRow(ctx, "SELECT count(*) FROM identity_reveals").Scan(&n); e != nil || n != 0 {
-			t.Fatal("identity_reveals not cleared by the update", e, n)
-		}
-	})
-
-	t.Run("api key and aggregate-only cannot reveal", func(t *testing.T) {
-		p := newProjectionFixture(t)
-		w := p.as("key", "POST", "/api/subjects/"+p.subject+"/reveal", map[string]string{"reason": "Synthetic verification purpose"})
-		requireHTTP(t, w, 403)
-		if !strings.Contains(w.Body.String(), "session_required") {
-			t.Fatal("wrong refusal for an API key", w.Body.String())
-		}
-
-		cfg := defaultPrivacy()
-		cfg.AggregateOnly = true
-		requireHTTP(t, putPrivacyTest(t, p.observabilityFixture, cfg), 200)
-
-		w = p.as("owner", "POST", "/api/subjects/"+p.subject+"/reveal", map[string]string{"reason": "Synthetic verification purpose"})
-		requireHTTP(t, w, 403)
-		if !strings.Contains(w.Body.String(), "aggregate_only") {
-			t.Fatal("wrong refusal under aggregate-only", w.Body.String())
-		}
-	})
-
-	t.Run("two reveals then boundary expiry", func(t *testing.T) {
-		f, subject, device := privacyFixture(t)
-		ctx := context.Background()
-		id := addPrivacyEvent(t, f, subject, device, time.Now(), "claude.ai")
-		detail := "/api/shadow/events/" + id + "?device_id=" + device
-
-		for i := 0; i < 2; i++ {
-			requireHTTP(t, f.call("POST", "/api/subjects/"+subject+"/reveal", map[string]string{"reason": "Synthetic verification purpose"}, f.csrf), 200)
-		}
-		var n int
-		if e := f.admin.QueryRow(ctx, "SELECT count(*) FROM identity_reveals WHERE collaborator_id=$1", subject).Scan(&n); e != nil {
-			t.Fatal(e)
-		}
-		if n != 2 {
-			t.Fatalf("want 2 identity_reveals rows after two reveals, got %d", n)
-		}
-		w := f.call("GET", detail, nil, "")
-		requireHTTP(t, w, 200)
-		if !strings.Contains(w.Body.String(), "Synthetic identity") {
-			t.Fatal("reveal did not apply", w.Body.String())
-		}
-
-		// revealed() checks expires_at>clock_timestamp() -- a strict ">". Pushing
-		// every row to this exact instant still shows an alias an instant later,
-		// which is the earliest observable point to exercise that boundary.
-		tag, e := f.admin.Exec(ctx, "UPDATE identity_reveals SET expires_at=clock_timestamp() WHERE collaborator_id=$1", subject)
-		if e != nil {
-			t.Fatal(e)
-		}
-		if tag.RowsAffected() != 2 {
-			t.Fatalf("want 2 rows pushed to their expiry boundary, got %d", tag.RowsAffected())
-		}
-		w = f.call("GET", detail, nil, "")
-		requireHTTP(t, w, 200)
-		if strings.Contains(w.Body.String(), "Synthetic identity") {
-			t.Fatal("an expired reveal still disclosed the identity", w.Body.String())
-		}
-	})
-
-	t.Run("session switch revokes reveals", func(t *testing.T) {
-		if Edition != "commercial" {
-			t.Skip("organization hierarchy is an Enterprise capability")
-		}
-		f, subject, _ := privacyFixture(t)
-		ctx := context.Background()
-		requireHTTP(t, f.call("POST", "/api/subjects/"+subject+"/reveal", map[string]string{"reason": "Synthetic verification purpose"}, f.csrf), 200)
-		var before int
-		if e := f.admin.QueryRow(ctx, "SELECT count(*) FROM identity_reveals").Scan(&before); e != nil || before != 1 {
-			t.Fatal("reveal fixture missing", e, before)
-		}
-
-		w := f.call("POST", "/api/organizations", map[string]any{"name": "Synthetic child organization", "parent_id": f.org}, f.csrf)
-		requireHTTP(t, w, 201)
-		var child struct {
-			ID string `json:"id"`
-		}
-		if e := json.Unmarshal(w.Body.Bytes(), &child); e != nil {
-			t.Fatal(e)
-		}
-
-		requireHTTP(t, f.call("POST", "/api/session/organization", map[string]any{"organization_id": child.ID}, f.csrf), 200)
-
-		// f.admin already defaults to f.org (the root); kept explicit since these
-		// rows live in the root's tenant and FORCE RLS makes a stale tenant look
-		// merely empty, never wrong.
-		setTenant(t, f.admin, f.org)
-		var after int
-		if e := f.admin.QueryRow(ctx, "SELECT count(*) FROM identity_reveals WHERE session_hash=$1", hash(f.owner.Value)).Scan(&after); e != nil {
-			t.Fatal(e)
-		}
-		if after != 0 {
-			t.Fatalf("identity_reveals survived an organization switch: %d rows", after)
-		}
-	})
-
-	t.Run("parent lock is protective only", func(t *testing.T) {
-		if Edition != "commercial" {
-			t.Skip("organization hierarchy is an Enterprise capability")
-		}
-		f, _, _ := privacyFixture(t)
-		cfg := defaultPrivacy()
-		cfg.LockDescendants = true
-		cfg.ShareHealth = true
-		requireHTTP(t, putPrivacyTest(t, f, cfg), 200)
-
-		w := f.call("POST", "/api/organizations", map[string]any{"name": "Synthetic child organization", "parent_id": f.org}, f.csrf)
-		requireHTTP(t, w, 201)
-		var child struct {
-			ID string `json:"id"`
-		}
-		if e := json.Unmarshal(w.Body.Bytes(), &child); e != nil {
-			t.Fatal(e)
-		}
-		requireHTTP(t, f.call("POST", "/api/session/organization", map[string]any{"organization_id": child.ID}, f.csrf), 200)
-
-		view := readPrivacyTest(t, f)
-		if view.LockedBy != f.org {
-			t.Fatalf("locked_by = %q, want the root organization %q", view.LockedBy, f.org)
-		}
-		if view.Config.ShareHealth {
-			t.Fatal("a consent (share_health) was inherited from the parent lock")
-		}
-
-		for _, attempt := range []struct {
-			name  string
-			apply func(*IdentityPrivacyConfig)
-		}{
-			{"pseudonymous", func(c *IdentityPrivacyConfig) { c.Pseudonymous = false }},
-			{"k", func(c *IdentityPrivacyConfig) { c.K = 2 }},
-			{"identity_days", func(c *IdentityPrivacyConfig) { c.IdentityDays = 7 }},
-		} {
-			t.Run(attempt.name, func(t *testing.T) {
-				attempted := view.Config
-				attempt.apply(&attempted)
-				w := putPrivacyTest(t, f, attempted)
-				requireHTTP(t, w, 403)
-				if !strings.Contains(w.Body.String(), "configuration_enforced") {
-					t.Fatal("wrong refusal", w.Body.String())
-				}
-			})
-		}
-	})
+	t.Run("parent lock is protective only", testPrivacyParentLockProtection)
 }
 
 func TestEraseSubjectLeavesNoLink(t *testing.T) {
-	t.Run("erase removes every link", func(t *testing.T) {
-		p := newProjectionFixture(t)
-		ctx := context.Background()
+	t.Run("erase removes every link", testEraseRemovesEveryLink)
 
-		requireHTTP(t, p.call("POST", "/api/subjects/"+p.subject+"/reveal", map[string]string{"reason": "Synthetic verification purpose"}, p.csrf), 200)
-		requireHTTP(t, p.call("GET", "/api/shadow/events/"+p.event+"?device_id="+p.device, nil, ""), 200)
-
-		var revealAuditID string
-		if e := p.admin.QueryRow(ctx, "SELECT id FROM audit WHERE organization_id=$1 AND action='identity.reveal' AND target=$2 ORDER BY occurred_at DESC LIMIT 1", p.org, p.subject).Scan(&revealAuditID); e != nil {
-			t.Fatal(e)
-		}
-		if _, e := p.admin.Exec(ctx, "INSERT INTO privacy_audit_outbox(organization_id,audit_id,configuration_key) VALUES($1,$2,'synthetic-outbox-key')", p.org, revealAuditID); e != nil {
-			t.Fatal(e)
-		}
-
-		// The fixture never writes shadow_content; add one tied to its event so the
-		// cascade this test hunts for ("if shadow_content keeps a row for the
-		// erased event") is actually exercised instead of vacuously true.
-		sealedContent, e := p.a.sealShadow(p.org, "event:"+p.device+":"+p.event, []byte(`{"prompt":"synthetic erasure fixture"}`))
-		if e != nil {
-			t.Fatal(e)
-		}
-		if _, e := p.admin.Exec(ctx, "INSERT INTO shadow_content(organization_id,device_id,event_id,encrypted,expires_at) VALUES($1,$2,$3,$4,now()+interval '1 hour')", p.org, p.device, p.event, []byte(sealedContent)); e != nil {
-			t.Fatal(e)
-		}
-
-		// buildAggregateReports needs a fully elapsed week that predates the
-		// organization, so back-date privacy_settings.created_at the same way the
-		// existing "fixed weeks" fixture does.
-		now := time.Now().UTC()
-		start := weekStart(now).AddDate(0, 0, -7)
-		if tag, e := p.admin.Exec(ctx, "UPDATE privacy_settings SET created_at=$2 WHERE organization_id=$1", p.org, start.AddDate(0, 0, -14)); e != nil || tag.RowsAffected() != 1 {
-			t.Fatal("privacy_settings backdate fixture missing", e)
-		}
-		tx, e := tenantTx(ctx, p.a.db, p.org)
-		if e != nil {
-			t.Fatal(e)
-		}
-		defer tx.Rollback(ctx)
-		if e := p.a.buildAggregateReports(ctx, tx, p.org, now); e != nil {
-			t.Fatal(e)
-		}
-		if e := tx.Commit(ctx); e != nil {
-			t.Fatal(e)
-		}
-		var reportRows int
-		if e := p.admin.QueryRow(ctx, "SELECT count(*) FROM aggregate_reports").Scan(&reportRows); e != nil || reportRows == 0 {
-			t.Fatal("aggregate_reports fixture missing", e, reportRows)
-		}
-
-		// Positive controls: a fixture that never linked anything would make every
-		// assertion below pass for the wrong reason.
-		for _, check := range []struct{ table, column, value string }{
-			{"identity_reveals", "collaborator_id", p.subject},
-			{"subject_views", "subject", p.subject},
-			{"privacy_audit_outbox", "audit_id", revealAuditID},
-			{"shadow_content", "event_id", p.event},
-		} {
-			var n int
-			if e := p.admin.QueryRow(ctx, "SELECT count(*) FROM "+check.table+" WHERE "+check.column+"=$1", check.value).Scan(&n); e != nil {
-				t.Fatal(e)
-			}
-			if n == 0 {
-				t.Fatalf("fixture broken: no %s row links %s", check.table, check.value)
-			}
-		}
-
-		requireHTTP(t, p.call("DELETE", "/api/subjects/"+p.subject, nil, p.csrf), 200)
-
-		tables := []string{"shadow_events", "shadow_content", "device_collaborators", "collaborators", "identity_reveals", "subject_views", "privacy_audit_outbox", "aggregate_reports", "detector_health", "candidate_domains"}
-		needles := append([]string{p.subject}, p.s.all()...)
-		for _, table := range tables {
-			for _, needle := range needles {
-				var n int
-				if e := p.admin.QueryRow(ctx, "SELECT count(*) FROM "+table+" t WHERE t::text ILIKE '%'||$1||'%'", needle).Scan(&n); e != nil {
-					t.Fatal(e)
-				}
-				if n != 0 {
-					t.Fatalf("%s still links to %q after erasure: %d rows", table, needle, n)
-				}
-			}
-		}
-		// audit is append-only and durably keeps the subject UUID (target); it must
-		// never carry a plaintext identity field alongside it.
-		for _, needle := range []string{p.s.name, p.s.email, p.s.host} {
-			var n int
-			if e := p.admin.QueryRow(ctx, "SELECT count(*) FROM audit t WHERE t::text ILIKE '%'||$1||'%'", needle).Scan(&n); e != nil {
-				t.Fatal(e)
-			}
-			if n != 0 {
-				t.Fatalf("audit contains sentinel %q after erasure: %d rows", needle, n)
-			}
-		}
-	})
-
-	t.Run("expiry anonymises the same way", func(t *testing.T) {
-		f, subject, device := privacyFixture(t)
-		ctx := context.Background()
-		if tag, e := f.admin.Exec(ctx, "UPDATE privacy_settings SET configuration=$2 WHERE organization_id=$1", f.org, []byte(`{"identity_link_days":7}`)); e != nil || tag.RowsAffected() != 1 {
-			t.Fatal(e)
-		}
-		old := time.Now().AddDate(0, 0, -8)
-		addPrivacyEvent(t, f, subject, device, old, "claude.ai")
-		if tag, e := f.admin.Exec(ctx, "UPDATE collaborators SET last_associated_at=$2 WHERE id=$1", subject, old); e != nil || tag.RowsAffected() != 1 {
-			t.Fatal(e)
-		}
-
-		tx, e := tenantTx(ctx, f.a.db, f.org)
-		if e != nil {
-			t.Fatal(e)
-		}
-		defer tx.Rollback(ctx)
-		if e := f.a.maintainPrivacy(ctx, tx, f.org, time.Now()); e != nil {
-			t.Fatal(e)
-		}
-		if e := tx.Commit(ctx); e != nil {
-			t.Fatal(e)
-		}
-
-		var events int
-		if e := f.admin.QueryRow(ctx, "SELECT count(*) FROM shadow_events").Scan(&events); e != nil || events != 0 {
-			t.Fatal("expired event survived retention", e, events)
-		}
-		var subjects int
-		if e := f.admin.QueryRow(ctx, "SELECT count(*) FROM collaborators WHERE id=$1", subject).Scan(&subjects); e != nil || subjects != 0 {
-			t.Fatal("expired collaborator survived retention", e, subjects)
-		}
-		var raw []byte
-		if e := f.admin.QueryRow(ctx, "SELECT details FROM audit WHERE action='retention.purge' AND target='organization' ORDER BY occurred_at DESC LIMIT 1").Scan(&raw); e != nil {
-			t.Fatal("retention.purge audit row missing", e)
-		}
-		var counts map[string]int64
-		if e := json.Unmarshal(raw, &counts); e != nil {
-			t.Fatal(e)
-		}
-		if counts["events"] < 1 || counts["subjects"] < 1 {
-			t.Fatalf("retention.purge counts missing events/subjects: %v", counts)
-		}
-	})
+	t.Run("expiry anonymises the same way", testExpiryAnonymisesSubject)
 }
 
 // osOnlyEventFixture creates a projection fixture plus a second shadow_event
@@ -495,5 +159,369 @@ func testDisclosedOSIdentity(t *testing.T) {
 	}
 	if row["user"] != sentinel {
 		t.Fatalf("user = %v, want the disclosed sentinel %q", row["user"], sentinel)
+	}
+}
+
+func testCustomRoleRevealDemotion(t *testing.T) {
+	f, subject, device := privacyFixture(t)
+	ctx := context.Background()
+	id := addPrivacyEvent(t, f, subject, device, time.Now(), "claude.ai")
+	detail := "/api/shadow/events/" + id + "?device_id=" + device
+
+	w := f.call("POST", "/api/roles", map[string]any{"name": "synthetic-reader", "permissions": []string{"events.read", "devices.read", "identity.reveal"}}, f.csrf)
+	requireHTTP(t, w, 201)
+
+	var user string
+	if e := f.admin.QueryRow(ctx, "INSERT INTO users(subject,email,display_name) VALUES('synthetic-custom-role-user','custom-role@example.test','Synthetic custom role user') RETURNING id").Scan(&user); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := f.admin.Exec(ctx, "INSERT INTO memberships(organization_id,user_id,role) VALUES($1,$2,'synthetic-reader')", f.org, user); e != nil {
+		t.Fatal(e)
+	}
+	token, csrf := randomToken(), randomToken()
+	cookie := &http.Cookie{Name: cookieName("session"), Value: token}
+	if _, e := f.admin.Exec(ctx, `INSERT INTO sessions(token_hash,user_id,organization_id,csrf_token,encrypted_tokens,mfa,expires_at,identity_expires_at) VALUES($1,$2,$3,$4,$5,true,$6,$6)`, hash(token), user, f.org, csrf, []byte("synthetic-session"), time.Now().Add(time.Hour)); e != nil {
+		t.Fatal(e)
+	}
+	if tag, e := f.admin.Exec(ctx, "UPDATE sessions SET mfa_verified_at=clock_timestamp() WHERE token_hash=$1", hash(token)); e != nil || tag.RowsAffected() != 1 {
+		t.Fatal("fresh authentication fixture missing", e)
+	}
+
+	requireHTTP(t, sessionCall(f, cookie, csrf, "POST", "/api/subjects/"+subject+"/reveal", map[string]string{"reason": "Synthetic verification purpose"}), 200)
+	w = sessionCall(f, cookie, csrf, "GET", detail, nil)
+	requireHTTP(t, w, 200)
+	if !strings.Contains(w.Body.String(), "Synthetic identity") {
+		t.Fatal("reveal did not apply for the custom role", w.Body.String())
+	}
+
+	if tag, e := f.admin.Exec(ctx, "UPDATE memberships SET role='viewer' WHERE organization_id=$1 AND user_id=$2", f.org, user); e != nil || tag.RowsAffected() != 1 {
+		t.Fatal("demotion fixture missing", e)
+	}
+	w = sessionCall(f, cookie, csrf, "GET", detail, nil)
+	requireHTTP(t, w, 200)
+	if strings.Contains(w.Body.String(), "Synthetic identity") {
+		t.Fatal("a demoted role still sees a previously revealed identity", w.Body.String())
+	}
+}
+
+func testPrivacyUpdateRevokesReveals(t *testing.T) {
+	f, subject, device := privacyFixture(t)
+	ctx := context.Background()
+	id := addPrivacyEvent(t, f, subject, device, time.Now(), "claude.ai")
+	detail := "/api/shadow/events/" + id + "?device_id=" + device
+
+	requireHTTP(t, f.call("POST", "/api/subjects/"+subject+"/reveal", map[string]string{"reason": "Synthetic verification purpose"}, f.csrf), 200)
+	w := f.call("GET", detail, nil, "")
+	requireHTTP(t, w, 200)
+	if !strings.Contains(w.Body.String(), "Synthetic identity") {
+		t.Fatal("reveal did not apply", w.Body.String())
+	}
+
+	// An unchanged configuration still counts as an update: only the reason and
+	// the revision bump are new, and that alone must revoke every reveal.
+	requireHTTP(t, putPrivacyTest(t, f, defaultPrivacy()), 200)
+
+	w = f.call("GET", detail, nil, "")
+	requireHTTP(t, w, 200)
+	if strings.Contains(w.Body.String(), "Synthetic identity") {
+		t.Fatal("a reveal survived a privacy settings update", w.Body.String())
+	}
+	var n int
+	if e := f.admin.QueryRow(ctx, "SELECT count(*) FROM identity_reveals").Scan(&n); e != nil || n != 0 {
+		t.Fatal("identity_reveals not cleared by the update", e, n)
+	}
+}
+
+func testPrivacyRevealRefusals(t *testing.T) {
+	p := newProjectionFixture(t)
+	w := p.as("key", "POST", "/api/subjects/"+p.subject+"/reveal", map[string]string{"reason": "Synthetic verification purpose"})
+	requireHTTP(t, w, 403)
+	if !strings.Contains(w.Body.String(), "session_required") {
+		t.Fatal("wrong refusal for an API key", w.Body.String())
+	}
+
+	cfg := defaultPrivacy()
+	cfg.AggregateOnly = true
+	requireHTTP(t, putPrivacyTest(t, p.observabilityFixture, cfg), 200)
+
+	w = p.as("owner", "POST", "/api/subjects/"+p.subject+"/reveal", map[string]string{"reason": "Synthetic verification purpose"})
+	requireHTTP(t, w, 403)
+	if !strings.Contains(w.Body.String(), "aggregate_only") {
+		t.Fatal("wrong refusal under aggregate-only", w.Body.String())
+	}
+}
+
+func testPrivacyRevealBoundaryExpiry(t *testing.T) {
+	f, subject, device := privacyFixture(t)
+	ctx := context.Background()
+	id := addPrivacyEvent(t, f, subject, device, time.Now(), "claude.ai")
+	detail := "/api/shadow/events/" + id + "?device_id=" + device
+
+	for i := 0; i < 2; i++ {
+		requireHTTP(t, f.call("POST", "/api/subjects/"+subject+"/reveal", map[string]string{"reason": "Synthetic verification purpose"}, f.csrf), 200)
+	}
+	var n int
+	if e := f.admin.QueryRow(ctx, "SELECT count(*) FROM identity_reveals WHERE collaborator_id=$1", subject).Scan(&n); e != nil {
+		t.Fatal(e)
+	}
+	if n != 2 {
+		t.Fatalf("want 2 identity_reveals rows after two reveals, got %d", n)
+	}
+	w := f.call("GET", detail, nil, "")
+	requireHTTP(t, w, 200)
+	if !strings.Contains(w.Body.String(), "Synthetic identity") {
+		t.Fatal("reveal did not apply", w.Body.String())
+	}
+
+	// revealed() checks expires_at>clock_timestamp() -- a strict ">". Pushing
+	// every row to this exact instant still shows an alias an instant later,
+	// which is the earliest observable point to exercise that boundary.
+	tag, e := f.admin.Exec(ctx, "UPDATE identity_reveals SET expires_at=clock_timestamp() WHERE collaborator_id=$1", subject)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if tag.RowsAffected() != 2 {
+		t.Fatalf("want 2 rows pushed to their expiry boundary, got %d", tag.RowsAffected())
+	}
+	w = f.call("GET", detail, nil, "")
+	requireHTTP(t, w, 200)
+	if strings.Contains(w.Body.String(), "Synthetic identity") {
+		t.Fatal("an expired reveal still disclosed the identity", w.Body.String())
+	}
+}
+
+func testPrivacySessionSwitchRevokesReveals(t *testing.T) {
+	if Edition != "commercial" {
+		t.Skip("organization hierarchy is an Enterprise capability")
+	}
+	f, subject, _ := privacyFixture(t)
+	ctx := context.Background()
+	requireHTTP(t, f.call("POST", "/api/subjects/"+subject+"/reveal", map[string]string{"reason": "Synthetic verification purpose"}, f.csrf), 200)
+	var before int
+	if e := f.admin.QueryRow(ctx, "SELECT count(*) FROM identity_reveals").Scan(&before); e != nil || before != 1 {
+		t.Fatal("reveal fixture missing", e, before)
+	}
+
+	w := f.call("POST", "/api/organizations", map[string]any{"name": "Synthetic child organization", "parent_id": f.org}, f.csrf)
+	requireHTTP(t, w, 201)
+	var child struct {
+		ID string `json:"id"`
+	}
+	if e := json.Unmarshal(w.Body.Bytes(), &child); e != nil {
+		t.Fatal(e)
+	}
+
+	requireHTTP(t, f.call("POST", "/api/session/organization", map[string]any{"organization_id": child.ID}, f.csrf), 200)
+
+	// f.admin already defaults to f.org (the root); kept explicit since these
+	// rows live in the root's tenant and FORCE RLS makes a stale tenant look
+	// merely empty, never wrong.
+	setTenant(t, f.admin, f.org)
+	var after int
+	if e := f.admin.QueryRow(ctx, "SELECT count(*) FROM identity_reveals WHERE session_hash=$1", hash(f.owner.Value)).Scan(&after); e != nil {
+		t.Fatal(e)
+	}
+	if after != 0 {
+		t.Fatalf("identity_reveals survived an organization switch: %d rows", after)
+	}
+}
+
+func testPrivacyParentLockProtection(t *testing.T) {
+	if Edition != "commercial" {
+		t.Skip("organization hierarchy is an Enterprise capability")
+	}
+	f, _, _ := privacyFixture(t)
+	cfg := defaultPrivacy()
+	cfg.LockDescendants = true
+	cfg.ShareHealth = true
+	requireHTTP(t, putPrivacyTest(t, f, cfg), 200)
+
+	w := f.call("POST", "/api/organizations", map[string]any{"name": "Synthetic child organization", "parent_id": f.org}, f.csrf)
+	requireHTTP(t, w, 201)
+	var child struct {
+		ID string `json:"id"`
+	}
+	if e := json.Unmarshal(w.Body.Bytes(), &child); e != nil {
+		t.Fatal(e)
+	}
+	requireHTTP(t, f.call("POST", "/api/session/organization", map[string]any{"organization_id": child.ID}, f.csrf), 200)
+
+	view := readPrivacyTest(t, f)
+	if view.LockedBy != f.org {
+		t.Fatalf("locked_by = %q, want the root organization %q", view.LockedBy, f.org)
+	}
+	if view.Config.ShareHealth {
+		t.Fatal("a consent (share_health) was inherited from the parent lock")
+	}
+
+	for _, attempt := range []struct {
+		name  string
+		apply func(*IdentityPrivacyConfig)
+	}{
+		{"pseudonymous", func(c *IdentityPrivacyConfig) { c.Pseudonymous = false }},
+		{"k", func(c *IdentityPrivacyConfig) { c.K = 2 }},
+		{"identity_days", func(c *IdentityPrivacyConfig) { c.IdentityDays = 7 }},
+	} {
+		t.Run(attempt.name, func(t *testing.T) {
+			attempted := view.Config
+			attempt.apply(&attempted)
+			w := putPrivacyTest(t, f, attempted)
+			requireHTTP(t, w, 403)
+			if !strings.Contains(w.Body.String(), "configuration_enforced") {
+				t.Fatal("wrong refusal", w.Body.String())
+			}
+		})
+	}
+}
+
+func testEraseRemovesEveryLink(t *testing.T) {
+	p := newProjectionFixture(t)
+	ctx := context.Background()
+	revealAuditID := setupErasureLinks(t, ctx, p)
+	assertErasureLinksPresent(t, ctx, p, revealAuditID)
+	requireHTTP(t, p.call("DELETE", "/api/subjects/"+p.subject, nil, p.csrf), 200)
+	assertErasureRemoved(t, ctx, p)
+}
+
+func setupErasureLinks(t *testing.T, ctx context.Context, p *projectionFixture) string {
+	requireHTTP(t, p.call("POST", "/api/subjects/"+p.subject+"/reveal", map[string]string{"reason": "Synthetic verification purpose"}, p.csrf), 200)
+	requireHTTP(t, p.call("GET", "/api/shadow/events/"+p.event+"?device_id="+p.device, nil, ""), 200)
+
+	var revealAuditID string
+	if e := p.admin.QueryRow(ctx, "SELECT id FROM audit WHERE organization_id=$1 AND action='identity.reveal' AND target=$2 ORDER BY occurred_at DESC LIMIT 1", p.org, p.subject).Scan(&revealAuditID); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := p.admin.Exec(ctx, "INSERT INTO privacy_audit_outbox(organization_id,audit_id,configuration_key) VALUES($1,$2,'synthetic-outbox-key')", p.org, revealAuditID); e != nil {
+		t.Fatal(e)
+	}
+
+	// The fixture never writes shadow_content; add one tied to its event so the
+	// cascade this test hunts for ("if shadow_content keeps a row for the
+	// erased event") is actually exercised instead of vacuously true.
+	sealedContent, e := p.a.sealShadow(p.org, "event:"+p.device+":"+p.event, []byte(`{"prompt":"synthetic erasure fixture"}`))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e := p.admin.Exec(ctx, "INSERT INTO shadow_content(organization_id,device_id,event_id,encrypted,expires_at) VALUES($1,$2,$3,$4,now()+interval '1 hour')", p.org, p.device, p.event, []byte(sealedContent)); e != nil {
+		t.Fatal(e)
+	}
+
+	// buildAggregateReports needs a fully elapsed week that predates the
+	// organization, so back-date privacy_settings.created_at the same way the
+	// existing "fixed weeks" fixture does.
+	now := time.Now().UTC()
+	start := weekStart(now).AddDate(0, 0, -7)
+	if tag, e := p.admin.Exec(ctx, "UPDATE privacy_settings SET created_at=$2 WHERE organization_id=$1", p.org, start.AddDate(0, 0, -14)); e != nil || tag.RowsAffected() != 1 {
+		t.Fatal("privacy_settings backdate fixture missing", e)
+	}
+	tx, e := tenantTx(ctx, p.a.db, p.org)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer tx.Rollback(ctx)
+	if e := p.a.buildAggregateReports(ctx, tx, p.org, now); e != nil {
+		t.Fatal(e)
+	}
+	if e := tx.Commit(ctx); e != nil {
+		t.Fatal(e)
+	}
+	var reportRows int
+	if e := p.admin.QueryRow(ctx, "SELECT count(*) FROM aggregate_reports").Scan(&reportRows); e != nil || reportRows == 0 {
+		t.Fatal("aggregate_reports fixture missing", e, reportRows)
+	}
+
+	return revealAuditID
+}
+
+func assertErasureLinksPresent(t *testing.T, ctx context.Context, p *projectionFixture, revealAuditID string) {
+	// Positive controls: a fixture that never linked anything would make every
+	// assertion below pass for the wrong reason.
+	for _, check := range []struct{ table, column, value string }{
+		{"identity_reveals", "collaborator_id", p.subject},
+		{"subject_views", "subject", p.subject},
+		{"privacy_audit_outbox", "audit_id", revealAuditID},
+		{"shadow_content", "event_id", p.event},
+	} {
+		var n int
+		if e := p.admin.QueryRow(ctx, "SELECT count(*) FROM "+check.table+" WHERE "+check.column+"=$1", check.value).Scan(&n); e != nil {
+			t.Fatal(e)
+		}
+		if n == 0 {
+			t.Fatalf("fixture broken: no %s row links %s", check.table, check.value)
+		}
+	}
+
+}
+
+func assertErasureRemoved(t *testing.T, ctx context.Context, p *projectionFixture) {
+
+	tables := []string{"shadow_events", "shadow_content", "device_collaborators", "collaborators", "identity_reveals", "subject_views", "privacy_audit_outbox", "aggregate_reports", "detector_health", "candidate_domains"}
+	needles := append([]string{p.subject}, p.s.all()...)
+	for _, table := range tables {
+		for _, needle := range needles {
+			var n int
+			if e := p.admin.QueryRow(ctx, "SELECT count(*) FROM "+table+" t WHERE t::text ILIKE '%'||$1||'%'", needle).Scan(&n); e != nil {
+				t.Fatal(e)
+			}
+			if n != 0 {
+				t.Fatalf("%s still links to %q after erasure: %d rows", table, needle, n)
+			}
+		}
+	}
+	// audit is append-only and durably keeps the subject UUID (target); it must
+	// never carry a plaintext identity field alongside it.
+	for _, needle := range []string{p.s.name, p.s.email, p.s.host} {
+		var n int
+		if e := p.admin.QueryRow(ctx, "SELECT count(*) FROM audit t WHERE t::text ILIKE '%'||$1||'%'", needle).Scan(&n); e != nil {
+			t.Fatal(e)
+		}
+		if n != 0 {
+			t.Fatalf("audit contains sentinel %q after erasure: %d rows", needle, n)
+		}
+	}
+}
+
+func testExpiryAnonymisesSubject(t *testing.T) {
+	f, subject, device := privacyFixture(t)
+	ctx := context.Background()
+	if tag, e := f.admin.Exec(ctx, "UPDATE privacy_settings SET configuration=$2 WHERE organization_id=$1", f.org, []byte(`{"identity_link_days":7}`)); e != nil || tag.RowsAffected() != 1 {
+		t.Fatal(e)
+	}
+	old := time.Now().AddDate(0, 0, -8)
+	addPrivacyEvent(t, f, subject, device, old, "claude.ai")
+	if tag, e := f.admin.Exec(ctx, "UPDATE collaborators SET last_associated_at=$2 WHERE id=$1", subject, old); e != nil || tag.RowsAffected() != 1 {
+		t.Fatal(e)
+	}
+
+	tx, e := tenantTx(ctx, f.a.db, f.org)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer tx.Rollback(ctx)
+	if e := f.a.maintainPrivacy(ctx, tx, f.org, time.Now()); e != nil {
+		t.Fatal(e)
+	}
+	if e := tx.Commit(ctx); e != nil {
+		t.Fatal(e)
+	}
+
+	var events int
+	if e := f.admin.QueryRow(ctx, "SELECT count(*) FROM shadow_events").Scan(&events); e != nil || events != 0 {
+		t.Fatal("expired event survived retention", e, events)
+	}
+	var subjects int
+	if e := f.admin.QueryRow(ctx, "SELECT count(*) FROM collaborators WHERE id=$1", subject).Scan(&subjects); e != nil || subjects != 0 {
+		t.Fatal("expired collaborator survived retention", e, subjects)
+	}
+	var raw []byte
+	if e := f.admin.QueryRow(ctx, "SELECT details FROM audit WHERE action='retention.purge' AND target='organization' ORDER BY occurred_at DESC LIMIT 1").Scan(&raw); e != nil {
+		t.Fatal("retention.purge audit row missing", e)
+	}
+	var counts map[string]int64
+	if e := json.Unmarshal(raw, &counts); e != nil {
+		t.Fatal(e)
+	}
+	if counts["events"] < 1 || counts["subjects"] < 1 {
+		t.Fatalf("retention.purge counts missing events/subjects: %v", counts)
 	}
 }

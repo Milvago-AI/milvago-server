@@ -61,32 +61,59 @@ func validateShadowFilterValue(key, value string) error {
 	return nil
 }
 
+func shadowPeriod(q url.Values) (time.Time, time.Time, error) {
+	now := time.Now().UTC()
+	from, to := now.Add(-24*time.Hour), now
+	for _, key := range []string{"from", "to"} {
+		if len(q[key]) > 1 {
+			return time.Time{}, time.Time{}, bad("Dates must have one value.")
+		}
+		if raw := q.Get(key); raw != "" {
+			date, err := time.Parse(time.RFC3339Nano, raw)
+			if err != nil {
+				return time.Time{}, time.Time{}, bad("Dates must be RFC3339.")
+			}
+			if key == "from" {
+				from = date
+			} else {
+				to = date
+			}
+		}
+	}
+	if !from.Before(to) || to.Sub(from) > 366*24*time.Hour {
+		return time.Time{}, time.Time{}, bad("Choose a valid period of at most 366 days.")
+	}
+	return from, to, nil
+}
+
+func shadowFilterValues(key string, values []string) ([]string, error) {
+	if len(values) > 20 {
+		return nil, bad("At most twenty selections per filter.")
+	}
+	out := []string{}
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if err := validateShadowFilterValue(key, value); err != nil {
+			return nil, err
+		}
+		if !slices.Contains(out, value) {
+			out = append(out, value)
+		}
+	}
+	return out, nil
+}
+
 func parseShadowFilter(q url.Values) (shadowFilter, error) {
 	f := shadowFilter{Where: "TRUE", Args: []any{}, Criteria: map[string]any{}}
 	add := func(expr string, value any) {
 		f.Args = append(f.Args, value)
 		f.Where += " AND " + fmt.Sprintf(expr, len(f.Args))
 	}
-	now := time.Now().UTC()
-	from, to := now.Add(-24*time.Hour), now
-	for _, key := range []string{"from", "to"} {
-		if len(q[key]) > 1 {
-			return f, bad("Dates must have one value.")
-		}
-		if raw := q.Get(key); raw != "" {
-			d, e := time.Parse(time.RFC3339Nano, raw)
-			if e != nil {
-				return f, bad("Dates must be RFC3339.")
-			}
-			if key == "from" {
-				from = d
-			} else {
-				to = d
-			}
-		}
-	}
-	if !from.Before(to) || to.Sub(from) > 366*24*time.Hour {
-		return f, bad("Choose a valid period of at most 366 days.")
+	from, to, err := shadowPeriod(q)
+	if err != nil {
+		return f, err
 	}
 	add("e.occurred_at >= $%d", from)
 	add("e.occurred_at <= $%d", to)
@@ -95,21 +122,9 @@ func parseShadowFilter(q url.Values) (shadowFilter, error) {
 	f.Criteria["to"] = to.Format(time.RFC3339Nano)
 	columns := map[string]string{"actor_id": actorBucket, "device_id": "e.device_id::text", "tool": "e.tool", "provider": "e.provider", "model": "coalesce(nullif(e.model,''),'unknown')", "sensitivity": "e.sensitivity", "action": "e.action", "kind": "e.kind"}
 	for key, col := range columns {
-		values := q[key]
-		if len(values) > 20 {
-			return f, bad("At most twenty selections per filter.")
-		}
-		out := []string{}
-		for _, v := range values {
-			if v == "" {
-				continue
-			}
-			if err := validateShadowFilterValue(key, v); err != nil {
-				return f, err
-			}
-			if !slices.Contains(out, v) {
-				out = append(out, v)
-			}
+		out, err := shadowFilterValues(key, q[key])
+		if err != nil {
+			return f, err
 		}
 		if len(out) > 0 {
 			add(col+" = ANY($%d::text[])", out)

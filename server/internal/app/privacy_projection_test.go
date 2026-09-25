@@ -310,104 +310,114 @@ func (p *projectionFixture) sweep(t *testing.T, label string, aggregateOnly bool
 			if r.path == "" || (r.optional && r.pattern != "" && !registered[r.pattern]) {
 				continue
 			}
-			w := p.as(actor, "GET", r.path, nil)
-			refused := aggregateOnly && w.Code == 403 && strings.Contains(w.Body.String(), "aggregate_only")
-			if actor == "owner" && r.expect != 0 && w.Code != r.expect && !refused {
-				t.Fatalf("%s: owner GET %s: HTTP %d, want %d: %s", label, r.path, w.Code, r.expect, w.Body.String())
-			}
-			allowed := append([]string{}, r.legitimate...)
-			u, _ := url.Parse(r.path)
-			switch u.Path {
-			case "/api/devices", "/api/events", "/api/shadow/events", "/api/shadow/conversations", "/api/shadow/conversation", "/api/model-access/status", "/api/tools":
-				if u.Query().Get("identity") != "aliases" {
-					allowed = append(allowed, p.s.host)
-				}
-			default:
-				if strings.HasPrefix(u.Path, "/api/shadow/events/") && u.Query().Get("identity") != "aliases" {
-					allowed = append(allowed, p.s.host)
-				}
-			}
-			p.scan(t, label+": "+actor+" GET "+r.path, w.Body.Bytes(), allowed...)
+			p.sweepRoute(t, label, aggregateOnly, actor, r)
 		}
 	}
 }
 
+func (p *projectionFixture) sweepRoute(t *testing.T, label string, aggregateOnly bool, actor string, r projectionRoute) {
+	t.Helper()
+	w := p.as(actor, "GET", r.path, nil)
+	refused := aggregateOnly && w.Code == 403 && strings.Contains(w.Body.String(), "aggregate_only")
+	if actor == "owner" && r.expect != 0 && w.Code != r.expect && !refused {
+		t.Fatalf("%s: owner GET %s: HTTP %d, want %d: %s", label, r.path, w.Code, r.expect, w.Body.String())
+	}
+	allowed := append([]string{}, r.legitimate...)
+	u, _ := url.Parse(r.path)
+	switch u.Path {
+	case "/api/devices", "/api/events", "/api/shadow/events", "/api/shadow/conversations", "/api/shadow/conversation", "/api/model-access/status", "/api/tools":
+		if u.Query().Get("identity") != "aliases" {
+			allowed = append(allowed, p.s.host)
+		}
+	default:
+		if strings.HasPrefix(u.Path, "/api/shadow/events/") && u.Query().Get("identity") != "aliases" {
+			allowed = append(allowed, p.s.host)
+		}
+	}
+	p.scan(t, label+": "+actor+" GET "+r.path, w.Body.Bytes(), allowed...)
+}
+
 func TestPrivacyProjections(t *testing.T) {
 	p := newProjectionFixture(t)
-	ctx := context.Background()
-	t.Run("every registered route is audited", func(t *testing.T) {
-		registered := p.registered()
-		if len(registered) < 40 {
-			t.Fatal("route recorder is empty or incomplete", len(registered))
-		}
-		listed := map[string]bool{}
-		for _, r := range p.routes() {
-			if r.pattern == "" {
-				continue
-			}
-			if listed[r.pattern] {
-				t.Fatal("route listed twice", r.pattern)
-			}
-			listed[r.pattern] = true
-			if r.path == "" && r.exempt == "" {
-				t.Fatal("route neither exercised nor exempt with a reason", r.pattern)
-			}
-			if !registered[r.pattern] && !r.optional {
-				t.Fatal("route listed but not registered", r.pattern)
-			}
-		}
-		for pattern := range registered {
-			if !listed[pattern] {
-				t.Fatalf("registered route is not covered by the identity-projection audit: %s", pattern)
-			}
-		}
-	})
+	t.Run("every registered route is audited", func(t *testing.T) { testRegisteredProjectionRoutes(t, p) })
 	t.Run("pseudonymous: no sentinel leaves the server", func(t *testing.T) {
 		p.sweep(t, "pseudonymous", false)
 	})
-	t.Run("search by a private value matches nothing", func(t *testing.T) {
-		// Positive control first: the alias is searchable, so an empty result
-		// below is a decision, not a broken filter.
-		var alias string
-		if e := p.admin.QueryRow(ctx, "SELECT alias FROM collaborators WHERE id=$1", p.subject).Scan(&alias); e != nil {
+	t.Run("search by a private value matches nothing", func(t *testing.T) { testProjectionPrivateSearch(t, p) })
+	t.Run("aggregate only: no individual row and still no sentinel", func(t *testing.T) { testProjectionAggregateOnly(t, p) })
+}
+
+func testRegisteredProjectionRoutes(t *testing.T, p *projectionFixture) {
+	registered := p.registered()
+	if len(registered) < 40 {
+		t.Fatal("route recorder is empty or incomplete", len(registered))
+	}
+	listed := map[string]bool{}
+	for _, r := range p.routes() {
+		if r.pattern == "" {
+			continue
+		}
+		if listed[r.pattern] {
+			t.Fatal("route listed twice", r.pattern)
+		}
+		listed[r.pattern] = true
+		if r.path == "" && r.exempt == "" {
+			t.Fatal("route neither exercised nor exempt with a reason", r.pattern)
+		}
+		if !registered[r.pattern] && !r.optional {
+			t.Fatal("route listed but not registered", r.pattern)
+		}
+	}
+	for pattern := range registered {
+		if !listed[pattern] {
+			t.Fatalf("registered route is not covered by the identity-projection audit: %s", pattern)
+		}
+	}
+}
+
+func testProjectionPrivateSearch(t *testing.T, p *projectionFixture) {
+	// Positive control first: the alias is searchable, so an empty result
+	// below is a decision, not a broken filter.
+	var alias string
+	if e := p.admin.QueryRow(context.Background(), "SELECT alias FROM collaborators WHERE id=$1", p.subject).Scan(&alias); e != nil {
+		t.Fatal(e)
+	}
+	count := func(t *testing.T, path string) int {
+		t.Helper()
+		w := p.as("owner", "GET", path, nil)
+		requireHTTP(t, w, 200)
+		var out struct {
+			Items []json.RawMessage `json:"items"`
+		}
+		if e := json.Unmarshal(w.Body.Bytes(), &out); e != nil {
 			t.Fatal(e)
 		}
-		count := func(t *testing.T, path string) int {
-			t.Helper()
-			w := p.as("owner", "GET", path, nil)
-			requireHTTP(t, w, 200)
-			var out struct {
-				Items []json.RawMessage `json:"items"`
-			}
-			if e := json.Unmarshal(w.Body.Bytes(), &out); e != nil {
-				t.Fatal(e)
-			}
-			return len(out.Items)
-		}
-		if count(t, "/api/shadow/events?query="+url.QueryEscape(alias)) == 0 {
-			t.Fatal("alias search matched nothing: the control is broken")
-		}
-		for _, private := range []string{p.s.host, p.s.name, p.s.email, p.s.osUser, p.s.eventUser} {
-			for _, base := range []string{"/api/shadow/events?query=", "/api/events?query="} {
-				if n := count(t, base+url.QueryEscape(private)); n != 0 {
-					t.Fatalf("search %s%q matched %d rows", base, private, n)
-				}
+		return len(out.Items)
+	}
+	if count(t, "/api/shadow/events?query="+url.QueryEscape(alias)) == 0 {
+		t.Fatal("alias search matched nothing: the control is broken")
+	}
+	for _, private := range []string{p.s.host, p.s.name, p.s.email, p.s.osUser, p.s.eventUser} {
+		for _, base := range []string{"/api/shadow/events?query=", "/api/events?query="} {
+			if n := count(t, base+url.QueryEscape(private)); n != 0 {
+				t.Fatalf("search %s%q matched %d rows", base, private, n)
 			}
 		}
-	})
-	t.Run("aggregate only: no individual row and still no sentinel", func(t *testing.T) {
-		cfg := defaultPrivacy()
-		cfg.AggregateOnly = true
-		requireHTTP(t, putPrivacyTest(t, p.observabilityFixture, cfg), 200)
-		detail := "/api/shadow/events/" + p.event + "?device_id=" + p.device
-		for _, path := range []string{"/api/events", "/api/shadow/events", detail, "/api/shadow/cartography", "/api/shadow/export?format=json", "/api/shadow/export?format=csv"} {
-			w := p.as("owner", "GET", path, nil)
-			requireHTTP(t, w, 403)
-			if !strings.Contains(w.Body.String(), "aggregate_only") {
-				t.Fatal("wrong refusal", path, w.Body.String())
-			}
+	}
+}
+
+func testProjectionAggregateOnly(t *testing.T, p *projectionFixture) {
+	cfg := defaultPrivacy()
+	cfg.AggregateOnly = true
+	requireHTTP(t, putPrivacyTest(t, p.observabilityFixture, cfg), 200)
+	detail := "/api/shadow/events/" + p.event + "?device_id=" + p.device
+	for _, path := range []string{"/api/events", "/api/shadow/events", detail, "/api/shadow/cartography", "/api/shadow/export?format=json", "/api/shadow/export?format=csv"} {
+		w := p.as("owner", "GET", path, nil)
+		requireHTTP(t, w, 403)
+		if !strings.Contains(w.Body.String(), "aggregate_only") {
+			t.Fatal("wrong refusal", path, w.Body.String())
 		}
-		requireHTTP(t, p.as("owner", "GET", "/api/devices", nil), 200)
-		p.sweep(t, "aggregate only", true)
-	})
+	}
+	requireHTTP(t, p.as("owner", "GET", "/api/devices", nil), 200)
+	p.sweep(t, "aggregate only", true)
 }

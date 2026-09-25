@@ -14,13 +14,19 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// TestRetentionPurge proves the hourly retention maintenance actually deletes:
-// the runtime role holds DELETE on audit (granted at boot), so purgeOrgRetention
-// commits every purge in one transaction — and the append-only trigger remains
-// the only authority on what may leave the audit table. Fixtures are written
-// through the admin pool; the purge and the attacks run through the runtime
-// pool, the one the grant decision concerns.
-func TestRetentionPurge(t *testing.T) {
+type retentionPurgeFixture struct {
+	ctx                             context.Context
+	admin, db                       *pgxpool.Pool
+	a                               *App
+	org                             string
+	user, device                    string
+	oldAudit, recentAudit           string
+	oldEnrollment, freshEnrollment  string
+	oldEvent, freshEvent            string
+	oldKey, liveKey, retiredProfile string
+}
+
+func newRetentionPurgeFixture(t *testing.T) *retentionPurgeFixture {
 	runtimeURL, migrationURL := os.Getenv("TEST_DATABASE_URL"), os.Getenv("TEST_MIGRATION_DATABASE_URL")
 	if runtimeURL == "" || migrationURL == "" {
 		t.Skip("retention purge integration requires disposable milvago_test database")
@@ -61,6 +67,13 @@ func TestRetentionPurge(t *testing.T) {
 	}
 	setTenant(t, admin, org)
 
+	return &retentionPurgeFixture{ctx: ctx, admin: admin, db: db, a: a, org: org}
+}
+
+func seedRetentionBasicRows(t *testing.T, f *retentionPurgeFixture) {
+	ctx, admin, org := f.ctx, f.admin, f.org
+	var e error
+
 	var user, device string
 	if e = admin.QueryRow(ctx, `INSERT INTO users(subject,email,display_name) VALUES('retention-user','retention@example.test','Synthetic retention account') RETURNING id`).Scan(&user); e != nil {
 		t.Fatal(e)
@@ -84,6 +97,15 @@ func TestRetentionPurge(t *testing.T) {
 	if e = admin.QueryRow(ctx, `INSERT INTO enrollments(organization_id,token_hash,label,expires_at) VALUES($1,$2,'fresh',now()+interval '1 day') RETURNING id`, org, hash(randomToken())).Scan(&freshEnrollment); e != nil {
 		t.Fatal(e)
 	}
+	f.user, f.device = user, device
+	f.oldAudit, f.recentAudit = oldAudit, recentAudit
+	f.oldEnrollment, f.freshEnrollment = oldEnrollment, freshEnrollment
+}
+
+func seedRetentionShadowRows(t *testing.T, f *retentionPurgeFixture) {
+	ctx, admin, org, device := f.ctx, f.admin, f.org, f.device
+	var e error
+
 	// One event past the default 90-day retention, one recent. The old event
 	// carries still-valid content, which only the cascade may remove; the recent
 	// event carries expired content, which the direct purge must remove.
@@ -100,6 +122,13 @@ func TestRetentionPurge(t *testing.T) {
 	if tag, e := admin.Exec(ctx, `INSERT INTO shadow_content(organization_id,device_id,event_id,encrypted,expires_at) VALUES($1,$2,$3,'\x0102'::bytea,now()-interval '1 hour')`, org, device, freshEvent); e != nil || tag.RowsAffected() != 1 {
 		t.Fatal("expired content fixture missing", e)
 	}
+	f.oldEvent, f.freshEvent = oldEvent, freshEvent
+}
+
+func seedRetentionKeyRows(t *testing.T, f *retentionPurgeFixture) {
+	ctx, admin, org, user := f.ctx, f.admin, f.org, f.user
+	var e error
+
 	// One API key retired ninety-one days ago, one live.
 	var oldKey, liveKey string
 	if e = admin.QueryRow(ctx, `INSERT INTO api_keys(organization_id,user_id,name,secret_hash,permissions,expires_at,revoked_at) VALUES($1,$2,'old',$3,'{events.read}',now()+interval '10 days',now()-interval '91 days') RETURNING id`, org, user, hash(randomToken())).Scan(&oldKey); e != nil {
@@ -116,9 +145,16 @@ func TestRetentionPurge(t *testing.T) {
 		t.Fatal(e)
 	}
 
-	if e = a.purgeOrgRetention(ctx, org); e != nil {
-		t.Fatal("retention purge failed:", e)
-	}
+	f.oldKey, f.liveKey, f.retiredProfile = oldKey, liveKey, retiredProfile
+}
+
+func assertRetentionRows(t *testing.T, f *retentionPurgeFixture) {
+	ctx, admin, org := f.ctx, f.admin, f.org
+	oldAudit, recentAudit := f.oldAudit, f.recentAudit
+	oldEnrollment, freshEnrollment := f.oldEnrollment, f.freshEnrollment
+	oldEvent, freshEvent := f.oldEvent, f.freshEvent
+	oldKey, liveKey, retiredProfile := f.oldKey, f.liveKey, f.retiredProfile
+
 	count := func(query string, args ...any) int {
 		t.Helper()
 		var n int
@@ -164,6 +200,12 @@ func TestRetentionPurge(t *testing.T) {
 		t.Fatal("the organization's live deployment key was purged")
 	}
 
+}
+
+func assertRetentionAuditGuards(t *testing.T, f *retentionPurgeFixture) {
+	ctx, admin, db, org, recentAudit := f.ctx, f.admin, f.db, f.org, f.recentAudit
+	var e error
+
 	// The grant opens the purge, nothing else: without the transaction-local
 	// flag the trigger refuses the DELETE, even on a row old enough.
 	tx, e := tenantTx(ctx, db, org)
@@ -204,4 +246,22 @@ func TestRetentionPurge(t *testing.T) {
 	if e = admin.QueryRow(ctx, `SELECT action FROM audit WHERE id=$1`, recentAudit).Scan(&action); e != nil || action != "device.enroll" {
 		t.Fatal("the recent audit row did not survive the attacks untouched", e)
 	}
+}
+
+// TestRetentionPurge proves the hourly retention maintenance actually deletes:
+// the runtime role holds DELETE on audit (granted at boot), so purgeOrgRetention
+// commits every purge in one transaction — and the append-only trigger remains
+// the only authority on what may leave the audit table. Fixtures are written
+// through the admin pool; the purge and the attacks run through the runtime
+// pool, the one the grant decision concerns.
+func TestRetentionPurge(t *testing.T) {
+	f := newRetentionPurgeFixture(t)
+	seedRetentionBasicRows(t, f)
+	seedRetentionShadowRows(t, f)
+	seedRetentionKeyRows(t, f)
+	if e := f.a.purgeOrgRetention(f.ctx, f.org); e != nil {
+		t.Fatal("retention purge failed:", e)
+	}
+	assertRetentionRows(t, f)
+	assertRetentionAuditGuards(t, f)
 }

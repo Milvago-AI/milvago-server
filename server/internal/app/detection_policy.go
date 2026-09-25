@@ -124,26 +124,9 @@ func (b *detectionEventBatch) authorize(ctx context.Context, tx pgx.Tx, v *V2Eve
 	if v.CatalogRevision != nil && *v.CatalogRevision > 0 {
 		revision = *v.CatalogRevision
 	}
-	cat, found := b.catalogs[revision]
-	if !found {
-		raw := detectionFactory
-		if revision > 0 {
-			raw = nil
-			e := tx.QueryRow(ctx, "SELECT content FROM detection_catalogs WHERE revision=$1 AND (created_at>now()-interval '30 days' OR revision=(SELECT max(revision) FROM detection_catalogs))", revision).Scan(&raw)
-			if e != nil && e != pgx.ErrNoRows {
-				return e
-			}
-		}
-		if len(raw) > 0 {
-			if e := json.Unmarshal(raw, &cat); e != nil {
-				return e
-			}
-		}
-		restrictEditionProviders(&cat)
-		if b.catalogs == nil {
-			b.catalogs = map[int64]DetectionContent{}
-		}
-		b.catalogs[revision] = cat
+	cat, e := b.catalog(ctx, tx, revision)
+	if e != nil {
+		return e
 	}
 	host := strings.ToLower(v.Provider)
 	// A covered provider is checked first and wins: where the catalogue carries selectors
@@ -169,6 +152,32 @@ func (b *detectionEventBatch) authorize(ctx context.Context, tx pgx.Tx, v *V2Eve
 	v.DecisionReason = ""
 	v.URL = ""
 	return nil
+}
+
+func (b *detectionEventBatch) catalog(ctx context.Context, tx pgx.Tx, revision int64) (DetectionContent, error) {
+	if cached, found := b.catalogs[revision]; found {
+		return cached, nil
+	}
+	var cat DetectionContent
+	raw := detectionFactory
+	if revision > 0 {
+		raw = nil
+		e := tx.QueryRow(ctx, "SELECT content FROM detection_catalogs WHERE revision=$1 AND (created_at>now()-interval '30 days' OR revision=(SELECT max(revision) FROM detection_catalogs))", revision).Scan(&raw)
+		if e != nil && e != pgx.ErrNoRows {
+			return cat, e
+		}
+	}
+	if len(raw) > 0 {
+		if e := json.Unmarshal(raw, &cat); e != nil {
+			return cat, e
+		}
+	}
+	restrictEditionProviders(&cat)
+	if b.catalogs == nil {
+		b.catalogs = map[int64]DetectionContent{}
+	}
+	b.catalogs[revision] = cat
+	return cat, nil
 }
 
 // reducedToPresence keeps the platform and throws away everything else. The endpoint is

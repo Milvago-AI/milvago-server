@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // The limiter's window is fixed and the whole map is dropped when it turns, so
@@ -157,8 +155,9 @@ func TestMayGrantNonAmplification(t *testing.T) {
 
 // testAPIKeySubsystem is the integration half, called from
 // TestDatabaseSecurityAndHTTP once a console session exists.
-func testAPIKeySubsystem(t *testing.T, a *App, admin *pgxpool.Pool, ownerCookie *http.Cookie, ownerCSRF, org, user string, p *testIdentity) {
+func testAPIKeySubsystem(t *testing.T, f subsystemFixture) {
 	t.Helper()
+	a, admin, ownerCookie, ownerCSRF, org, user, p := f.a, f.admin, f.cookie, f.csrf, f.org, f.user, f.identity
 	ctx := context.Background()
 
 	call := func(method, path string, body any, cookie *http.Cookie, csrf, origin, bearer string) *httptest.ResponseRecorder {
