@@ -404,9 +404,10 @@ func (a *App) osAccountNames(r *http.Request, tx pgx.Tx, f shadowFilter) ([]byte
 	type bucket struct{ key, device, event, cipher string }
 	buckets := []bucket{}
 	order := ` ORDER BY e.occurred_at DESC,e.id DESC`
+	limitArgs := append(f.Args, osAccountLimit)
 	rows, e := tx.Query(r.Context(), `SELECT e.user_key,(array_agg(e.device_id::text`+order+`))[1],(array_agg(e.id::text`+order+`))[1],(array_agg(e."user"`+order+`))[1]`+
 		shadowJoins+` WHERE `+f.Where+` AND e.kind='prompt' AND e.collaborator_id IS NULL AND e.user_key<>'' AND e."user"<>'' AND NOT `+attachmentOnly("e")+
-		` GROUP BY 1 ORDER BY count(*) DESC,1 LIMIT `+strconv.Itoa(osAccountLimit), f.Args...)
+		` GROUP BY 1 ORDER BY count(*) DESC,1 LIMIT $`+strconv.Itoa(len(limitArgs)), limitArgs...)
 	if e != nil {
 		return nil, 0, e
 	}
