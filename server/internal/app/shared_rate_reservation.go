@@ -62,6 +62,17 @@ func (cache *quotaReservations) consume(key string, lease quotaReservation, foun
 	return true
 }
 
+func (cache *quotaReservations) finishLoad(key string, reserved quotaReservation, err error, loading chan struct{}) {
+	cache.mu.Lock()
+	if err != nil {
+		delete(cache.entries, key)
+	} else {
+		cache.entries[key] = reserved
+	}
+	close(loading)
+	cache.mu.Unlock()
+}
+
 // reserveRate is reservePublicRate in a given family: 2 for peers, 3 for totals.
 func (a *App) reserveRate(ctx context.Context, family int16, key string, budget int) error {
 	if a.db == nil {
@@ -107,14 +118,7 @@ func (a *App) reserveRate(ctx context.Context, family int16, key string, budget 
 		cache.entries[cacheKey] = quotaReservation{loading: loading}
 		cache.mu.Unlock()
 		reserved, err := a.loadPublicReservation(ctx, family, digest, budget)
-		cache.mu.Lock()
-		if err != nil {
-			delete(cache.entries, cacheKey)
-		} else {
-			cache.entries[cacheKey] = reserved
-		}
-		close(loading)
-		cache.mu.Unlock()
+		cache.finishLoad(cacheKey, reserved, err, loading)
 		return err
 	}
 }

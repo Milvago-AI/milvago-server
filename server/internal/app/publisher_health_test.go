@@ -43,6 +43,11 @@ func TestPublisherHealthObservationWindowsAndRevisions(t *testing.T) {
 	if len(batch.ProviderHealth) != 3 {
 		t.Fatalf("expected exactly three permitted revision rows: %+v", batch.ProviderHealth)
 	}
+	assertPublisherHealthVerdicts(t, batch)
+}
+
+func assertPublisherHealthVerdicts(t *testing.T, batch publisherBatch) {
+	t.Helper()
 	for i, want := range []struct {
 		revision uint64
 		state    string
@@ -62,13 +67,20 @@ func TestPublisherHealthObservationWindowsAndRevisions(t *testing.T) {
 	}
 }
 
-func insertPublisherHealth(t *testing.T, f *observabilityFixture, ctx context.Context, device string, revision int, start, end, received time.Time, network, dom int) {
+type publisherHealthObservation struct {
+	device               string
+	revision             int
+	start, end, received time.Time
+	network, dom         int
+}
+
+func insertPublisherHealth(t *testing.T, f *observabilityFixture, ctx context.Context, observation publisherHealthObservation) {
 	t.Helper()
-	payload, err := json.Marshal(map[string]any{"window_start": start, "window_end": end, "catalog_revision": revision, "providers": []map[string]any{{"provider": "claude", "navigations": 5, "prompts_network": network, "prompts_dom": dom}}})
+	payload, err := json.Marshal(map[string]any{"window_start": observation.start, "window_end": observation.end, "catalog_revision": observation.revision, "providers": []map[string]any{{"provider": "claude", "navigations": 5, "prompts_network": observation.network, "prompts_dom": observation.dom}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tag, err := f.admin.Exec(ctx, "INSERT INTO detector_health(organization_id,device_id,id,payload,received_at) VALUES($1,$2,gen_random_uuid(),$3,$4)", f.org, device, payload, received); err != nil || tag.RowsAffected() != 1 {
+	if tag, err := f.admin.Exec(ctx, "INSERT INTO detector_health(organization_id,device_id,id,payload,received_at) VALUES($1,$2,gen_random_uuid(),$3,$4)", f.org, observation.device, payload, observation.received); err != nil || tag.RowsAffected() != 1 {
 		t.Fatalf("health fixture not inserted: %v", err)
 	}
 }
@@ -81,18 +93,18 @@ func seedPublisherHealthObservations(t *testing.T, f *observabilityFixture, ctx 
 		}
 		// Yesterday's observations arrived today: they still belong to yesterday.
 		end := dayEnd.Add(-12 * time.Hour)
-		insertPublisherHealth(t, f, ctx, device, 7, end.Add(-time.Hour), end, time.Now().UTC(), 10, 1)
-		insertPublisherHealth(t, f, ctx, device, 8, end.Add(-time.Hour), end, time.Now().UTC(), 10, 9)
-		insertPublisherHealth(t, f, ctx, device, 10, end.Add(-time.Hour), end, time.Now().UTC(), 0, 6)
+		insertPublisherHealth(t, f, ctx, publisherHealthObservation{device, 7, end.Add(-time.Hour), end, time.Now().UTC(), 10, 1})
+		insertPublisherHealth(t, f, ctx, publisherHealthObservation{device, 8, end.Add(-time.Hour), end, time.Now().UTC(), 10, 9})
+		insertPublisherHealth(t, f, ctx, publisherHealthObservation{device, 10, end.Add(-time.Hour), end, time.Now().UTC(), 0, 6})
 		// Earlier observation must not inflate yesterday's ratio despite late receipt.
 		previous := dayEnd.Add(-2 * 24 * time.Hour)
-		insertPublisherHealth(t, f, ctx, device, 7, previous.Add(-time.Hour), previous, end, 1000, 1000)
+		insertPublisherHealth(t, f, ctx, publisherHealthObservation{device, 7, previous.Add(-time.Hour), previous, end, 1000, 1000})
 		// Neither pre-consent nor consent-crossing windows may be shared.
 		before := since.Add(-time.Hour)
-		insertPublisherHealth(t, f, ctx, device, 9, before.Add(-time.Hour), before, end, 10, 10)
-		insertPublisherHealth(t, f, ctx, device, 11, since.Add(-time.Minute), since.Add(time.Minute), end, 10, 10)
+		insertPublisherHealth(t, f, ctx, publisherHealthObservation{device, 9, before.Add(-time.Hour), before, end, 10, 10})
+		insertPublisherHealth(t, f, ctx, publisherHealthObservation{device, 11, since.Add(-time.Minute), since.Add(time.Minute), end, 10, 10})
 		// The unfinished current day is not part of the previous complete day.
-		insertPublisherHealth(t, f, ctx, device, 12, dayEnd, dayEnd.Add(time.Minute), time.Now().UTC(), 10, 10)
+		insertPublisherHealth(t, f, ctx, publisherHealthObservation{device, 12, dayEnd, dayEnd.Add(time.Minute), time.Now().UTC(), 10, 10})
 	}
 }
 

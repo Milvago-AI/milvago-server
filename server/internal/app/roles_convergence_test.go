@@ -111,18 +111,23 @@ func assertBuiltinRoles(t *testing.T, ctx context.Context, tx interface {
 		slices.Sort(want)
 		slices.Sort(got)
 		if !slices.Equal(want, got) {
-			missing, extra := []string{}, []string{}
-			for _, p := range want {
-				if !slices.Contains(got, p) {
-					missing = append(missing, p)
-				}
-			}
-			for _, p := range got {
-				if !slices.Contains(want, p) {
-					extra = append(extra, p)
-				}
-			}
+			missing, extra := rolePermissionDelta(want, got)
 			t.Fatalf("%s: built-in role %q has drifted: the database is missing %v and carries %v that the Go catalogue does not", when, name, missing, extra)
 		}
 	}
+}
+
+func rolePermissionDelta(want, got []string) (missing, extra []string) {
+	missing, extra = []string{}, []string{}
+	for _, p := range want {
+		if !slices.Contains(got, p) {
+			missing = append(missing, p)
+		}
+	}
+	for _, p := range got {
+		if !slices.Contains(want, p) {
+			extra = append(extra, p)
+		}
+	}
+	return missing, extra
 }

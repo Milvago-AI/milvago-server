@@ -15,7 +15,6 @@ import (
 )
 
 type retentionPurgeFixture struct {
-	ctx                             context.Context
 	admin, db                       *pgxpool.Pool
 	a                               *App
 	org                             string
@@ -67,11 +66,11 @@ func newRetentionPurgeFixture(t *testing.T) *retentionPurgeFixture {
 	}
 	setTenant(t, admin, org)
 
-	return &retentionPurgeFixture{ctx: ctx, admin: admin, db: db, a: a, org: org}
+	return &retentionPurgeFixture{admin: admin, db: db, a: a, org: org}
 }
 
 func seedRetentionBasicRows(t *testing.T, f *retentionPurgeFixture) {
-	ctx, admin, org := f.ctx, f.admin, f.org
+	ctx, admin, org := context.Background(), f.admin, f.org
 	var e error
 
 	var user, device string
@@ -103,7 +102,7 @@ func seedRetentionBasicRows(t *testing.T, f *retentionPurgeFixture) {
 }
 
 func seedRetentionShadowRows(t *testing.T, f *retentionPurgeFixture) {
-	ctx, admin, org, device := f.ctx, f.admin, f.org, f.device
+	ctx, admin, org, device := context.Background(), f.admin, f.org, f.device
 	var e error
 
 	// One event past the default 90-day retention, one recent. The old event
@@ -126,7 +125,7 @@ func seedRetentionShadowRows(t *testing.T, f *retentionPurgeFixture) {
 }
 
 func seedRetentionKeyRows(t *testing.T, f *retentionPurgeFixture) {
-	ctx, admin, org, user := f.ctx, f.admin, f.org, f.user
+	ctx, admin, org, user := context.Background(), f.admin, f.org, f.user
 	var e error
 
 	// One API key retired ninety-one days ago, one live.
@@ -149,7 +148,7 @@ func seedRetentionKeyRows(t *testing.T, f *retentionPurgeFixture) {
 }
 
 func assertRetentionRows(t *testing.T, f *retentionPurgeFixture) {
-	ctx, admin, org := f.ctx, f.admin, f.org
+	ctx, admin, org := context.Background(), f.admin, f.org
 	oldAudit, recentAudit := f.oldAudit, f.recentAudit
 	oldEnrollment, freshEnrollment := f.oldEnrollment, f.freshEnrollment
 	oldEvent, freshEvent := f.oldEvent, f.freshEvent
@@ -203,7 +202,7 @@ func assertRetentionRows(t *testing.T, f *retentionPurgeFixture) {
 }
 
 func assertRetentionAuditGuards(t *testing.T, f *retentionPurgeFixture) {
-	ctx, admin, db, org, recentAudit := f.ctx, f.admin, f.db, f.org, f.recentAudit
+	ctx, admin, db, org, recentAudit := context.Background(), f.admin, f.db, f.org, f.recentAudit
 	var e error
 
 	// The grant opens the purge, nothing else: without the transaction-local
@@ -259,7 +258,7 @@ func TestRetentionPurge(t *testing.T) {
 	seedRetentionBasicRows(t, f)
 	seedRetentionShadowRows(t, f)
 	seedRetentionKeyRows(t, f)
-	if e := f.a.purgeOrgRetention(f.ctx, f.org); e != nil {
+	if e := f.a.purgeOrgRetention(context.Background(), f.org); e != nil {
 		t.Fatal("retention purge failed:", e)
 	}
 	assertRetentionRows(t, f)

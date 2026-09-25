@@ -109,6 +109,58 @@ func languageAllowed(v string) bool { return v == "" || slices.Contains(consoleL
 // putProfile applies the changes a user may make to their own account without
 // leaving the console: the display name (local accounts only — an SSO or LDAP
 // name belongs to its provider) and the console language.
+func validateProfileNames(kind string, firstName, lastName *string, displayName string) (string, string, error) {
+	first, last := splitName(displayName)
+	if firstName != nil || lastName != nil {
+		if !profileActionAllowed(kind, "update_profile") {
+			return "", "", apiError{403, "action_forbidden", "This account setting is managed by your identity provider."}
+		}
+		if firstName == nil || lastName == nil {
+			return "", "", bad("Both the first name and the last name are required.")
+		}
+		first, last = strings.TrimSpace(*firstName), strings.TrimSpace(*lastName)
+		for _, v := range []string{first, last} {
+			if v == "" || len(v) > 60 || hasControl(v) || v != identityText(v) {
+				return "", "", bad("First name and last name must each contain 1 to 60 characters without control characters.")
+			}
+		}
+	}
+	return first, last, nil
+}
+
+func (a *App) updateProfileName(r *http.Request, tx pgx.Tx, s *Session, first, last string) (bool, error) {
+	changed := false
+	// Keycloak owns the name: the ID token's "name" claim overwrites the local
+	// copy at the next session refresh, so the provider must be updated first.
+	admin, e := a.identityAdmin(r.Context())
+	if e != nil {
+		return false, e
+	}
+	// The name the provider already holds is not a change: no write, no audit line
+	// (compared field by field there, not with the local joined copy).
+	current, e := admin.user(s.Subject)
+	if e != nil {
+		return false, e
+	}
+	if current == nil || strings.TrimSpace(current.FirstName) != first || strings.TrimSpace(current.LastName) != last {
+		changed = true
+		status, _, _, e := admin.call("PUT", "/users/"+url.PathEscape(s.Subject), map[string]any{"firstName": first, "lastName": last})
+		if e != nil {
+			return false, e
+		}
+		if status == 400 {
+			return false, bad("The identity provider refused this name.")
+		}
+		if status != 204 {
+			return false, apiError{502, "identity_unavailable", "Could not update the identity account."}
+		}
+	}
+	if _, e := tx.Exec(r.Context(), `UPDATE users SET display_name=$1 WHERE id=$2`, strings.TrimSpace(first+" "+last), s.UserID); e != nil {
+		return false, e
+	}
+	return changed, nil
+}
+
 func (a *App) putProfile(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
 	var body struct {
 		FirstName *string `json:"first_name"`
@@ -138,50 +190,16 @@ func (a *App) putProfile(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *S
 			return e
 		}
 	}
-	first, last := splitName(s.DisplayName)
-	if body.FirstName != nil || body.LastName != nil {
-		if !profileActionAllowed(kind, "update_profile") {
-			return apiError{403, "action_forbidden", "This account setting is managed by your identity provider."}
-		}
-		if body.FirstName == nil || body.LastName == nil {
-			return bad("Both the first name and the last name are required.")
-		}
-		first, last = strings.TrimSpace(*body.FirstName), strings.TrimSpace(*body.LastName)
-		for _, v := range []string{first, last} {
-			if v == "" || len(v) > 60 || hasControl(v) || v != identityText(v) {
-				return bad("First name and last name must each contain 1 to 60 characters without control characters.")
-			}
-		}
+	first, last, e := validateProfileNames(kind, body.FirstName, body.LastName, s.DisplayName)
+	if e != nil {
+		return e
 	}
 	if body.FirstName != nil || body.LastName != nil {
-		// Keycloak owns the name: the ID token's "name" claim overwrites the local
-		// copy at the next session refresh, so the provider must be updated first.
-		admin, e := a.identityAdmin(r.Context())
+		nameChanged, e := a.updateProfileName(r, tx, s, first, last)
 		if e != nil {
 			return e
 		}
-		// The name the provider already holds is not a change: no write, no audit line
-		// (compared field by field there, not with the local joined copy).
-		current, e := admin.user(s.Subject)
-		if e != nil {
-			return e
-		}
-		if current == nil || strings.TrimSpace(current.FirstName) != first || strings.TrimSpace(current.LastName) != last {
-			changed = true
-			status, _, _, e := admin.call("PUT", "/users/"+url.PathEscape(s.Subject), map[string]any{"firstName": first, "lastName": last})
-			if e != nil {
-				return e
-			}
-			if status == 400 {
-				return bad("The identity provider refused this name.")
-			}
-			if status != 204 {
-				return apiError{502, "identity_unavailable", "Could not update the identity account."}
-			}
-		}
-		if _, e := tx.Exec(r.Context(), `UPDATE users SET display_name=$1 WHERE id=$2`, strings.TrimSpace(first+" "+last), s.UserID); e != nil {
-			return e
-		}
+		changed = changed || nameChanged
 	}
 	if changed {
 		if e := audit(r.Context(), tx, s.OrganizationID, s.UserID, "profile.update", s.UserID); e != nil {

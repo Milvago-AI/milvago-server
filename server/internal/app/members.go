@@ -111,28 +111,8 @@ func (a *App) changeMemberLanguage(w http.ResponseWriter, r *http.Request, tx pg
 	reply(w, 200, map[string]string{"id": id, "language": body.Language})
 	return nil
 }
-func (a *App) mutateMember(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session, newRole string) error {
-	id := r.PathValue("id")
-	if !uuidPattern.MatchString(id) {
-		return bad("Invalid member ID.")
-	}
-	// A user cannot modify or remove their own membership.
-	if id == s.UserID {
-		return apiError{403, "self_forbidden", "You cannot change your own membership."}
-	}
-	// Serialize all membership mutations per organization, including the last-owner check.
-	if _, e := tx.Exec(r.Context(), `SELECT id FROM organizations WHERE id=$1 FOR UPDATE`, s.OrganizationID); e != nil {
-		return e
-	}
-	// The acting role/permissions were resolved (with hierarchy) by console().
-	actorRole := s.Role
-	var previous string
-	if e := tx.QueryRow(r.Context(), `SELECT role FROM memberships WHERE organization_id=$1 AND user_id=$2 FOR UPDATE`, s.OrganizationID, id).Scan(&previous); e == pgx.ErrNoRows {
-		return apiError{404, "member_not_found", "This member does not belong to the organization."}
-	} else if e != nil {
-		return e
-	}
-	if actorRole != "owner" && (previous == "owner" || newRole == "owner") {
+func checkMemberAuthority(r *http.Request, tx pgx.Tx, s *Session, id, previous, newRole string) error {
+	if s.Role != "owner" && (previous == "owner" || newRole == "owner") {
 		return forbidden()
 	}
 	// Removing or demoting is bounded like granting: nobody takes away a role broader
@@ -164,6 +144,10 @@ func (a *App) mutateMember(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s 
 			return notGranted()
 		}
 	}
+	return nil
+}
+
+func checkLastMemberOwner(r *http.Request, tx pgx.Tx, previous, newRole string) error {
 	if previous == "owner" && newRole != "owner" {
 		var owners int
 		if e := tx.QueryRow(r.Context(), `SELECT count(*) FROM memberships WHERE role='owner'`).Scan(&owners); e != nil {
@@ -172,6 +156,35 @@ func (a *App) mutateMember(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s 
 		if owners <= 1 {
 			return apiError{409, "last_owner", "Assign another owner before removing or demoting the last owner."}
 		}
+	}
+	return nil
+}
+
+func (a *App) mutateMember(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session, newRole string) error {
+	id := r.PathValue("id")
+	if !uuidPattern.MatchString(id) {
+		return bad("Invalid member ID.")
+	}
+	// A user cannot modify or remove their own membership.
+	if id == s.UserID {
+		return apiError{403, "self_forbidden", "You cannot change your own membership."}
+	}
+	// Serialize all membership mutations per organization, including the last-owner check.
+	if _, e := tx.Exec(r.Context(), `SELECT id FROM organizations WHERE id=$1 FOR UPDATE`, s.OrganizationID); e != nil {
+		return e
+	}
+	// The acting role/permissions were resolved (with hierarchy) by console().
+	var previous string
+	if e := tx.QueryRow(r.Context(), `SELECT role FROM memberships WHERE organization_id=$1 AND user_id=$2 FOR UPDATE`, s.OrganizationID, id).Scan(&previous); e == pgx.ErrNoRows {
+		return apiError{404, "member_not_found", "This member does not belong to the organization."}
+	} else if e != nil {
+		return e
+	}
+	if e := checkMemberAuthority(r, tx, s, id, previous, newRole); e != nil {
+		return e
+	}
+	if e := checkLastMemberOwner(r, tx, previous, newRole); e != nil {
+		return e
 	}
 	action := "member.role"
 	if newRole == "" {

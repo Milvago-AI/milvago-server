@@ -100,19 +100,7 @@ type installationRequest struct {
 	MachineDomains []machineDomain `json:"machine_domains"`
 }
 
-func (a *App) installEndpoint(w http.ResponseWriter, r *http.Request) error {
-	if err := a.checkPublicRequest(r, "install", 300, 1200); err != nil {
-		return err
-	}
-	bearer := r.Header.Get("Authorization")
-	if !strings.HasPrefix(bearer, "Bearer ") || len(bearer) != 50 {
-		return installerUnavailable()
-	}
-	token := strings.TrimPrefix(bearer, "Bearer ")
-	var body installationRequest
-	if err := decode(w, r, &body); err != nil {
-		return err
-	}
+func validateInstallationRequest(body *installationRequest) error {
 	rawSecret, err := base64.RawURLEncoding.DecodeString(body.InstallationSecret)
 	if err != nil || len(rawSecret) != 32 || len(body.InstallationSecret) != 43 || !uuidPattern.MatchString(body.InstallationID) || !validMetadata(body.Hostname, 120) || !slices.Contains([]string{"windows", "linux"}, body.Platform) || !versionPattern.MatchString(body.Version) || len(body.Capabilities) > 50 {
 		return bad("Invalid installation identity or endpoint metadata.")
@@ -130,6 +118,25 @@ func (a *App) installEndpoint(w http.ResponseWriter, r *http.Request) error {
 	}
 	slices.Sort(body.Capabilities)
 	body.Capabilities = slices.Compact(body.Capabilities)
+	return nil
+}
+
+func (a *App) installEndpoint(w http.ResponseWriter, r *http.Request) error {
+	if err := a.checkPublicRequest(r, "install", 300, 1200); err != nil {
+		return err
+	}
+	bearer := r.Header.Get("Authorization")
+	if !strings.HasPrefix(bearer, "Bearer ") || len(bearer) != 50 {
+		return installerUnavailable()
+	}
+	token := strings.TrimPrefix(bearer, "Bearer ")
+	var body installationRequest
+	if err := decode(w, r, &body); err != nil {
+		return err
+	}
+	if err := validateInstallationRequest(&body); err != nil {
+		return err
+	}
 	// The retry key is independent of the distributable bootstrap token. Merely
 	// knowing an installation UUID never authorizes credential recovery.
 	requestBytes, _ := json.Marshal(struct {
@@ -138,7 +145,7 @@ func (a *App) installEndpoint(w http.ResponseWriter, r *http.Request) error {
 	}{body.Hostname, body.Platform, body.Version, body.Capabilities})
 	requestHash := hash(string(requestBytes))
 	var org string
-	if err = a.db.QueryRow(r.Context(), `SELECT organization_id FROM installer_identity($1)`, hash(token)).Scan(&org); err == pgx.ErrNoRows {
+	if err := a.db.QueryRow(r.Context(), `SELECT organization_id FROM installer_identity($1)`, hash(token)).Scan(&org); err == pgx.ErrNoRows {
 		return installerUnavailable()
 	} else if err != nil {
 		return err

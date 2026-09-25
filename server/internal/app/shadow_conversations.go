@@ -121,19 +121,13 @@ func splitConversationKey(key string) (conversation, correlation, event string, 
 	return "", "", "", false
 }
 
-func (a *App) shadowConversations(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
-	if e := requireIndividual(r); e != nil {
-		return e
-	}
-	f, e := parseShadowFilter(r.URL.Query())
-	if e != nil {
-		return e
-	}
+func conversationListPage(r *http.Request) (int, int, error) {
+	var e error
 	limit := 50
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		limit, e = strconv.Atoi(raw)
 		if e != nil || limit < 1 || limit > 200 {
-			return bad("Limit must be between 1 and 200.")
+			return 0, 0, bad("Limit must be between 1 and 200.")
 		}
 	}
 	// Numbered pages need to jump, which a keyset cursor cannot do, so the console
@@ -143,12 +137,47 @@ func (a *App) shadowConversations(w http.ResponseWriter, r *http.Request, tx pgx
 	offset := 0
 	if raw := r.URL.Query().Get("offset"); raw != "" {
 		if r.URL.Query().Get("cursor") != "" {
-			return bad("Use either a cursor or an offset, not both.")
+			return 0, 0, bad("Use either a cursor or an offset, not both.")
 		}
 		offset, e = strconv.Atoi(raw)
 		if e != nil || offset < 0 || offset > 1000000 {
-			return bad("Offset must be between 0 and 1000000.")
+			return 0, 0, bad("Offset must be between 0 and 1000000.")
 		}
+	}
+	return limit, offset, nil
+}
+
+func conversationCursorFilter(r *http.Request, args []any) ([]any, string, error) {
+	cursorWhere := ""
+	if raw := r.URL.Query().Get("cursor"); raw != "" {
+		if len(raw) > 400 {
+			return nil, "", bad(msgInvalidCursor)
+		}
+		b, de := base64.RawURLEncoding.DecodeString(raw)
+		var c conversationCursor
+		if de != nil || json.Unmarshal(b, &c) != nil {
+			return nil, "", bad(msgInvalidCursor)
+		}
+		if _, _, _, valid := splitConversationKey(c.Key); !valid || c.Time.IsZero() || !uuidPattern.MatchString(c.Device) {
+			return nil, "", bad(msgInvalidCursor)
+		}
+		args = append(args, c.Time, c.Device, c.Key)
+		cursorWhere = fmt.Sprintf(" WHERE (g.last_at,g.device_id,g.group_key)<($%d,$%d::uuid,$%d)", len(args)-2, len(args)-1, len(args))
+	}
+	return args, cursorWhere, nil
+}
+
+func (a *App) shadowConversations(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
+	if e := requireIndividual(r); e != nil {
+		return e
+	}
+	f, e := parseShadowFilter(r.URL.Query())
+	if e != nil {
+		return e
+	}
+	limit, offset, e := conversationListPage(r)
+	if e != nil {
+		return e
 	}
 	args := append([]any{}, f.Args...)
 	// The correlation bridge is resolved over the period alone, not over the rest
@@ -157,21 +186,9 @@ func (a *App) shadowConversations(w http.ResponseWriter, r *http.Request, tx pgx
 	// parseShadowFilter cannot silently point this window at another column.
 	args = append(args, f.From, f.To)
 	window := fmt.Sprintf("occurred_at>=$%d AND occurred_at<=$%d", len(args)-1, len(args))
-	cursorWhere := ""
-	if raw := r.URL.Query().Get("cursor"); raw != "" {
-		if len(raw) > 400 {
-			return bad(msgInvalidCursor)
-		}
-		b, de := base64.RawURLEncoding.DecodeString(raw)
-		var c conversationCursor
-		if de != nil || json.Unmarshal(b, &c) != nil {
-			return bad(msgInvalidCursor)
-		}
-		if _, _, _, valid := splitConversationKey(c.Key); !valid || c.Time.IsZero() || !uuidPattern.MatchString(c.Device) {
-			return bad(msgInvalidCursor)
-		}
-		args = append(args, c.Time, c.Device, c.Key)
-		cursorWhere = fmt.Sprintf(" WHERE (g.last_at,g.device_id,g.group_key)<($%d,$%d::uuid,$%d)", len(args)-2, len(args)-1, len(args))
+	args, cursorWhere, e := conversationCursorFilter(r, args)
+	if e != nil {
+		return e
 	}
 	// Everything the page and its count share. The count query reuses it verbatim so
 	// the number under the pager can never describe a different set than the rows.
@@ -277,6 +294,83 @@ func (a *App) shadowConversations(w http.ResponseWriter, r *http.Request, tx pgx
 // shadowConversation returns one page of a thread, newest page first but ordered
 // oldest to newest for reading. It deliberately ignores the list filters: those
 // choose which threads are shown, opening one shows all of it.
+func (a *App) revealConversationMessage(r *http.Request, tx pgx.Tx, s *Session, m *ThreadMessage, grant, allowed bool) (bool, error) {
+	switch {
+	case m.Kind == "navigation":
+		m.ContentState = ""
+	case !allowed:
+		m.ContentState = contentIdentity
+	case !grant:
+		m.ContentState = contentDenied
+	case !m.HasContent:
+		m.ContentState = contentNotRetained
+	default:
+		m.ContentState = contentAvailable
+	}
+	if m.ContentState != contentAvailable {
+		return false, nil
+	}
+	var encrypted []byte
+	if e := tx.QueryRow(r.Context(), `SELECT encrypted FROM shadow_content WHERE event_id=$1 AND device_id=$2 AND expires_at>now()`, m.ID, m.DeviceID).Scan(&encrypted); e != nil {
+		// Expiry can land between the projection and this read; the honest
+		// answer is then that no text is retained, not a failure.
+		if e != pgx.ErrNoRows {
+			return false, e
+		}
+		m.ContentState = contentNotRetained
+		return false, nil
+	}
+	plain, oe := a.openShadow(s.OrganizationID, "event:"+m.DeviceID+":"+m.ID, string(encrypted))
+	if oe != nil {
+		return false, oe
+	}
+	if e := json.Unmarshal(plain, &m.Content); e != nil {
+		return false, e
+	}
+	return true, nil
+}
+
+func (a *App) revealConversationContents(r *http.Request, tx pgx.Tx, s *Session, items []ThreadMessage) (bool, error) {
+	grant, e := contentAccessAvailable(r.Context(), tx, s.OrganizationID, s.UserID)
+	if e != nil {
+		return false, e
+	}
+	grant = grant && s.contentUnlocked()
+	identity, seen := map[string]bool{}, map[string]int{}
+	targets := []string{}
+	for i := range items {
+		m := &items[i]
+		seen[m.AuditSubject]++
+		if _, done := identity[m.ActorID]; !done {
+			allowed, ie := revealed(r, tx, m.ActorID)
+			if ie != nil {
+				return false, ie
+			}
+			identity[m.ActorID] = allowed
+		}
+		decrypted, re := a.revealConversationMessage(r, tx, s, m, grant, identity[m.ActorID])
+		if re != nil {
+			return false, re
+		}
+		if !decrypted {
+			continue
+		}
+		targets = append(targets, m.DeviceID+":"+m.ID)
+	}
+	// One audit line per text actually decrypted, with the same action and target
+	// shape as the single event detail, so existing audit queries keep working and
+	// reading a thread is not cheaper to account for than reading its messages.
+	if e = auditMany(r.Context(), tx, s.OrganizationID, s.UserID, "shadow.content.read", targets); e != nil {
+		return false, e
+	}
+	for actor, count := range seen {
+		if e = auditSubjectView(r, tx, actor, "conversation", count); e != nil {
+			return false, e
+		}
+	}
+	return grant, nil
+}
+
 func (a *App) shadowConversation(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
 	if e := requireIndividual(r); e != nil {
 		return e
@@ -369,67 +463,9 @@ func (a *App) shadowConversation(w http.ResponseWriter, r *http.Request, tx pgx.
 	// key's own content scope, then a live reveal of the actor. A key created to
 	// read metadata must not become a content reader because its creator happened
 	// to hold the flag.
-	grant, e := contentAccessAvailable(r.Context(), tx, s.OrganizationID, s.UserID)
+	grant, e := a.revealConversationContents(r, tx, s, items)
 	if e != nil {
 		return e
-	}
-	grant = grant && s.contentUnlocked()
-	identity, seen := map[string]bool{}, map[string]int{}
-	targets := []string{}
-	for i := range items {
-		m := &items[i]
-		seen[m.AuditSubject]++
-		if _, done := identity[m.ActorID]; !done {
-			allowed, ie := revealed(r, tx, m.ActorID)
-			if ie != nil {
-				return ie
-			}
-			identity[m.ActorID] = allowed
-		}
-		switch {
-		case m.Kind == "navigation":
-			m.ContentState = ""
-		case !identity[m.ActorID]:
-			m.ContentState = contentIdentity
-		case !grant:
-			m.ContentState = contentDenied
-		case !m.HasContent:
-			m.ContentState = contentNotRetained
-		default:
-			m.ContentState = contentAvailable
-		}
-		if m.ContentState != contentAvailable {
-			continue
-		}
-		var encrypted []byte
-		if e = tx.QueryRow(r.Context(), `SELECT encrypted FROM shadow_content WHERE event_id=$1 AND device_id=$2 AND expires_at>now()`, m.ID, m.DeviceID).Scan(&encrypted); e != nil {
-			// Expiry can land between the projection and this read; the honest
-			// answer is then that no text is retained, not a failure.
-			if e != pgx.ErrNoRows {
-				return e
-			}
-			m.ContentState = contentNotRetained
-			continue
-		}
-		plain, oe := a.openShadow(s.OrganizationID, "event:"+m.DeviceID+":"+m.ID, string(encrypted))
-		if oe != nil {
-			return oe
-		}
-		if e = json.Unmarshal(plain, &m.Content); e != nil {
-			return e
-		}
-		targets = append(targets, m.DeviceID+":"+m.ID)
-	}
-	// One audit line per text actually decrypted, with the same action and target
-	// shape as the single event detail, so existing audit queries keep working and
-	// reading a thread is not cheaper to account for than reading its messages.
-	if e = auditMany(r.Context(), tx, s.OrganizationID, s.UserID, "shadow.content.read", targets); e != nil {
-		return e
-	}
-	for actor, count := range seen {
-		if e = auditSubjectView(r, tx, actor, "conversation", count); e != nil {
-			return e
-		}
 	}
 	if e = tx.Commit(r.Context()); e != nil {
 		return e

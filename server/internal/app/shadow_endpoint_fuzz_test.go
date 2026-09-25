@@ -41,25 +41,35 @@ func FuzzValidateV2(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if len(v.Labels) > 16 {
-			t.Fatalf("accepted event with %d labels", len(v.Labels))
-		}
-		if v.Prompt != nil && len(*v.Prompt) > 32768 {
-			t.Fatalf("accepted oversized prompt: %d bytes", len(*v.Prompt))
-		}
-		if v.Response != nil && len(*v.Response) > 32768 {
-			t.Fatalf("accepted oversized response: %d bytes", len(*v.Response))
-		}
-		if len(v.Files) > 20 {
-			t.Fatalf("accepted %d file names", len(v.Files))
-		}
-		if v.URL != "" && !strings.HasPrefix(v.URL, "https://") {
-			t.Fatalf("accepted a non-https URL: %q", v.URL)
-		}
-		if v.Source == "native" && v.URL != "" {
-			t.Fatalf("accepted a browser URL on a native record")
-		}
+		assertValidV2Sizes(t, v)
+		assertValidV2URL(t, v)
 	})
+}
+
+func assertValidV2Sizes(t *testing.T, v V2Event) {
+	t.Helper()
+	if len(v.Labels) > 16 {
+		t.Fatalf("accepted event with %d labels", len(v.Labels))
+	}
+	if v.Prompt != nil && len(*v.Prompt) > 32768 {
+		t.Fatalf("accepted oversized prompt: %d bytes", len(*v.Prompt))
+	}
+	if v.Response != nil && len(*v.Response) > 32768 {
+		t.Fatalf("accepted oversized response: %d bytes", len(*v.Response))
+	}
+	if len(v.Files) > 20 {
+		t.Fatalf("accepted %d file names", len(v.Files))
+	}
+}
+
+func assertValidV2URL(t *testing.T, v V2Event) {
+	t.Helper()
+	if v.URL != "" && !strings.HasPrefix(v.URL, "https://") {
+		t.Fatalf("accepted a non-https URL: %q", v.URL)
+	}
+	if v.Source == "native" && v.URL != "" {
+		t.Fatalf("accepted a browser URL on a native record")
+	}
 }
 
 // FuzzNormalizeEventURL exercises normalizeEventURL standalone: the one path inside

@@ -103,23 +103,52 @@ func LoadConfig() (Config, error) {
 	if e := validateProcessRole(c.Role); e != nil {
 		return c, e
 	}
+	if e := loadPublisherConfig(&c); e != nil {
+		return c, e
+	}
+	if e := loadRuntimeConfig(&c); e != nil {
+		return c, e
+	}
+	if e := loadAdminSetupConfig(&c); e != nil {
+		return c, e
+	}
+	if e := validateRequiredConfig(&c); e != nil {
+		return c, e
+	}
+	if e := validateOriginConfig(&c); e != nil {
+		return c, e
+	}
+	if e := loadCryptographicConfig(&c); e != nil {
+		return c, e
+	}
+	if e := loadTrustConfig(&c); e != nil {
+		return c, e
+	}
+	return c, nil
+}
+
+func loadPublisherConfig(c *Config) error {
 	c.PublisherURL = strings.TrimRight(os.Getenv("MILVAGO_PUBLISHER_URL"), "/")
 	c.PublisherCredential = os.Getenv("MILVAGO_PUBLISHER_CREDENTIAL")
 	if raw := os.Getenv("MILVAGO_PUBLISHER_PUBLIC_KEY"); raw != "" {
 		key, e := base64.StdEncoding.DecodeString(raw)
 		if e != nil || len(key) != ed25519.PublicKeySize {
-			return c, errors.New("MILVAGO_PUBLISHER_PUBLIC_KEY must encode 32 bytes")
+			return errors.New("MILVAGO_PUBLISHER_PUBLIC_KEY must encode 32 bytes")
 		}
 		c.PublisherPublicKey = ed25519.PublicKey(key)
 	}
 	if c.PublisherURL != "" {
 		if _, e := publisherOrigin(c.PublisherURL); e != nil {
-			return c, e
+			return e
 		}
 		if len(c.PublisherCredential) < 32 || len(c.PublisherPublicKey) != ed25519.PublicKeySize {
-			return c, errors.New("publisher requires credentials and a pinned public key")
+			return errors.New("publisher requires credentials and a pinned public key")
 		}
 	}
+	return nil
+}
+
+func loadRuntimeConfig(c *Config) error {
 	c.MetricsToken = os.Getenv("MILVAGO_METRICS_TOKEN")
 	c.ShadowMetrics = !slices.Contains([]string{"0", "false", "off", "no"}, strings.ToLower(strings.TrimSpace(os.Getenv("MILVAGO_SHADOW_METRICS"))))
 	c.MCPDisabled = slices.Contains([]string{"0", "false", "off", "no"}, strings.ToLower(strings.TrimSpace(os.Getenv("MILVAGO_MCP"))))
@@ -135,22 +164,30 @@ func LoadConfig() (Config, error) {
 			host = strings.TrimSpace(host)
 			u, err := url.Parse("http://" + host)
 			if err != nil || u.Host != host || u.Hostname() == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || strings.ContainsAny(host, " \t\r\n") {
-				return c, errors.New("invalid MILVAGO_OTEL_HTTP_HOSTS entry")
+				return errors.New("invalid MILVAGO_OTEL_HTTP_HOSTS entry")
 			}
 			c.OTelHTTPHosts = append(c.OTelHTTPHosts, host)
 		}
 	}
+	return nil
+}
+
+func loadAdminSetupConfig(c *Config) error {
 	c.AdminClientID = os.Getenv("OIDC_ADMIN_CLIENT_ID")
 	// Only the digest is kept: the plaintext setup token never outlives this function.
 	if raw := os.Getenv("MILVAGO_SETUP_TOKEN"); raw != "" {
 		if len(raw) < 32 {
-			return c, errors.New("MILVAGO_SETUP_TOKEN must contain at least 32 characters")
+			return errors.New("MILVAGO_SETUP_TOKEN must contain at least 32 characters")
 		}
 		c.SetupTokenHash = hash(raw)
 	}
 	c.AdminClientSecret = os.Getenv("OIDC_ADMIN_CLIENT_SECRET")
+	return nil
+}
+
+func validateRequiredConfig(c *Config) error {
 	if env("EDITION", Edition) != Edition {
-		return c, errors.New("EDITION does not match the compiled server composition")
+		return errors.New("EDITION does not match the compiled server composition")
 	}
 	required := map[string]string{"DATABASE_URL": c.DatabaseURL}
 	if c.ServesAPI() {
@@ -168,12 +205,16 @@ func LoadConfig() (Config, error) {
 	}
 	for n, v := range required {
 		if v == "" {
-			return c, fmt.Errorf("%s is required", n)
+			return fmt.Errorf("%s is required", n)
 		}
 	}
+	return nil
+}
+
+func validateOriginConfig(c *Config) error {
 	u, e := url.Parse(c.AppURL)
 	if c.AppURL != "" && (e != nil || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil || !secureURL(u)) {
-		return c, errors.New("APP_URL must be an HTTPS origin (HTTP permitted only on explicit loopback)")
+		return errors.New("APP_URL must be an HTTPS origin (HTTP permitted only on explicit loopback)")
 	}
 	c.SecureCookies = u.Scheme == "https"
 	c.PublicURL = strings.TrimRight(os.Getenv("PUBLIC_URL"), "/")
@@ -181,73 +222,83 @@ func LoadConfig() (Config, error) {
 		c.PublicURL = c.AppURL
 	}
 	if c.PublicURL != "" && !validOrigin(c.PublicURL) {
-		return c, errors.New("PUBLIC_URL must be an HTTPS origin (HTTP permitted only on explicit loopback)")
+		return errors.New("PUBLIC_URL must be an HTTPS origin (HTTP permitted only on explicit loopback)")
 	}
 	u, e = url.Parse(c.Issuer)
 	if c.Issuer != "" && (e != nil || u.Host == "" || u.User != nil || !secureURL(u)) {
-		return c, errors.New("OIDC_ISSUER must use HTTPS or explicit loopback")
+		return errors.New("OIDC_ISSUER must use HTTPS or explicit loopback")
 	}
 	if !regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`).MatchString(c.RuntimeRole) {
-		return c, errors.New("invalid DB_RUNTIME_ROLE")
+		return errors.New("invalid DB_RUNTIME_ROLE")
 	}
+	return nil
+}
+
+func loadCryptographicConfig(c *Config) error {
 	var key []byte
+	var e error
 	if c.ServesAPI() || os.Getenv("SESSION_KEY") != "" {
 		key, e = decodeKey("SESSION_KEY")
 		if e != nil {
-			return c, e
+			return e
 		}
 		if c.ServesAPI() {
 			b, e := aes.NewCipher(key)
 			if e != nil {
-				return c, e
+				return e
 			}
 			c.SessionCipher, e = cipher.NewGCM(b)
 			if e != nil {
-				return c, e
+				return e
 			}
 		}
 	}
 	c.ContentKeys, c.ContentVersion, e = decodeContentKeys(key)
 	if e != nil {
-		return c, e
+		return e
 	}
 	if c.ServesAPI() {
 		seed, e := decodeKey("POLICY_SIGNING_KEY")
 		if e != nil {
-			return c, e
+			return e
 		}
 		// One secret for two jobs: a leaked session key would also forge signed
 		// policies, as the content-key check below refuses for content.
 		if len(key) > 0 && subtle.ConstantTimeCompare(seed, key) == 1 {
-			return c, errors.New("POLICY_SIGNING_KEY must differ from SESSION_KEY")
+			return errors.New("POLICY_SIGNING_KEY must differ from SESSION_KEY")
 		}
 		c.SigningKey = ed25519.NewKeyFromSeed(seed)
 	}
+	return nil
+}
+
+func loadTrustConfig(c *Config) error {
 	// Updates are served from MILVAGO_INSTALLER_DIRECTORY, next to the installers the
 	// console hands out; only the verification key is configured separately.
 	if raw := os.Getenv("MILVAGO_UPDATE_PUBLIC_KEY"); raw != "" {
 		key, e := base64.StdEncoding.DecodeString(raw)
 		if e != nil || len(key) != ed25519.PublicKeySize {
-			return c, errors.New("MILVAGO_UPDATE_PUBLIC_KEY must encode 32 bytes")
+			return errors.New("MILVAGO_UPDATE_PUBLIC_KEY must encode 32 bytes")
 		}
 		c.UpdatePublicKey = ed25519.PublicKey(key)
 	}
 	if path := os.Getenv("MILVAGO_EXPORT_CA_FILE"); path != "" {
 		pem, e := os.ReadFile(path)
 		if e != nil || len(pem) > 1024*1024 {
-			return c, errors.New("export CA file is unreadable or oversized")
+			return errors.New("export CA file is unreadable or oversized")
 		}
 		roots, e := x509.SystemCertPool()
 		if e != nil {
 			roots = x509.NewCertPool()
 		}
 		if !roots.AppendCertsFromPEM(pem) {
-			return c, errors.New("export CA file contains no usable certificates")
+			return errors.New("export CA file contains no usable certificates")
 		}
 		c.CollectorRoots = roots
 	}
-	return c, nil
+	return nil
 }
+
 func secureURL(u *url.URL) bool {
 	return u.Scheme == "https" || (u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1"))
 }

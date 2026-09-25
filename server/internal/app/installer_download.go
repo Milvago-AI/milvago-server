@@ -264,41 +264,62 @@ func extractInstallerPayload(source, target string) error {
 		if count > 1000 || name == "" || strings.HasPrefix(name, "/") || filepath.IsAbs(name) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || strings.ContainsAny(name, "\\:\x00") {
 			return fmt.Errorf("unsafe installer payload")
 		}
-		switch header.Typeflag {
-		case tar.TypeDir:
-			if err = destination.MkdirAll(clean, 0700); err != nil {
-				return err
-			}
-		case tar.TypeReg:
-			total += header.Size
-			if header.Size < 0 || total > installerBundleLimit {
-				return fmt.Errorf("installer payload exceeds limit")
-			}
-			if err = destination.MkdirAll(filepath.Dir(clean), 0700); err != nil {
-				return err
-			}
-			mode := os.FileMode(0644)
-			if header.Mode&0111 != 0 {
-				mode = 0755
-			}
-			output, err := destination.OpenFile(clean, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
-			if err != nil {
-				return err
-			}
-			_, err = io.CopyN(output, archive, header.Size)
-			closeErr := output.Close()
-			if err != nil {
-				return err
-			}
-			if closeErr != nil {
-				return closeErr
-			}
-		default:
-			return fmt.Errorf("installer links and special files are forbidden")
+		if err := writeInstallerPayloadEntry(destination, archive, header, clean, &total); err != nil {
+			return err
 		}
 	}
 }
+func writeInstallerPayloadEntry(destination *os.Root, archive *tar.Reader, header *tar.Header, clean string, total *int64) error {
+	var err error
+	switch header.Typeflag {
+	case tar.TypeDir:
+		if err = destination.MkdirAll(clean, 0700); err != nil {
+			return err
+		}
+	case tar.TypeReg:
+		*total += header.Size
+		if header.Size < 0 || *total > installerBundleLimit {
+			return fmt.Errorf("installer payload exceeds limit")
+		}
+		if err = destination.MkdirAll(filepath.Dir(clean), 0700); err != nil {
+			return err
+		}
+		mode := os.FileMode(0644)
+		if header.Mode&0111 != 0 {
+			mode = 0755
+		}
+		output, err := destination.OpenFile(clean, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
+		if err != nil {
+			return err
+		}
+		_, err = io.CopyN(output, archive, header.Size)
+		closeErr := output.Close()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	default:
+		return fmt.Errorf("installer links and special files are forbidden")
+	}
+	return nil
+}
+
 func validateInstallerPayload(payload, edition string) error {
+	if err := validateInstallerExecutables(payload, edition); err != nil {
+		return err
+	}
+	if err := validateInstallerFilterFiles(payload, edition); err != nil {
+		return err
+	}
+	if err := validateInstallerIdentity(payload, edition); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateInstallerExecutables(payload, edition string) error {
 	agent := "milvago-browser-agent"
 	if edition == "commercial" {
 		agent = "milvago-commercial-bridge"
@@ -324,6 +345,10 @@ func validateInstallerPayload(payload, edition string) error {
 			return fmt.Errorf("installer executable is not x86_64 ELF: %s", name)
 		}
 	}
+	return nil
+}
+
+func validateInstallerFilterFiles(payload, edition string) error {
 	filterFiles := []string{"milvago-collector", "milvago-model-filter", "register-model-filter.sh", "selinux/milvago_filter.te", "selinux/milvago_filter.fc"}
 	for _, name := range filterFiles {
 		info, err := os.Lstat(filepath.Join(payload, filepath.FromSlash(name)))
@@ -335,6 +360,10 @@ func validateInstallerPayload(payload, edition string) error {
 			return fmt.Errorf("invalid model filter payload")
 		}
 	}
+	return nil
+}
+
+func validateInstallerIdentity(payload, edition string) error {
 	session := filepath.Join(payload, "agent-session.sh")
 	info, err := os.Lstat(session)
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&0111 == 0 {

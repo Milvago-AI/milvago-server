@@ -164,21 +164,36 @@ func TestInstallerPayloadValidation(t *testing.T) {
 }
 
 func TestInstallerRPMPlan(t *testing.T) {
-	joined := func(p installerRPMPlan) string {
-		all := []string{p.pre, p.post, p.preun, p.postun}
-		for _, f := range p.files {
-			all = append(all, f.Name, string(f.Body))
-		}
-		for _, r := range p.meta.Requires {
-			all = append(all, r.Name)
-		}
-		return strings.Join(all, "\n")
-	}
 	commercial, err := newInstallerRPMPlan("commercial", "0.5.0", []byte("{}"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	spec := joined(commercial)
+	assertCommercialRPMPlan(t, commercial)
+	community, err := newInstallerRPMPlan("community", "0.5.0", []byte("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCommunityRPMPlan(t, community, commercial)
+}
+
+func installerRPMText(p installerRPMPlan) string {
+	all := []string{p.pre, p.post, p.preun, p.postun}
+	for _, f := range p.files {
+		all = append(all, f.Name, string(f.Body))
+	}
+	for _, r := range p.meta.Requires {
+		all = append(all, r.Name)
+	}
+	return strings.Join(all, "\n")
+}
+
+func assertCommercialRPMPlan(t *testing.T, commercial installerRPMPlan) {
+	assertCommercialRPMContents(t, commercial)
+	assertCommercialRPMScripts(t, commercial)
+}
+
+func assertCommercialRPMContents(t *testing.T, commercial installerRPMPlan) {
+	spec := installerRPMText(commercial)
 	for _, required := range []string{
 		"/usr/lib/systemd/system/milvago-commercial.service", "/usr/lib/systemd/system/milvago-collector.service",
 		"User=root\nGroup=milvago-agent", "User=milvago-agent\nGroup=milvago-agent", "provision-json",
@@ -198,6 +213,9 @@ func TestInstallerRPMPlan(t *testing.T) {
 			t.Fatalf("user service leaked into system RPM: %q", forbidden)
 		}
 	}
+}
+
+func assertCommercialRPMScripts(t *testing.T, commercial installerRPMPlan) {
 	if !strings.Contains(commercial.pre, "Enforcing") {
 		t.Fatal("SELinux prerequisite must run before file installation")
 	}
@@ -219,11 +237,10 @@ func TestInstallerRPMPlan(t *testing.T) {
 			t.Fatalf("model filter configuration must be private and preserved: %s", f.Name)
 		}
 	}
-	community, err := newInstallerRPMPlan("community", "0.5.0", []byte("{}"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec = joined(community)
+}
+
+func assertCommunityRPMPlan(t *testing.T, community, commercial installerRPMPlan) {
+	spec := installerRPMText(community)
 	// One machine service owns /run/milvago: a per-user unit could not create it, and several
 	// users' agents raced for the same socket and loopback ports (audit of 2026-09-23).
 	for _, required := range []string{
@@ -243,7 +260,7 @@ func TestInstallerRPMPlan(t *testing.T) {
 		t.Fatal("an erase must never fail")
 	}
 	for _, p := range []installerRPMPlan{community, commercial} {
-		if !strings.Contains(joined(p), "libc.so.6(GLIBC_2.34)(64bit)") {
+		if !strings.Contains(installerRPMText(p), "libc.so.6(GLIBC_2.34)(64bit)") {
 			t.Fatalf("%s RPM does not declare the glibc its binaries need", p.meta.Name)
 		}
 	}
@@ -253,6 +270,7 @@ func TestInstallerRPMPlan(t *testing.T) {
 		}
 	}
 }
+
 func TestModelFilterPayloadEditionBoundary(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix executable modes required")
@@ -277,6 +295,15 @@ func TestInstallerRPMBuildArtifact(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("payload executable modes require Linux")
 	}
+	directory, result := createInstallerRPMFixture(t)
+	assertInstallerRPMScriptlets(t)
+	if _, err := os.Stat("/usr/bin/rpm"); err != nil {
+		t.Skip("rpm verifier not installed")
+	}
+	assertInstallerRPMContents(t, directory, result)
+}
+
+func createInstallerRPMFixture(t *testing.T) (string, string) {
 	directory := t.TempDir()
 	staged := filepath.Join(directory, "fixture")
 	if err := os.Mkdir(staged, 0755); err != nil {
@@ -291,34 +318,7 @@ func TestInstallerRPMBuildArtifact(t *testing.T) {
 	compressed := gzip.NewWriter(file)
 	archive := tar.NewWriter(compressed)
 	err = filepath.WalkDir(staged, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		info, e := entry.Info()
-		if e != nil {
-			return e
-		}
-		name, e := filepath.Rel(staged, path)
-		if e != nil {
-			return e
-		}
-		header, e := tar.FileInfoHeader(info, "")
-		if e != nil {
-			return e
-		}
-		header.Name = filepath.ToSlash(name)
-		if e = archive.WriteHeader(header); e != nil {
-			return e
-		}
-		content, e := os.ReadFile(path)
-		if e != nil {
-			return e
-		}
-		_, e = archive.Write(content)
-		return e
+		return appendInstallerArchiveFile(staged, archive, path, entry, walkErr)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -339,6 +339,41 @@ func TestInstallerRPMBuildArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return directory, result
+}
+
+func appendInstallerArchiveFile(staged string, archive *tar.Writer, path string, entry os.DirEntry, walkErr error) error {
+	if walkErr != nil {
+		return walkErr
+	}
+	if entry.IsDir() {
+		return nil
+	}
+	info, e := entry.Info()
+	if e != nil {
+		return e
+	}
+	name, e := filepath.Rel(staged, path)
+	if e != nil {
+		return e
+	}
+	header, e := tar.FileInfoHeader(info, "")
+	if e != nil {
+		return e
+	}
+	header.Name = filepath.ToSlash(name)
+	if e = archive.WriteHeader(header); e != nil {
+		return e
+	}
+	content, e := os.ReadFile(path)
+	if e != nil {
+		return e
+	}
+	_, e = archive.Write(content)
+	return e
+}
+
+func assertInstallerRPMScriptlets(t *testing.T) {
 	// Every scriptlet must parse under the /bin/sh rpm runs it with (dash on Debian).
 	plan, err := newInstallerRPMPlan(Edition, "0.4.0", []byte("{}"))
 	if err != nil {
@@ -352,9 +387,9 @@ func TestInstallerRPMBuildArtifact(t *testing.T) {
 		}
 	}
 	// The server builds without any tool; rpm itself is only the independent verifier.
-	if _, err := os.Stat("/usr/bin/rpm"); err != nil {
-		t.Skip("rpm verifier not installed")
-	}
+}
+
+func assertInstallerRPMContents(t *testing.T, directory, result string) {
 	files, err := exec.Command("rpm", "-qpl", result).Output()
 	if err != nil {
 		t.Fatal(err)
@@ -364,38 +399,7 @@ func TestInstallerRPMBuildArtifact(t *testing.T) {
 		t.Fatalf("wrong native collector edition: %s", files)
 	}
 	if Edition == "commercial" {
-		for _, path := range []string{"/usr/lib/systemd/system/milvago-commercial.service", "/usr/lib/systemd/system/milvago-collector.service", "/usr/lib/tmpfiles.d/milvago-commercial.conf"} {
-			if !bytes.Contains(files, []byte(path)) {
-				t.Fatalf("RPM lacks system service %s", path)
-			}
-		}
-		if bytes.Contains(files, []byte("/usr/lib/systemd/user/")) {
-			t.Fatal("Enterprise RPM still packages a per-user service")
-		}
-		extract := filepath.Join(directory, "extracted")
-		if err := os.Mkdir(extract, 0700); err != nil {
-			t.Fatal(err)
-		}
-		payload, err := exec.Command("rpm2cpio", result).Output()
-		if err != nil {
-			t.Fatal(err, exitStderr(err))
-		}
-		// rpmpack stores absolute payload names; keep extraction inside the test directory.
-		unpack := exec.Command("cpio", "-id", "--quiet", "--no-absolute-filenames")
-		unpack.Dir = extract
-		unpack.Stdin = bytes.NewReader(payload)
-		if err := unpack.Run(); err != nil {
-			t.Fatal(err)
-		}
-		unit, err := os.ReadFile(filepath.Join(extract, "usr/lib/systemd/system/milvago-collector.service"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		// Root serves its socket from its own runtime directory, never the agent-owned /run/milvago.
-		if !bytes.Contains(unit, []byte("User=root\nGroup=milvago-agent")) || !bytes.Contains(unit, []byte("ExecStart=/opt/milvago-commercial/milvago-collector")) ||
-			!bytes.Contains(unit, []byte("RuntimeDirectory=milvago-collector\n")) || bytes.Contains(unit, []byte("/run/milvago")) {
-			t.Fatalf("wrong extracted collector unit: %s", unit)
-		}
+		assertCommercialRPMBuildContents(t, directory, result, files)
 	}
 	hasFilter := bytes.Contains(files, []byte("/opt/milvago-commercial/milvago-model-filter"))
 	hasConfig := bytes.Contains(files, []byte("/etc/milvago-model-filter/config.json"))
@@ -408,5 +412,40 @@ func TestInstallerRPMBuildArtifact(t *testing.T) {
 	}
 	if bytes.Contains(scripts, []byte("configure_machinefilter")) != (Edition == "commercial") {
 		t.Fatal("wrong edition RPM registration scripts")
+	}
+}
+
+func assertCommercialRPMBuildContents(t *testing.T, directory, result string, files []byte) {
+	for _, path := range []string{"/usr/lib/systemd/system/milvago-commercial.service", "/usr/lib/systemd/system/milvago-collector.service", "/usr/lib/tmpfiles.d/milvago-commercial.conf"} {
+		if !bytes.Contains(files, []byte(path)) {
+			t.Fatalf("RPM lacks system service %s", path)
+		}
+	}
+	if bytes.Contains(files, []byte("/usr/lib/systemd/user/")) {
+		t.Fatal("Enterprise RPM still packages a per-user service")
+	}
+	extract := filepath.Join(directory, "extracted")
+	if err := os.Mkdir(extract, 0700); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := exec.Command("rpm2cpio", result).Output()
+	if err != nil {
+		t.Fatal(err, exitStderr(err))
+	}
+	// rpmpack stores absolute payload names; keep extraction inside the test directory.
+	unpack := exec.Command("cpio", "-id", "--quiet", "--no-absolute-filenames")
+	unpack.Dir = extract
+	unpack.Stdin = bytes.NewReader(payload)
+	if err := unpack.Run(); err != nil {
+		t.Fatal(err)
+	}
+	unit, err := os.ReadFile(filepath.Join(extract, "usr/lib/systemd/system/milvago-collector.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Root serves its socket from its own runtime directory, never the agent-owned /run/milvago.
+	if !bytes.Contains(unit, []byte("User=root\nGroup=milvago-agent")) || !bytes.Contains(unit, []byte("ExecStart=/opt/milvago-commercial/milvago-collector")) ||
+		!bytes.Contains(unit, []byte("RuntimeDirectory=milvago-collector\n")) || bytes.Contains(unit, []byte("/run/milvago")) {
+		t.Fatalf("wrong extracted collector unit: %s", unit)
 	}
 }

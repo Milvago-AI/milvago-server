@@ -33,35 +33,7 @@ func TestAttachmentRecordCountsWithItsSend(t *testing.T) {
 	window := "?from=" + base.Add(-time.Minute).Format(time.RFC3339Nano) + "&to=" + base.Add(time.Minute).Format(time.RFC3339Nano)
 
 	t.Run("a conversation announces one request per send, attachment included", func(t *testing.T) {
-		f, subject, device := privacyFixture(t)
-		// The attachment first, the text next, under the same correlation: the real order.
-		addAttachmentRecord(t, f, subject, device, base, "correlation-file", []string{"schema-synthetique.png"})
-		addThreadEvent(t, f, subject, device, threadEvent{base.Add(time.Second), "prompt", "", "correlation-file", "observed", "Analyse ce document."})
-		addThreadEvent(t, f, subject, device, threadEvent{base.Add(2 * time.Second), "response", "", "correlation-file", "observed", "Réponse de test."})
-		// The same exchange with no name reporting: the attachment record carries no
-		// files, and must still be recognized.
-		addAttachmentRecord(t, f, subject, device, base.Add(3*time.Second), "correlation-silent", nil)
-		addThreadEvent(t, f, subject, device, threadEvent{base.Add(4 * time.Second), "prompt", "", "correlation-silent", "observed", "Et celui-ci ?"})
-
-		items := readConversations(t, f, window)
-		byKey := map[string]ConversationView{}
-		for _, item := range items {
-			byKey[item.Key] = item
-		}
-		with, ok := byKey["corr:correlation-file"]
-		if !ok {
-			t.Fatalf("exchange not grouped on its correlation: %v", byKey)
-		}
-		if with.Prompts != 1 || with.Responses != 1 {
-			t.Fatalf("an attachment is part of its send, not a second one: %+v", with)
-		}
-		silent, ok := byKey["corr:correlation-silent"]
-		if !ok {
-			t.Fatalf("exchange not grouped on its correlation: %v", byKey)
-		}
-		if silent.Prompts != 1 {
-			t.Fatalf("file names are off: the attachment record carries none and must still count with its send: %+v", silent)
-		}
+		testAttachmentConversationCounts(t, base, window)
 	})
 
 	t.Run("an attachment with no send that follows keeps its own count", func(t *testing.T) {
@@ -105,4 +77,36 @@ func TestAttachmentRecordCountsWithItsSend(t *testing.T) {
 			t.Fatalf("counters no longer add up: %+v", out)
 		}
 	})
+}
+
+func testAttachmentConversationCounts(t *testing.T, base time.Time, window string) {
+	f, subject, device := privacyFixture(t)
+	// The attachment first, the text next, under the same correlation: the real order.
+	addAttachmentRecord(t, f, subject, device, base, "correlation-file", []string{"schema-synthetique.png"})
+	addThreadEvent(t, f, subject, device, threadEvent{base.Add(time.Second), "prompt", "", "correlation-file", "observed", "Analyse ce document."})
+	addThreadEvent(t, f, subject, device, threadEvent{base.Add(2 * time.Second), "response", "", "correlation-file", "observed", "Réponse de test."})
+	// The same exchange with no name reporting: the attachment record carries no
+	// files, and must still be recognized.
+	addAttachmentRecord(t, f, subject, device, base.Add(3*time.Second), "correlation-silent", nil)
+	addThreadEvent(t, f, subject, device, threadEvent{base.Add(4 * time.Second), "prompt", "", "correlation-silent", "observed", "Et celui-ci ?"})
+
+	items := readConversations(t, f, window)
+	byKey := map[string]ConversationView{}
+	for _, item := range items {
+		byKey[item.Key] = item
+	}
+	with, ok := byKey["corr:correlation-file"]
+	if !ok {
+		t.Fatalf("exchange not grouped on its correlation: %v", byKey)
+	}
+	if with.Prompts != 1 || with.Responses != 1 {
+		t.Fatalf("an attachment is part of its send, not a second one: %+v", with)
+	}
+	silent, ok := byKey["corr:correlation-silent"]
+	if !ok {
+		t.Fatalf("exchange not grouped on its correlation: %v", byKey)
+	}
+	if silent.Prompts != 1 {
+		t.Fatalf("file names are off: the attachment record carries none and must still count with its send: %+v", silent)
+	}
 }

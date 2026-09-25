@@ -85,47 +85,50 @@ func (a *App) cookieName(kind string) string {
 	}
 	return cookieName(kind)
 }
+func (a *App) loginProfileAction(w http.ResponseWriter, r *http.Request) (string, bool) {
+	action := r.URL.Query().Get("action")
+	// A read-only demonstration must refuse account-changing actions even though
+	// this entry point uses GET.
+	if a.config.DemoReadOnly && action != "" {
+		a.fail(w, apiError{403, "demo_read_only", "This demonstration instance is read-only."})
+		return "", true
+	}
+	kcAction, known := profileActions[action]
+	if action == "" || (!known && action != "manage_mfa") {
+		return "", false
+	}
+	cookie, e := r.Cookie(a.cookieName("session"))
+	if e != nil {
+		return "", false
+	}
+	session, e := a.loadSession(r, cookie.Value)
+	if e != nil {
+		return "", false
+	}
+	if !profileActionAllowed(session.IdentityType, action) {
+		a.fail(w, apiError{403, "action_forbidden", "This account setting is managed by your identity provider."})
+		return "", true
+	}
+	if action == "manage_mfa" {
+		// Keycloak owns credential management; only the configured issuer receives this redirect.
+		accountURL := strings.TrimRight(a.config.Issuer, "/") + "/account/account-security/signing-in"
+		if language := r.URL.Query().Get("lang"); slices.Contains(consoleLanguages, language) {
+			accountURL += "?" + url.Values{"kc_locale": {language}}.Encode()
+		}
+		http.Redirect(w, r, accountURL, http.StatusFound)
+		return "", true
+	}
+	return kcAction, false
+}
+
 func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	if err := a.checkPublicRequest(r, "login", 120, 1200); err != nil {
 		a.fail(w, err)
 		return
 	}
-	// Self-service profile actions (Keycloak AIA) require a signed-in user and
-	// must pass the identity-type lock before kc_action is ever forwarded.
-	//
-	// A read-only instance forwards none of them. `demoRefuses` cannot see this one:
-	// it judges the method, and this is a GET — yet it changes the password, the
-	// e-mail address or the second factor of the account everyone shares, which is the
-	// one change that locks every other visitor out (product decision, 2026-09-17). The
-	// refusal is explicit rather than a silent drop, so a reader learns why nothing
-	// happened instead of landing on a bare sign-in page.
-	var kcAction string
-	if a.config.DemoReadOnly && r.URL.Query().Get("action") != "" {
-		a.fail(w, apiError{403, "demo_read_only", "This demonstration instance is read-only."})
+	kcAction, handled := a.loginProfileAction(w, r)
+	if handled {
 		return
-	}
-	if action := r.URL.Query().Get("action"); action != "" {
-		if kc, ok := profileActions[action]; ok || action == "manage_mfa" {
-			if c, e := r.Cookie(a.cookieName("session")); e == nil {
-				if s, e := a.loadSession(r, c.Value); e == nil {
-					if !profileActionAllowed(s.IdentityType, action) {
-						a.fail(w, apiError{403, "action_forbidden", "This account setting is managed by your identity provider."})
-						return
-					}
-					if action == "manage_mfa" {
-						// Keycloak owns credential listing, enrollment and removal.
-						// Only the configured issuer can receive this redirect.
-						accountURL := strings.TrimRight(a.config.Issuer, "/") + "/account/account-security/signing-in"
-						if language := r.URL.Query().Get("lang"); slices.Contains(consoleLanguages, language) {
-							accountURL += "?" + url.Values{"kc_locale": {language}}.Encode()
-						}
-						http.Redirect(w, r, accountURL, http.StatusFound)
-						return
-					}
-					kcAction = kc
-				}
-			}
-		}
 	}
 	stepUp := r.URL.Query().Get("mfa") == "1"
 	state, binding, nonce, verifier := randomToken(), randomToken(), randomToken(), oauth2.GenerateVerifier()

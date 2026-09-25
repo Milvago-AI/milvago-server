@@ -181,60 +181,31 @@ func validateDetection(c DetectionContent) error {
 	if len(c.Providers) == 0 || len(c.Providers) > 128 || len(c.NativeTools) > 32 || len(c.Heuristics.Keys) > 16 || len(c.Heuristics.MIMETypes) > 8 {
 		return bad("Invalid detection catalogue size.")
 	}
+	if e := validateDetectionProviders(c); e != nil {
+		return e
+	}
+	if e := validateDetectionNative(c); e != nil {
+		return e
+	}
+	if e := validateDetectionPlatforms(c); e != nil {
+		return e
+	}
+	if e := validateDetectionHeuristics(c); e != nil {
+		return e
+	}
+	return nil
+}
+
+func validateDetectionProviders(c DetectionContent) error {
 	ids := map[string]bool{}
 	domains := map[string]bool{}
 	assetHosts := map[string]bool{}
 	for _, p := range c.Providers {
-		if !detectionID.MatchString(p.ID) || slices.Contains([]string{"codex", "claude-code", "claude-desktop", "claude-desktop-agent"}, p.ID) || ids[p.ID] || !validMetadata(p.Label, 100) || len(p.Domains) == 0 || len(p.Domains)+len(p.Aliases) > 32 || len(p.Network) > 32 || p.ConversationSegment < 0 || p.ConversationSegment > 16 || len(p.AssetHosts) > 8 {
-			return bad("Invalid provider.")
+		if e := validateDetectionProvider(p, ids, domains, assetHosts); e != nil {
+			return e
 		}
-		ids[p.ID] = true
-		if p.ConversationPath != "" && (!detectionPath.MatchString(p.ConversationPath) || strings.Count(p.ConversationPath, "*") > 8) {
-			return bad("Invalid conversation path.")
-		}
-		for _, d := range append(append([]string{}, p.Domains...), p.Aliases...) {
-			if !domainPattern.MatchString(d) || len(d) > 253 || domains[d] {
-				return bad("Invalid or duplicate catalogue domain.")
-			}
-			domains[d] = true
-		}
-		// An asset host is a hostname like any other, named only once across the whole
-		// catalogue. That it is the domain or alias of NO provider is checked after the
-		// loop, once every provider has been declared.
-		for _, h := range p.AssetHosts {
-			if !domainPattern.MatchString(h) || len(h) > 253 || assetHosts[h] {
-				return bad("Invalid or duplicate asset host.")
-			}
-			assetHosts[h] = true
-		}
-		for _, s := range []string{p.DOM.Editor, p.DOM.Send, p.DOM.Response} {
-			if s != "" && !validMetadata(s, 512) {
-				return bad("Invalid DOM selector.")
-			}
-		}
-		if _, e := time.Parse(time.RFC3339, p.QualifiedAt); e != nil {
-			return bad("Qualification date required.")
-		}
-		for _, n := range p.Network {
-			if !slices.Contains([]string{"POST", "PUT"}, n.Method) || !domainPattern.MatchString(n.Host) || (!slices.Contains(p.Domains, n.Host) && !slices.Contains(p.Aliases, n.Host)) || !detectionPath.MatchString(n.Path) || strings.Count(n.Path, "*") > 8 || !validDetectionJSONPath(n.TextPath) || !validDetectionTextPaths(n.TextPaths) || !validDetectionJSONPath(n.ModelPath) || !validDetectionJSONPath(n.EffortPath) || !validDetectionJSONPath(n.ConversationPath) {
-				return bad("Invalid network rule.")
-			}
-			if !validDetectionJSONPath(n.FilesPath) || len(n.JSONFields) > 4 || !slices.Contains([]string{"", "prompt", "file"}, n.Kind) {
-				return bad("Invalid network rule.")
-			}
-			for _, field := range n.JSONFields {
-				// A field name, not a path: unwrapping only ever happens at the root of
-				// the body, where a form places its fields. Same shape as a path
-				// segment -- real fields are mixed case (`imageAttachments`) -- and the
-				// three names that would reach the prototype are refused here just as
-				// they are in the engine.
-				if !detectionFieldName.MatchString(field) || slices.Contains([]string{"__proto__", "constructor", "prototype"}, field) {
-					return bad("Invalid JSON field name.")
-				}
-			}
-			if n.ConversationURLSegment != nil && (*n.ConversationURLSegment < 0 || *n.ConversationURLSegment > 16) {
-				return bad("Invalid conversation segment.")
-			}
+		if e := validateDetectionNetwork(p); e != nil {
+			return e
 		}
 	}
 	for h := range assetHosts {
@@ -244,6 +215,69 @@ func validateDetection(c DetectionContent) error {
 			return bad("An asset host cannot be a covered domain.")
 		}
 	}
+	return nil
+}
+
+func validateDetectionProvider(p DetectionProvider, ids, domains, assetHosts map[string]bool) error {
+	if !detectionID.MatchString(p.ID) || slices.Contains([]string{"codex", "claude-code", "claude-desktop", "claude-desktop-agent"}, p.ID) || ids[p.ID] || !validMetadata(p.Label, 100) || len(p.Domains) == 0 || len(p.Domains)+len(p.Aliases) > 32 || len(p.Network) > 32 || p.ConversationSegment < 0 || p.ConversationSegment > 16 || len(p.AssetHosts) > 8 {
+		return bad("Invalid provider.")
+	}
+	ids[p.ID] = true
+	if p.ConversationPath != "" && (!detectionPath.MatchString(p.ConversationPath) || strings.Count(p.ConversationPath, "*") > 8) {
+		return bad("Invalid conversation path.")
+	}
+	for _, d := range append(append([]string{}, p.Domains...), p.Aliases...) {
+		if !domainPattern.MatchString(d) || len(d) > 253 || domains[d] {
+			return bad("Invalid or duplicate catalogue domain.")
+		}
+		domains[d] = true
+	}
+	// An asset host is a hostname like any other, named only once across the whole
+	// catalogue. That it is the domain or alias of NO provider is checked after the
+	// loop, once every provider has been declared.
+	for _, h := range p.AssetHosts {
+		if !domainPattern.MatchString(h) || len(h) > 253 || assetHosts[h] {
+			return bad("Invalid or duplicate asset host.")
+		}
+		assetHosts[h] = true
+	}
+	for _, s := range []string{p.DOM.Editor, p.DOM.Send, p.DOM.Response} {
+		if s != "" && !validMetadata(s, 512) {
+			return bad("Invalid DOM selector.")
+		}
+	}
+	if _, e := time.Parse(time.RFC3339, p.QualifiedAt); e != nil {
+		return bad("Qualification date required.")
+	}
+	return nil
+}
+
+func validateDetectionNetwork(p DetectionProvider) error {
+	for _, n := range p.Network {
+		if !slices.Contains([]string{"POST", "PUT"}, n.Method) || !domainPattern.MatchString(n.Host) || (!slices.Contains(p.Domains, n.Host) && !slices.Contains(p.Aliases, n.Host)) || !detectionPath.MatchString(n.Path) || strings.Count(n.Path, "*") > 8 || !validDetectionJSONPath(n.TextPath) || !validDetectionTextPaths(n.TextPaths) || !validDetectionJSONPath(n.ModelPath) || !validDetectionJSONPath(n.EffortPath) || !validDetectionJSONPath(n.ConversationPath) {
+			return bad("Invalid network rule.")
+		}
+		if !validDetectionJSONPath(n.FilesPath) || len(n.JSONFields) > 4 || !slices.Contains([]string{"", "prompt", "file"}, n.Kind) {
+			return bad("Invalid network rule.")
+		}
+		for _, field := range n.JSONFields {
+			// A field name, not a path: unwrapping only ever happens at the root of
+			// the body, where a form places its fields. Same shape as a path
+			// segment -- real fields are mixed case (`imageAttachments`) -- and the
+			// three names that would reach the prototype are refused here just as
+			// they are in the engine.
+			if !detectionFieldName.MatchString(field) || slices.Contains([]string{"__proto__", "constructor", "prototype"}, field) {
+				return bad("Invalid JSON field name.")
+			}
+		}
+		if n.ConversationURLSegment != nil && (*n.ConversationURLSegment < 0 || *n.ConversationURLSegment > 16) {
+			return bad("Invalid conversation segment.")
+		}
+	}
+	return nil
+}
+
+func validateDetectionNative(c DetectionContent) error {
 	for _, n := range c.NativeTools {
 		if !slices.Contains([]string{"claude-code", "codex", "claude-desktop"}, n.ID) || !slices.Contains([]string{"windows", "linux"}, n.Platform) || !slices.Contains([]string{"otlp-v1", "claude-desktop-v1"}, n.Parser) || len(n.QualifiedVersions) > 128 || len(n.TextVersions) > 128 {
 			return bad("Unknown compiled native parser.")
@@ -260,6 +294,10 @@ func validateDetection(c DetectionContent) error {
 			return apiError{409, "qualification_required", "Raw telemetry text requires a qualified engine release."}
 		}
 	}
+	return nil
+}
+
+func validateDetectionPlatforms(c DetectionContent) error {
 	// Known platforms are checked for internal consistency only. A domain appearing both
 	// here and in `providers` is NOT refused: gemini.google.com is a covered provider in
 	// Enterprise and is not one in Community, where presence is exactly what is asked for,
@@ -288,6 +326,10 @@ func validateDetection(c DetectionContent) error {
 			}
 		}
 	}
+	return nil
+}
+
+func validateDetectionHeuristics(c DetectionContent) error {
 	for _, k := range c.Heuristics.Keys {
 		if !detectionID.MatchString(k) {
 			return bad("Invalid heuristic key.")
@@ -670,6 +712,55 @@ type CollectorHealth struct {
 	Tampered     int64      `json:"managed_config_tampered"`
 }
 
+func (a *App) validateDetectorBatch(b *DetectorBatch, now time.Time, p PrivacyView) error {
+	if !uuidPattern.MatchString(b.ID) || !slices.Contains(browserTools, b.Tool) || !versionPattern.MatchString(b.ExtensionVersion) || b.CatalogRevision < 0 || !slices.Contains([]string{"ok", "missing", "stale"}, b.CatalogState) || b.Start.IsZero() || b.Start.After(b.End) || b.End.Sub(b.Start) > 24*time.Hour || b.End.After(now.Add(time.Minute)) || b.Start.Before(now.Add(-30*24*time.Hour)) || len(b.Providers) > 128 || len(b.Candidates) > 128 {
+		return bad("Invalid detector batch.")
+	}
+	if e := validateDetectorProviders(b); e != nil {
+		return e
+	}
+	if e := a.validateDetectorCandidates(b, p); e != nil {
+		return e
+	}
+	return nil
+}
+
+func validateDetectorProviders(b *DetectorBatch) error {
+	seenProviders := map[string]bool{}
+	for _, c := range b.Providers {
+		if seenProviders[c.Provider] {
+			return bad("Duplicate detector provider.")
+		}
+		seenProviders[c.Provider] = true
+		if !detectionID.MatchString(c.Provider) {
+			return bad("Invalid detector provider.")
+		}
+		for _, n := range []int64{c.Navigations, c.Network, c.DOM, c.Responses, c.Candidates} {
+			if n < 0 || n > 1000000 {
+				return bad("Invalid detector counter.")
+			}
+		}
+	}
+	return nil
+}
+
+func (a *App) validateDetectorCandidates(b *DetectorBatch, p PrivacyView) error {
+	if !p.Config.DiscoveryEnabled {
+		b.Candidates = nil
+	}
+	for _, c := range b.Candidates {
+		if !domainPattern.MatchString(c.Domain) || len(c.Domain) > 253 || slices.Contains(p.Config.IgnoredDomains, c.Domain) || sameServerDomain(a.config.PublicURL, c.Domain) || sameServerDomain(a.config.AppURL, c.Domain) || c.Count < 1 || c.Count > 1000000 || len(c.Signals) == 0 || len(c.Signals) > 2 {
+			return bad("Invalid discovery candidate.")
+		}
+		for _, signal := range c.Signals {
+			if !slices.Contains([]string{"json_keys", "sse"}, signal) {
+				return bad("Invalid discovery signal.")
+			}
+		}
+	}
+	return nil
+}
+
 func (a *App) acceptDetectorHealth(r *http.Request, tx pgx.Tx, org, device string, batches []DetectorBatch) ([]string, error) {
 	if len(batches) > 8 {
 		return nil, bad("Too many detector batches.")
@@ -681,36 +772,8 @@ func (a *App) acceptDetectorHealth(r *http.Request, tx pgx.Tx, org, device strin
 	accepted := []string{}
 	now := time.Now()
 	for _, b := range batches {
-		if !uuidPattern.MatchString(b.ID) || !slices.Contains(browserTools, b.Tool) || !versionPattern.MatchString(b.ExtensionVersion) || b.CatalogRevision < 0 || !slices.Contains([]string{"ok", "missing", "stale"}, b.CatalogState) || b.Start.IsZero() || b.Start.After(b.End) || b.End.Sub(b.Start) > 24*time.Hour || b.End.After(now.Add(time.Minute)) || b.Start.Before(now.Add(-30*24*time.Hour)) || len(b.Providers) > 128 || len(b.Candidates) > 128 {
-			return nil, bad("Invalid detector batch.")
-		}
-		seenProviders := map[string]bool{}
-		for _, c := range b.Providers {
-			if seenProviders[c.Provider] {
-				return nil, bad("Duplicate detector provider.")
-			}
-			seenProviders[c.Provider] = true
-			if !detectionID.MatchString(c.Provider) {
-				return nil, bad("Invalid detector provider.")
-			}
-			for _, n := range []int64{c.Navigations, c.Network, c.DOM, c.Responses, c.Candidates} {
-				if n < 0 || n > 1000000 {
-					return nil, bad("Invalid detector counter.")
-				}
-			}
-		}
-		if !p.Config.DiscoveryEnabled {
-			b.Candidates = nil
-		}
-		for _, c := range b.Candidates {
-			if !domainPattern.MatchString(c.Domain) || len(c.Domain) > 253 || slices.Contains(p.Config.IgnoredDomains, c.Domain) || sameServerDomain(a.config.PublicURL, c.Domain) || sameServerDomain(a.config.AppURL, c.Domain) || c.Count < 1 || c.Count > 1000000 || len(c.Signals) == 0 || len(c.Signals) > 2 {
-				return nil, bad("Invalid discovery candidate.")
-			}
-			for _, signal := range c.Signals {
-				if !slices.Contains([]string{"json_keys", "sse"}, signal) {
-					return nil, bad("Invalid discovery signal.")
-				}
-			}
+		if e := a.validateDetectorBatch(&b, now, p); e != nil {
+			return nil, e
 		}
 		raw, _ := json.Marshal(b)
 		tag, e := tx.Exec(r.Context(), `INSERT INTO detector_health(organization_id,device_id,id,payload) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, org, device, b.ID, raw)

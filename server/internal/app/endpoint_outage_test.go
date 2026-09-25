@@ -103,7 +103,7 @@ func (fixture outageFixture) assertSaturatedPool(t *testing.T, ctx context.Conte
 			held.Release()
 		}
 	})
-	parent, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	parent, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	started := time.Now()
 	response := fixture.policyRequest(parent, peer)

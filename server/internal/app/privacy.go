@@ -940,20 +940,25 @@ const devicesFacets = `SELECT count(*),
 
 const devicesRows = `SELECT jsonb_build_object('id',d.id,'hostname',d.hostname,'platform',d.platform,'version',d.version,'status',d.status,'last_seen',d.last_seen,'os_user',d.os_user,'browsers',d.browsers,'update_status',d.update_status,'update_reported_at',d.update_reported_at,'hostname_ciphertext',d.hostname_ciphertext,'collector_health',d.collector_health,'group_id',d.group_id,'group_name',g.name,'machine_domains',d.machine_domains) FROM devices d LEFT JOIN device_groups g ON g.organization_id=d.organization_id AND g.id=d.group_id WHERE ($1='' OR d.id::text=$1) AND ` + devicesPredicate + ` ORDER BY d.id`
 
-func (a *App) privateDevices(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
-	var e error
+type privateDeviceFilter struct {
+	limit, offset                      int
+	deviceID, groupID, excludeGroupID  string
+	query, userQuery, platform, status string
+}
+
+func parsePrivateDeviceFilter(r *http.Request) (privateDeviceFilter, error) {
 	limit, offset, e := collectionPage(r)
 	if e != nil {
-		return e
+		return privateDeviceFilter{}, e
 	}
 	deviceID := r.URL.Query().Get("device_id")
 	if deviceID != "" && !uuidPattern.MatchString(deviceID) {
-		return bad("Invalid device ID.")
+		return privateDeviceFilter{}, bad("Invalid device ID.")
 	}
 	groupID := r.URL.Query().Get("group_id")
 	excludeGroupID := r.URL.Query().Get("exclude_group_id")
 	if (groupID != "" && !uuidPattern.MatchString(groupID)) || (excludeGroupID != "" && !uuidPattern.MatchString(excludeGroupID)) || (groupID != "" && excludeGroupID != "") {
-		return bad("Invalid device group filter.")
+		return privateDeviceFilter{}, bad("Invalid device group filter.")
 	}
 	// uuidPattern accepts either case; the predicates below compare `::text`, which
 	// PostgreSQL renders lowercase. Without this an uppercase identity passed
@@ -964,8 +969,41 @@ func (a *App) privateDevices(w http.ResponseWriter, r *http.Request, tx pgx.Tx, 
 	platform := strings.TrimSpace(r.URL.Query().Get("platform"))
 	status := strings.TrimSpace(r.URL.Query().Get("status"))
 	if len(query) > 200 || len(userQuery) > 200 || len(platform) > 100 || (status != "" && !slices.Contains([]string{"pending", "approved", "revoked"}, status)) {
-		return bad("Invalid device filter.")
+		return privateDeviceFilter{}, bad("Invalid device filter.")
 	}
+	return privateDeviceFilter{limit, offset, deviceID, groupID, excludeGroupID, query, userQuery, platform, status}, nil
+}
+
+func (a *App) presentPrivateDevice(r *http.Request, s *Session, row map[string]any, show bool) error {
+	id := row["id"].(string)
+	originalOSUser := row["os_user"].(string)
+	row["hostname"] = deviceAlias(id)
+	row["os_user"] = ""
+	hostname, e := a.machineName(r, s.OrganizationID, id, row["hostname_ciphertext"].(string))
+	if e != nil {
+		return e
+	}
+	row["hostname"] = hostname
+	// Machine administration remains available; OS identity stays protected.
+	if show {
+		// The current OS user is independent from a verified subject association.
+		osUser, e := a.openIdentity(s.OrganizationID, "device-user:"+id, originalOSUser)
+		if e != nil {
+			return e
+		}
+		row["os_user"] = osUser
+	}
+	delete(row, "hostname_ciphertext")
+	return nil
+}
+
+func (a *App) privateDevices(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
+	f, e := parsePrivateDeviceFilter(r)
+	if e != nil {
+		return e
+	}
+	limit, offset, deviceID, groupID, excludeGroupID := f.limit, f.offset, f.deviceID, f.groupID, f.excludeGroupID
+	query, userQuery, platform, status := f.query, f.userQuery, f.platform, f.status
 	show := false
 	if p := privacyFor(r); p != nil && !p.view.Config.AggregateOnly {
 		show, e = revealed(r, tx, "")
@@ -1018,24 +1056,9 @@ func (a *App) privateDevices(w http.ResponseWriter, r *http.Request, tx pgx.Tx, 
 		if e = json.Unmarshal(raw, &row); e != nil {
 			return e
 		}
-		id := row["id"].(string)
-		originalOSUser := row["os_user"].(string)
-		row["hostname"] = deviceAlias(id)
-		row["os_user"] = ""
-		row["hostname"], e = a.machineName(r, s.OrganizationID, id, row["hostname_ciphertext"].(string))
-		if e != nil {
+		if e = a.presentPrivateDevice(r, s, row, show); e != nil {
 			return e
 		}
-		// Machine administration remains available; OS identity stays protected.
-		if show {
-
-			// The current OS user is independent from a verified subject association.
-			row["os_user"], e = a.openIdentity(s.OrganizationID, "device-user:"+id, originalOSUser)
-			if e != nil {
-				return e
-			}
-		}
-		delete(row, "hostname_ciphertext")
 		// Only the two sealed filters are left to decide here, and only when one is
 		// active: the database already applied the others and, on that path, the page.
 		if scan {

@@ -109,45 +109,59 @@ func seedHPALab(ctx context.Context, pool *pgxpool.Pool) (hpaFixture, error) {
 		orgCount = 65
 	}
 	for i := 0; i < orgCount; i++ {
-		org := out.Root
-		if i > 0 {
-			if err = tx.QueryRow(ctx, "INSERT INTO organizations(name,parent_id) VALUES($1,$2) RETURNING id", fmt.Sprintf("Synthetic partition %03d", i), out.Root).Scan(&org); err != nil {
-				return out, err
-			}
-		}
-		if _, err = tx.Exec(ctx, setTenantConfigSQL, org); err != nil {
+		if err = seedHPAOrganization(ctx, tx, &out, user, i); err != nil {
 			return out, err
-		}
-		if err = seedBuiltinRoles(ctx, tx, org); err != nil {
-			return out, err
-		}
-		if _, err = tx.Exec(ctx, "INSERT INTO settings(organization_id) VALUES($1) ON CONFLICT DO NOTHING", org); err != nil {
-			return out, err
-		}
-		if _, err = tx.Exec(ctx, "INSERT INTO policies(organization_id) VALUES($1) ON CONFLICT DO NOTHING", org); err != nil {
-			return out, err
-		}
-		if _, err = tx.Exec(ctx, "INSERT INTO memberships(organization_id,user_id,role) VALUES($1,$2,'owner')", org, user); err != nil {
-			return out, err
-		}
-		session, csrf := randomToken(), randomToken()
-		if _, err = tx.Exec(ctx, "INSERT INTO sessions(token_hash,user_id,organization_id,csrf_token,encrypted_tokens,mfa,expires_at,identity_expires_at,mfa_verified_at) VALUES($1,$2,$3,$4,$5,true,clock_timestamp()+interval '24 hours',clock_timestamp()+interval '24 hours',clock_timestamp())", hash(session), user, org, csrf, []byte("synthetic-lab-session")); err != nil {
-			return out, err
-		}
-		out.Organizations = append(out.Organizations, hpaOrganization{org, session, csrf})
-		devices := 1
-		if i == 0 {
-			devices = 129
-		}
-		for j := 0; j < devices; j++ {
-			d := hpaDevice{Organization: org, Credential: randomToken(), Export: i > 0, CheckOnly: i == 0 && j == 128}
-			if err = tx.QueryRow(ctx, "INSERT INTO devices(organization_id,credential_hash,hostname,platform,version,status,kind) VALUES($1,$2,$3,'windows','0.5.11','approved','browser') RETURNING id", org, hash(d.Credential), fmt.Sprintf("synthetic-endpoint-%03d-%03d", i, j)).Scan(&d.ID); err != nil {
-				return out, err
-			}
-			out.Devices = append(out.Devices, d)
 		}
 	}
 	return out, tx.Commit(ctx)
+}
+
+func seedHPAOrganization(ctx context.Context, tx pgx.Tx, out *hpaFixture, user string, index int) error {
+	org := out.Root
+	if index > 0 {
+		if err := tx.QueryRow(ctx, "INSERT INTO organizations(name,parent_id) VALUES($1,$2) RETURNING id", fmt.Sprintf("Synthetic partition %03d", index), out.Root).Scan(&org); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(ctx, setTenantConfigSQL, org); err != nil {
+		return err
+	}
+	if err := seedBuiltinRoles(ctx, tx, org); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, "INSERT INTO settings(organization_id) VALUES($1) ON CONFLICT DO NOTHING", org); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, "INSERT INTO policies(organization_id) VALUES($1) ON CONFLICT DO NOTHING", org); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, "INSERT INTO memberships(organization_id,user_id,role) VALUES($1,$2,'owner')", org, user); err != nil {
+		return err
+	}
+	session, csrf := randomToken(), randomToken()
+	if _, err := tx.Exec(ctx, "INSERT INTO sessions(token_hash,user_id,organization_id,csrf_token,encrypted_tokens,mfa,expires_at,identity_expires_at,mfa_verified_at) VALUES($1,$2,$3,$4,$5,true,clock_timestamp()+interval '24 hours',clock_timestamp()+interval '24 hours',clock_timestamp())", hash(session), user, org, csrf, []byte("synthetic-lab-session")); err != nil {
+		return err
+	}
+	out.Organizations = append(out.Organizations, hpaOrganization{org, session, csrf})
+	devices := 1
+	if index == 0 {
+		devices = 129
+	}
+	for deviceIndex := 0; deviceIndex < devices; deviceIndex++ {
+		if err := seedHPADevice(ctx, tx, out, org, index, deviceIndex); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func seedHPADevice(ctx context.Context, tx pgx.Tx, out *hpaFixture, org string, orgIndex, deviceIndex int) error {
+	device := hpaDevice{Organization: org, Credential: randomToken(), Export: orgIndex > 0, CheckOnly: orgIndex == 0 && deviceIndex == 128}
+	if err := tx.QueryRow(ctx, "INSERT INTO devices(organization_id,credential_hash,hostname,platform,version,status,kind) VALUES($1,$2,$3,'windows','0.5.11','approved','browser') RETURNING id", org, hash(device.Credential), fmt.Sprintf("synthetic-endpoint-%03d-%03d", orgIndex, deviceIndex)).Scan(&device.ID); err != nil {
+		return err
+	}
+	out.Devices = append(out.Devices, device)
+	return nil
 }
 
 func configureHPALabExports(ctx context.Context, pool *pgxpool.Pool, enabled bool) error {

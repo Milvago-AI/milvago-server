@@ -82,38 +82,51 @@ type eventCursor struct {
 	Device string    `json:"d"`
 }
 
+type eventsFilter struct {
+	Limit                   int
+	Query, Provider, Action string
+	CursorTime              any
+	CursorID, CursorDevice  string
+}
+
+func parseEventsFilter(r *http.Request) (eventsFilter, error) {
+	filter := eventsFilter{Limit: 50, CursorID: "00000000-0000-4000-8000-000000000000", CursorDevice: "00000000-0000-4000-8000-000000000000"}
+	q := r.URL.Query()
+	if raw := q.Get("limit"); raw != "" {
+		value, e := strconv.Atoi(raw)
+		if e != nil || value < 1 || value > 100 {
+			return filter, bad("Limit must be between 1 and 100.")
+		}
+		filter.Limit = value
+	}
+	filter.Query, filter.Provider, filter.Action = q.Get("query"), q.Get("provider"), q.Get("action")
+	if len(filter.Query) > 100 || len(filter.Provider) > 100 || (filter.Action != "" && filter.Action != "observed" && filter.Action != "blocked") {
+		return filter, bad("Invalid event filters.")
+	}
+	if raw := q.Get("cursor"); raw != "" {
+		if len(raw) > 400 {
+			return filter, bad("Invalid cursor.")
+		}
+		decoded, e := base64.RawURLEncoding.DecodeString(raw)
+		var cursor eventCursor
+		if e != nil || json.Unmarshal(decoded, &cursor) != nil || cursor.Time.IsZero() || !uuidPattern.MatchString(cursor.ID) || !uuidPattern.MatchString(cursor.Device) {
+			return filter, bad("Invalid cursor.")
+		}
+		filter.CursorTime, filter.CursorID, filter.CursorDevice = cursor.Time, cursor.ID, cursor.Device
+	}
+	return filter, nil
+}
+
 func (a *App) events(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
 	if e := requireIndividual(r); e != nil {
 		return e
 	}
-	q := r.URL.Query()
-	limit := 50
-	if raw := q.Get("limit"); raw != "" {
-		v, e := strconv.Atoi(raw)
-		if e != nil || v < 1 || v > 100 {
-			return bad("Limit must be between 1 and 100.")
-		}
-		limit = v
+	filter, e := parseEventsFilter(r)
+	if e != nil {
+		return e
 	}
-	query, provider, action := q.Get("query"), q.Get("provider"), q.Get("action")
-	if len(query) > 100 || len(provider) > 100 || (action != "" && action != "observed" && action != "blocked") {
-		return bad("Invalid event filters.")
-	}
-	var cursorTime any
-	cursorID, cursorDevice := "00000000-0000-4000-8000-000000000000", "00000000-0000-4000-8000-000000000000"
-	if raw := q.Get("cursor"); raw != "" {
-		if len(raw) > 400 {
-			return bad("Invalid cursor.")
-		}
-		b, e := base64.RawURLEncoding.DecodeString(raw)
-		var c eventCursor
-		if e != nil || json.Unmarshal(b, &c) != nil || c.Time.IsZero() || !uuidPattern.MatchString(c.ID) || !uuidPattern.MatchString(c.Device) {
-			return bad("Invalid cursor.")
-		}
-		cursorTime = c.Time
-		cursorID = c.ID
-		cursorDevice = c.Device
-	}
+	limit, query, provider, action := filter.Limit, filter.Query, filter.Provider, filter.Action
+	cursorTime, cursorID, cursorDevice := filter.CursorTime, filter.CursorID, filter.CursorDevice
 
 	rows, e := tx.Query(r.Context(), `SELECT e.id,e.occurred_at,e.device_id,d.hostname_ciphertext,e.provider,e.action,e.source,e.characters,e.labels FROM events e JOIN devices d ON d.id=e.device_id AND d.organization_id=e.organization_id WHERE ($1='' OR e.provider ILIKE '%'||$1||'%' OR d.hostname ILIKE '%'||$1||'%') AND ($2='' OR e.provider=$2) AND ($3='' OR e.action=$3) AND ($4::timestamptz IS NULL OR (e.occurred_at,e.id,e.device_id)<($4::timestamptz,$5::uuid,$6::uuid)) ORDER BY e.occurred_at DESC,e.id DESC,e.device_id DESC LIMIT $7`, query, provider, action, cursorTime, cursorID, cursorDevice, limit+1)
 	if e != nil {
@@ -281,13 +294,59 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Ses
 	// console.
 	return jsonQuery(w, r, tx, `SELECT jsonb_build_object('name',o.name,'event_retention_days',s.retention_days,'public_url',(SELECT public_url FROM app_config),'public_url_confirmed',(SELECT public_url_confirmed FROM app_config),'public_url_editable',(o.parent_id IS NULL AND $2='owner' AND $3),'default_language',(SELECT default_language FROM app_config),'default_language_editable',(o.parent_id IS NULL AND $2='owner' AND $3)) FROM settings s JOIN organizations o ON o.id=s.organization_id WHERE s.organization_id=$1`, s.OrganizationID, s.Role, !s.pinned())
 }
-func (a *App) putSettings(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
-	var body struct {
-		Name            string  `json:"name"`
-		Days            int     `json:"event_retention_days"`
-		PublicURL       string  `json:"public_url"`
-		DefaultLanguage *string `json:"default_language"`
+
+type settingsUpdate struct {
+	Name            string  `json:"name"`
+	Days            int     `json:"event_retention_days"`
+	PublicURL       string  `json:"public_url"`
+	DefaultLanguage *string `json:"default_language"`
+}
+
+type instanceSettings struct {
+	URL       string
+	Confirmed bool
+	Language  string
+	Editable  bool
+}
+
+func (a *App) updateInstanceSettings(r *http.Request, tx pgx.Tx, s *Session, body settingsUpdate) (instanceSettings, error) {
+	var state instanceSettings
+	var isRoot bool
+	if e := tx.QueryRow(r.Context(), "SELECT parent_id IS NULL FROM organizations WHERE id=$1", s.OrganizationID).Scan(&isRoot); e != nil {
+		return state, e
 	}
+	// A non-interactive credential cannot change instance-wide settings, even
+	// when its role would otherwise allow that change.
+	state.Editable = isRoot && s.Role == "owner" && !s.pinned()
+	if e := tx.QueryRow(r.Context(), "SELECT public_url,public_url_confirmed,default_language FROM app_config").Scan(&state.URL, &state.Confirmed, &state.Language); e != nil {
+		return state, e
+	}
+	if body.DefaultLanguage != nil {
+		if !slices.Contains(consoleLanguages, *body.DefaultLanguage) {
+			return state, bad("Default language must be one of fr, en, es, pt-BR.")
+		}
+		if *body.DefaultLanguage != state.Language && !state.Editable {
+			return state, forbidden()
+		}
+		state.Language = *body.DefaultLanguage
+	}
+	desired := strings.TrimRight(strings.TrimSpace(body.PublicURL), "/")
+	if state.Editable {
+		if !validOrigin(desired) {
+			return state, bad("Public URL must be an HTTPS origin (HTTP permitted only on explicit loopback).")
+		}
+		if _, e := tx.Exec(r.Context(), "UPDATE app_config SET public_url=$1,public_url_confirmed=true,default_language=$2", desired, state.Language); e != nil {
+			return state, e
+		}
+		state.URL, state.Confirmed = desired, true
+	} else if desired != "" && desired != state.URL {
+		return state, apiError{403, "forbidden", "Only the root organization owner can change the public URL."}
+	}
+	return state, nil
+}
+
+func (a *App) putSettings(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
+	var body settingsUpdate
 	if e := decode(w, r, &body); e != nil {
 		return e
 	}
@@ -304,46 +363,9 @@ func (a *App) putSettings(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *
 	if body.Name != currentName && !hasPermission(s.Permissions, permOrganizationsManage) {
 		return apiError{403, "forbidden", "Only an owner can rename the organization."}
 	}
-	// The public (agent-facing) origin is an instance-level value: only the root
-	// organization owner may change it. Non-root or non-owner requests may still
-	// save name/retention as long as they do not attempt to alter the origin.
-	var isRoot bool
-	if e := tx.QueryRow(r.Context(), `SELECT parent_id IS NULL FROM organizations WHERE id=$1`, s.OrganizationID).Scan(&isRoot); e != nil {
+	instance, e := a.updateInstanceSettings(r, tx, s, body)
+	if e != nil {
 		return e
-	}
-	// public_url is the agent-facing origin for the whole fleet and
-	// default_language is instance-wide: both are gated on the *role*, which an
-	// API key's permission subset cannot narrow, so a key restricted to
-	// settings.manage would otherwise be able to redirect every deployed agent.
-	// Instance-level values are never writable by a non-interactive credential.
-	editable := isRoot && s.Role == "owner" && !s.pinned()
-	var currentURL string
-	var confirmed bool
-	var language string
-	if e := tx.QueryRow(r.Context(), `SELECT public_url,public_url_confirmed,default_language FROM app_config`).Scan(&currentURL, &confirmed, &language); e != nil {
-		return e
-	}
-	if body.DefaultLanguage != nil {
-		if !slices.Contains(consoleLanguages, *body.DefaultLanguage) {
-			return bad("Default language must be one of fr, en, es, pt-BR.")
-		}
-		if *body.DefaultLanguage != language && !editable {
-			return forbidden()
-		}
-		language = *body.DefaultLanguage
-	}
-	desired := strings.TrimRight(strings.TrimSpace(body.PublicURL), "/")
-	if editable {
-		if !validOrigin(desired) {
-			return bad("Public URL must be an HTTPS origin (HTTP permitted only on explicit loopback).")
-		}
-		if _, e := tx.Exec(r.Context(), `UPDATE app_config SET public_url=$1,public_url_confirmed=true,default_language=$2`, desired, language); e != nil {
-			return e
-		}
-		currentURL = desired
-		confirmed = true
-	} else if desired != "" && desired != currentURL {
-		return apiError{403, "forbidden", "Only the root organization owner can change the public URL."}
 	}
 	if _, e := tx.Exec(r.Context(), `UPDATE organizations SET name=$1 WHERE id=$2`, body.Name, s.OrganizationID); e != nil {
 		return e
@@ -378,6 +400,6 @@ func (a *App) putSettings(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *
 	if e := tx.Commit(r.Context()); e != nil {
 		return e
 	}
-	reply(w, 200, map[string]any{"name": body.Name, "event_retention_days": body.Days, "public_url": currentURL, "public_url_confirmed": confirmed, "public_url_editable": editable, "default_language": language, "default_language_editable": editable})
+	reply(w, 200, map[string]any{"name": body.Name, "event_retention_days": body.Days, "public_url": instance.URL, "public_url_confirmed": instance.Confirmed, "public_url_editable": instance.Editable, "default_language": instance.Language, "default_language_editable": instance.Editable})
 	return nil
 }

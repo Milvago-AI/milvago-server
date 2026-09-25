@@ -226,19 +226,82 @@ func enforcementState(version string, expected, reported int64, status string, a
 	}
 	return "unavailable"
 }
+func aggregateModelStatus(items []modelStatusItem, floor int) []map[string]any {
+	type state struct{ platform, channel, status string }
+	per := map[state]map[string]bool{}
+	for _, v := range items {
+		k := state{v.PlatformID, v.Channel, v.Status}
+		if per[k] == nil {
+			per[k] = map[string]bool{}
+		}
+		per[k][v.DeviceID] = true
+	}
+	// Nothing below the aggregation threshold, as a report cell.
+	counts := []map[string]any{}
+	for k, devices := range per {
+		if len(devices) < floor {
+			continue
+		}
+		counts = append(counts, map[string]any{"platform_id": k.platform, "channel": k.channel, "status": k.status, "devices": len(devices)})
+	}
+	slices.SortFunc(counts, func(a, b map[string]any) int {
+		return strings.Compare(a["platform_id"].(string)+"\x00"+a["channel"].(string)+"\x00"+a["status"].(string), b["platform_id"].(string)+"\x00"+b["channel"].(string)+"\x00"+b["status"].(string))
+	})
+	return counts
+}
+
+type modelStatusDevice struct{ id, host, version, platform, kind, status string }
+
+func (a *App) modelStatusItems(r *http.Request, tx pgx.Tx, s *Session, devices []modelStatusDevice) ([]modelStatusItem, error) {
+	items := []modelStatusItem{}
+	// Read the clock from the database, the same one that stamped `reported_at`.
+	// Comparing a PostgreSQL timestamp against the server's own clock made
+	// freshness depend on their disagreement rather than on the device.
+	var now time.Time
+	if e := tx.QueryRow(r.Context(), `SELECT clock_timestamp()`).Scan(&now); e != nil {
+		return nil, e
+	}
+	for _, d := range devices {
+		cfg, e := a.effectiveShadow(r.Context(), tx, s.OrganizationID, d.id)
+		if e != nil {
+			return nil, e
+		}
+		for _, rule := range cfg.Config.ModelAccess {
+			if rule.Mode == "off" || (rule.Channel == "native" && d.kind != "native") {
+				continue
+			}
+			v := modelStatusItem{DeviceID: d.id, Hostname: d.host, Version: d.version, Platform: d.platform, PlatformID: rule.PlatformID, Channel: rule.Channel, ExpectedRevision: cfg.Revision}
+			var reportedStatus string
+			e = tx.QueryRow(r.Context(), `SELECT revision,status,reason,reported_at FROM model_enforcement WHERE device_id=$1 AND platform_id=$2 AND channel=$3`, d.id, rule.PlatformID, rule.Channel).Scan(&v.AppliedRevision, &reportedStatus, &v.Reason, &v.ReportedAt)
+			if e != nil && e != pgx.ErrNoRows {
+				return nil, e
+			}
+			v.Status = enforcementState(d.version, cfg.Revision, v.AppliedRevision, reportedStatus, v.ReportedAt, now)
+			if d.status != "approved" {
+				v.Status = "unavailable"
+				v.Reason = "device_" + d.status
+			}
+			if v.Status == "unavailable" && v.Reason == "" {
+				v.Reason = "control_unavailable"
+			}
+			items = append(items, v)
+		}
+	}
+	return items, nil
+}
+
 func (a *App) modelAccessStatus(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
 	rows, e := tx.Query(r.Context(), `SELECT id,hostname_ciphertext,version,platform,kind,status FROM devices ORDER BY hostname,id`)
 	if e != nil {
 		return e
 	}
-	type device struct{ id, host, version, platform, kind, status string }
-	devices := []device{}
+	devices := []modelStatusDevice{}
 	// The route is open to overview.read (the reporter role): a machine is named only
 	// to someone who may read the devices, and never under aggregate-only reporting,
 	// as Discovery already does. Otherwise it is its alias (audit of 2026-09-24).
 	named := namesMachines(r, s)
 	for rows.Next() {
-		var d device
+		var d modelStatusDevice
 		if e = rows.Scan(&d.id, &d.host, &d.version, &d.platform, &d.kind, &d.status); e != nil {
 			rows.Close()
 			return e
@@ -258,65 +321,15 @@ func (a *App) modelAccessStatus(w http.ResponseWriter, r *http.Request, tx pgx.T
 	if e = rows.Err(); e != nil {
 		return e
 	}
-	items := []modelStatusItem{}
-	// Read the clock from the database, the same one that stamped `reported_at`.
-	// Comparing a PostgreSQL timestamp against the server's own clock made
-	// freshness depend on their disagreement rather than on the device.
-	var now time.Time
-	if e := tx.QueryRow(r.Context(), `SELECT clock_timestamp()`).Scan(&now); e != nil {
+	items, e := a.modelStatusItems(r, tx, s, devices)
+	if e != nil {
 		return e
-	}
-	for _, d := range devices {
-		cfg, e := a.effectiveShadow(r.Context(), tx, s.OrganizationID, d.id)
-		if e != nil {
-			return e
-		}
-		for _, rule := range cfg.Config.ModelAccess {
-			if rule.Mode == "off" || (rule.Channel == "native" && d.kind != "native") {
-				continue
-			}
-			v := modelStatusItem{DeviceID: d.id, Hostname: d.host, Version: d.version, Platform: d.platform, PlatformID: rule.PlatformID, Channel: rule.Channel, ExpectedRevision: cfg.Revision}
-			var reportedStatus string
-			e = tx.QueryRow(r.Context(), `SELECT revision,status,reason,reported_at FROM model_enforcement WHERE device_id=$1 AND platform_id=$2 AND channel=$3`, d.id, rule.PlatformID, rule.Channel).Scan(&v.AppliedRevision, &reportedStatus, &v.Reason, &v.ReportedAt)
-			if e != nil && e != pgx.ErrNoRows {
-				return e
-			}
-			v.Status = enforcementState(d.version, cfg.Revision, v.AppliedRevision, reportedStatus, v.ReportedAt, now)
-			if d.status != "approved" {
-				v.Status = "unavailable"
-				v.Reason = "device_" + d.status
-			}
-			if v.Status == "unavailable" && v.Reason == "" {
-				v.Reason = "control_unavailable"
-			}
-			items = append(items, v)
-		}
 	}
 	// Under aggregate-only reporting, counts only (product decision, 2026-09-24): machines
 	// per platform, channel and state. A row per machine, even under a label, kept its
 	// set of rules together -- a group or an override -- and /api/devices names it.
 	if requireIndividual(r) != nil {
-		type state struct{ platform, channel, status string }
-		per := map[state]map[string]bool{}
-		for _, v := range items {
-			k := state{v.PlatformID, v.Channel, v.Status}
-			if per[k] == nil {
-				per[k] = map[string]bool{}
-			}
-			per[k][v.DeviceID] = true
-		}
-		// Nothing below the aggregation threshold, as a report cell.
-		floor := privacyFor(r).view.Config.K
-		counts := []map[string]any{}
-		for k, devices := range per {
-			if len(devices) < floor {
-				continue
-			}
-			counts = append(counts, map[string]any{"platform_id": k.platform, "channel": k.channel, "status": k.status, "devices": len(devices)})
-		}
-		slices.SortFunc(counts, func(a, b map[string]any) int {
-			return strings.Compare(a["platform_id"].(string)+"\x00"+a["channel"].(string)+"\x00"+a["status"].(string), b["platform_id"].(string)+"\x00"+b["channel"].(string)+"\x00"+b["status"].(string))
-		})
+		counts := aggregateModelStatus(items, privacyFor(r).view.Config.K)
 		reply(w, 200, map[string]any{"items": []modelStatusItem{}, "counts": counts})
 		return nil
 	}

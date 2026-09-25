@@ -196,9 +196,37 @@ func validateSet(v, allowed []string) bool {
 	return true
 }
 func validateShadow(c ShadowConfig) error {
-	if e := validateModelAccess(c.ModelAccess); e != nil {
-		return e
+	if err := validateModelAccess(c.ModelAccess); err != nil {
+		return err
 	}
+	if err := validateCommunityShadow(c); err != nil {
+		return err
+	}
+	if err := validateEnrollmentShadow(c); err != nil {
+		return err
+	}
+	if err := validateCollectionShadow(c); err != nil {
+		return err
+	}
+	if err := validateServiceShadow(c); err != nil {
+		return err
+	}
+	if err := validateProtectionShadow(c); err != nil {
+		return err
+	}
+	if err := validatePrivacyShadow(c); err != nil {
+		return err
+	}
+	if err := validateClassificationShadow(c); err != nil {
+		return err
+	}
+	if err := validateOperationsShadow(c); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateCommunityShadow(c ShadowConfig) error {
 	if Edition != "commercial" {
 		// Community keeps the browser collection core only: no per-model control,
 		// no built-in masking patterns (custom regular expressions stay), and no
@@ -213,6 +241,10 @@ func validateShadow(c ShadowConfig) error {
 			return apiError{409, "capability_unavailable", "Usage sensitivity requires the Enterprise edition."}
 		}
 	}
+	return nil
+}
+
+func validateEnrollmentShadow(c ShadowConfig) error {
 	if !slices.Contains([]string{"manual", "automatic", "network"}, c.Enrollment.Approval) || len(c.Enrollment.CIDRs)+len(c.Enrollment.Rules) > 50 {
 		return bad("Invalid approval mode or networks.")
 	}
@@ -232,9 +264,17 @@ func validateShadow(c ShadowConfig) error {
 	if c.Enrollment.Approval == "network" && len(c.Enrollment.CIDRs)+len(c.Enrollment.Rules) == 0 {
 		return bad("Network approval requires at least one network.")
 	}
+	return nil
+}
+
+func validateCollectionShadow(c ShadowConfig) error {
 	if c.Collection.ContentRetentionDays < 1 || c.Collection.ContentRetentionDays > 30 {
 		return bad("Content retention must be between 1 and 30 days.")
 	}
+	return nil
+}
+
+func validateServiceShadow(c ShadowConfig) error {
 	if len(c.Services) < 1 || len(c.Services) > 128 {
 		return bad("Invalid catalogue services.")
 	}
@@ -251,6 +291,10 @@ func validateShadow(c ShadowConfig) error {
 			}
 		}
 	}
+	return nil
+}
+
+func validateProtectionShadow(c ShadowConfig) error {
 	if !slices.Contains([]string{"observe", "block"}, c.Protection.Exact) || !slices.Contains([]string{"observe", "block"}, c.Protection.Unicode) || !slices.Contains([]string{"off", "observe", "block"}, c.Protection.Fuzzy) || len(c.Protection.Message) > 500 {
 		return bad("Invalid protection settings.")
 	}
@@ -264,10 +308,14 @@ func validateShadow(c ShadowConfig) error {
 			}
 		}
 	}
+	return nil
+}
+
+func validatePrivacyShadow(c ShadowConfig) error {
 	if !validateSet(c.Privacy.Types, privacyTypes) || len(c.Privacy.CustomRules) > 25 {
 		return bad("Invalid privacy categories or rules.")
 	}
-	seen = map[string]bool{}
+	seen := map[string]bool{}
 	for _, v := range c.Privacy.CustomRules {
 		if !uuidPattern.MatchString(v.ID) || seen[v.ID] || !validMetadata(v.Label, 60) || len(v.Pattern) > 200 || v.Pattern == "" {
 			return bad("Invalid custom privacy rule.")
@@ -298,6 +346,10 @@ func validateShadow(c ShadowConfig) error {
 			return bad("The rule label matches its own expression: the inserted placeholder would be masked again, endlessly.")
 		}
 	}
+	return nil
+}
+
+func validateClassificationShadow(c ShadowConfig) error {
 	if !validateSet(c.Classification.Browser, classificationTypes) || !validateSet(c.Classification.Coding, classificationTypes) || (Edition == "community" && len(c.Classification.Coding) > 0) {
 		return bad("Invalid classification categories for this edition.")
 	}
@@ -309,6 +361,10 @@ func validateShadow(c ShadowConfig) error {
 			return bad("Invalid medical term.")
 		}
 	}
+	return nil
+}
+
+func validateOperationsShadow(c ShadowConfig) error {
 	if c.Operations.Updates.Percentage < 0 || c.Operations.Updates.Percentage > 100 || len(c.Operations.Updates.DeviceIDs) > 1000 || len(c.Operations.Updates.PausedVersions) > 100 {
 		return bad("Invalid update campaign.")
 	}
@@ -431,17 +487,29 @@ func (a *App) readShadow(ctx context.Context, tx pgx.Tx, org string, depth int) 
 			return out, e
 		}
 	}
+	if e = a.readInheritedShadow(ctx, tx, org, depth, &out); e != nil {
+		return out, e
+	}
+	if depth == 0 {
+		if e = a.enrichDetectionPolicy(ctx, tx, org, &out); e != nil {
+			return out, e
+		}
+	}
+	return out, nil
+}
+
+func (a *App) readInheritedShadow(ctx context.Context, tx pgx.Tx, org string, depth int, out *ShadowSettings) error {
 	if Edition == "commercial" {
 		var parent *string
 		var name string
-		if e = tx.QueryRow(ctx, `SELECT parent_id FROM organizations WHERE id=$1`, org).Scan(&parent); e != nil {
-			return out, e
+		if e := tx.QueryRow(ctx, `SELECT parent_id FROM organizations WHERE id=$1`, org).Scan(&parent); e != nil {
+			return e
 		}
 		out.Capabilities["organization_inheritance"] = parent != nil
 		if parent != nil && len(out.InheritSections) > 0 {
 			p, parentName, e := a.readParentShadow(ctx, tx, org, *parent, depth+1)
 			if e != nil {
-				return out, e
+				return e
 			}
 			name = parentName
 			for _, s := range out.InheritSections {
@@ -454,12 +522,7 @@ func (a *App) readShadow(ctx context.Context, tx pgx.Tx, org string, depth int) 
 			out.Revision = max(out.Revision, p.Revision)
 		}
 	}
-	if depth == 0 {
-		if e = a.enrichDetectionPolicy(ctx, tx, org, &out); e != nil {
-			return out, e
-		}
-	}
-	return out, nil
+	return nil
 }
 
 // Resolve ancestors on the caller's connection: borrowing another pooled
@@ -611,6 +674,23 @@ func (a *App) shadowSettings(w http.ResponseWriter, r *http.Request, tx pgx.Tx, 
 	reply(w, 200, out)
 	return nil
 }
+func validateShadowInheritance(ctx context.Context, tx pgx.Tx, org string, sections []string) error {
+	if !validateSet(sections, shadowSections) || (Edition == "community" && len(sections) > 0) {
+		return bad("Organization inheritance is unavailable or invalid.")
+	}
+	if len(sections) == 0 {
+		return nil
+	}
+	var parent *string
+	if e := tx.QueryRow(ctx, "SELECT parent_id FROM organizations WHERE id=$1", org).Scan(&parent); e != nil {
+		return e
+	}
+	if parent == nil {
+		return bad("This organization has no parent.")
+	}
+	return nil
+}
+
 func (a *App) putShadowSettings(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
 	var body struct {
 		Revision        int64        `json:"revision"`
@@ -620,17 +700,8 @@ func (a *App) putShadowSettings(w http.ResponseWriter, r *http.Request, tx pgx.T
 	if e := decode(w, r, &body); e != nil {
 		return e
 	}
-	if !validateSet(body.InheritSections, shadowSections) || (Edition == "community" && len(body.InheritSections) > 0) {
-		return bad("Organization inheritance is unavailable or invalid.")
-	}
-	if len(body.InheritSections) > 0 {
-		var parent *string
-		if e := tx.QueryRow(r.Context(), `SELECT parent_id FROM organizations WHERE id=$1`, s.OrganizationID).Scan(&parent); e != nil {
-			return e
-		}
-		if parent == nil {
-			return bad("This organization has no parent.")
-		}
+	if e := validateShadowInheritance(r.Context(), tx, s.OrganizationID, body.InheritSections); e != nil {
+		return e
 	}
 	if body.Config.ModelAccess == nil {
 		body.Config.ModelAccess = []ModelAccessRule{}

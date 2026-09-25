@@ -128,6 +128,29 @@ func TestInstallerBundleMemoization(t *testing.T) {
 }
 
 func TestDeploymentKeyAndBootstrap(t *testing.T) {
+	f := newInstallerBootstrapFixture(t)
+	t.Run("automatic bootstrap keeps setup closed", f.testAutomatic)
+	t.Run("a key exists from creation and never leaves in clear", f.testKey)
+	t.Run("permissions and configured trust", f.testPermissions)
+	t.Run("installation retry is idempotent and secrets stay sealed", f.testRetry)
+	t.Run("the MSI path obeys the approval policy", f.testApproval)
+	t.Run("network rules combine a CIDR with the declared machine domain", f.testNetwork)
+	t.Run("reinstallation distinguishes deletion from revocation", f.testReinstallation)
+	t.Run("rotation and revocation invalidate distributed installers", f.testRotation)
+	t.Run("force RLS and isolation between organizations", f.testIsolation)
+}
+
+type installerBootstrapFixture struct {
+	ctx       context.Context
+	admin, db *pgxpool.Pool
+	app       *App
+	config    Config
+	org       string
+	owner     *http.Cookie
+	csrf      string
+}
+
+func newInstallerBootstrapFixture(t *testing.T) installerBootstrapFixture {
 	runtimeURL, migrationURL := os.Getenv("TEST_DATABASE_URL"), os.Getenv("TEST_MIGRATION_DATABASE_URL")
 	if runtimeURL == "" || migrationURL == "" {
 		t.Skip("installer integration requires disposable milvago_test database")
@@ -144,7 +167,7 @@ func TestDeploymentKeyAndBootstrap(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer admin.Close()
+	t.Cleanup(admin.Close)
 	if _, e = admin.Exec(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public`); e != nil {
 		t.Fatal(e)
 	}
@@ -157,7 +180,7 @@ func TestDeploymentKeyAndBootstrap(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer db.Close()
+	t.Cleanup(db.Close)
 	reopened, e := OpenDatabase(ctx, config)
 	if e != nil {
 		t.Fatal("migration restart", e)
@@ -171,451 +194,500 @@ func TestDeploymentKeyAndBootstrap(t *testing.T) {
 	if e = admin.QueryRow(ctx, `SELECT id FROM organizations LIMIT 1`).Scan(&org); e != nil {
 		t.Fatal(e)
 	}
-	newSession := func(tenant, role string) (*http.Cookie, string) {
-		t.Helper()
-		tx, e := tenantTx(ctx, admin, tenant)
-		if e != nil {
-			t.Fatal(e)
-		}
-		defer tx.Rollback(ctx)
-		var user string
-		if e = tx.QueryRow(ctx, `INSERT INTO users(subject,email,display_name) VALUES($1,'installer@example.test','Synthetic installer account') RETURNING id`, randomToken()).Scan(&user); e != nil {
-			t.Fatal(e)
-		}
-		if _, e = tx.Exec(ctx, `INSERT INTO memberships(organization_id,user_id,role) VALUES($1,$2,$3)`, tenant, user, role); e != nil {
-			t.Fatal(e)
-		}
-		if _, e = tx.Exec(ctx, `INSERT INTO settings(organization_id) VALUES($1) ON CONFLICT DO NOTHING`, tenant); e != nil {
-			t.Fatal(e)
-		}
-		token, csrf := randomToken(), randomToken()
-		if _, e = tx.Exec(ctx, `INSERT INTO sessions(token_hash,user_id,organization_id,csrf_token,encrypted_tokens,mfa,expires_at,identity_expires_at) VALUES($1,$2,$3,$4,$5,true,$6,$6)`, hash(token), user, tenant, csrf, []byte("synthetic-session"), time.Now().Add(time.Hour)); e != nil {
-			t.Fatal(e)
-		}
-		if e = tx.Commit(ctx); e != nil {
-			t.Fatal(e)
-		}
-		return &http.Cookie{Name: cookieName("session"), Value: token}, csrf
+	f := installerBootstrapFixture{ctx: ctx, admin: admin, db: db, app: a, config: config, org: org}
+	f.owner, f.csrf = f.newSession(t, org, "owner")
+	return f
+}
+
+func (f installerBootstrapFixture) newSession(t *testing.T, tenant, role string) (*http.Cookie, string) {
+	ctx, admin := f.ctx, f.admin
+	t.Helper()
+	tx, e := tenantTx(ctx, admin, tenant)
+	if e != nil {
+		t.Fatal(e)
 	}
-	owner, csrf := newSession(org, "owner")
-	// Automatic mode: an instance given BOOTSTRAP_EMAIL never offers the setup wizard.
-	t.Run("automatic bootstrap keeps setup closed", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		a.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/api/setup", nil))
-		if w.Code != 200 || !strings.Contains(w.Body.String(), `"pending":false`) {
-			t.Fatalf("setup status in automatic mode: %d %s", w.Code, w.Body.String())
-		}
-		r := httptest.NewRequest("POST", "/api/setup/session", strings.NewReader(`{"token":"any-token-of-any-length-whatsoever"}`))
-		r.Header.Set("Content-Type", "application/json")
-		r.Header.Set("Origin", config.AppURL)
-		w = httptest.NewRecorder()
-		a.Handler().ServeHTTP(w, r)
-		if w.Code != 404 {
-			t.Fatalf("setup session in automatic mode answered %d", w.Code)
-		}
-	})
-	call := func(method, path string, body any, cookie *http.Cookie, csrf, bearer string) *httptest.ResponseRecorder {
-		raw, _ := json.Marshal(body)
-		r := httptest.NewRequest(method, path, bytes.NewReader(raw))
-		r.Header.Set("Content-Type", "application/json")
-		r.Header.Set("Origin", config.AppURL)
-		r.Header.Set("X-CSRF-Token", csrf)
-		if cookie != nil {
-			r.AddCookie(cookie)
-		}
-		if bearer != "" {
-			r.Header.Set("Authorization", "Bearer "+bearer)
-		}
-		w := httptest.NewRecorder()
-		a.Handler().ServeHTTP(w, r)
-		return w
+	defer tx.Rollback(ctx)
+	var user string
+	if e = tx.QueryRow(ctx, `INSERT INTO users(subject,email,display_name) VALUES($1,'installer@example.test','Synthetic installer account') RETURNING id`, randomToken()).Scan(&user); e != nil {
+		t.Fatal(e)
 	}
-	// The key exists because the organization exists, not because someone asked for a
-	// package. Nothing in this test ever creates one.
-	provision := func(tenant string) InstallerProvision {
-		t.Helper()
-		tx, e := tenantTx(ctx, db, tenant)
-		if e != nil {
-			t.Fatal(e)
-		}
-		defer tx.Rollback(ctx)
-		p, e := a.installerProvision(ctx, tx, tenant, "windows")
-		if e != nil {
-			t.Fatal(e)
-		}
-		if len(p.BootstrapToken) != 43 || p.Edition != Edition || p.Platform != "windows" || p.UpdatePublicKey == "" {
-			t.Fatal("deployment provision malformed")
-		}
-		return p
+	if _, e = tx.Exec(ctx, `INSERT INTO memberships(organization_id,user_id,role) VALUES($1,$2,$3)`, tenant, user, role); e != nil {
+		t.Fatal(e)
 	}
-	read := func(cookie *http.Cookie, token, path string) *DeploymentKey {
-		t.Helper()
-		w := call("GET", path, nil, cookie, token, "")
-		requireHTTP(t, w, 200)
-		var response struct {
-			Key *DeploymentKey `json:"key"`
-		}
-		if e = json.Unmarshal(w.Body.Bytes(), &response); e != nil {
-			t.Fatal(e)
-		}
-		return response.Key
+	if _, e = tx.Exec(ctx, `INSERT INTO settings(organization_id) VALUES($1) ON CONFLICT DO NOTHING`, tenant); e != nil {
+		t.Fatal(e)
 	}
-	setApproval := func(mode string) {
-		t.Helper()
-		w := call("GET", "/api/shadow/settings", nil, owner, csrf, "")
-		requireHTTP(t, w, 200)
-		var current map[string]any
-		if e = json.Unmarshal(w.Body.Bytes(), &current); e != nil {
-			t.Fatal(e)
-		}
-		config, _ := current["config"].(map[string]any)
-		if config == nil {
-			t.Fatal("shadow settings carried no configuration")
-		}
-		config["enrollment"] = map[string]any{"approval": mode, "cidrs": []string{}}
-		requireHTTP(t, call("PUT", "/api/shadow/settings", map[string]any{"revision": current["revision"], "config": config, "inherit_sections": []string{}}, owner, csrf, ""), 200)
+	token, csrf := randomToken(), randomToken()
+	if _, e = tx.Exec(ctx, `INSERT INTO sessions(token_hash,user_id,organization_id,csrf_token,encrypted_tokens,mfa,expires_at,identity_expires_at) VALUES($1,$2,$3,$4,$5,true,$6,$6)`, hash(token), user, tenant, csrf, []byte("synthetic-session"), time.Now().Add(time.Hour)); e != nil {
+		t.Fatal(e)
 	}
-	request := func(id string) installationRequest {
-		return installationRequest{InstallationID: id, InstallationSecret: randomToken(), Hostname: "synthetic-workstation", Platform: "windows", Version: "0.3.0", Capabilities: []string{"browser.navigation"}}
+	if e = tx.Commit(ctx); e != nil {
+		t.Fatal(e)
 	}
-	t.Run("a key exists from creation and never leaves in clear", func(t *testing.T) {
-		key := read(owner, csrf, "/api/deployment-key")
-		if key == nil || key.RotatedAt != nil {
-			t.Fatal("organization opened without a deployment key")
+	return &http.Cookie{Name: cookieName("session"), Value: token}, csrf
+}
+
+func (f installerBootstrapFixture) call(t *testing.T, method, path string, body any, cookie *http.Cookie, csrf, bearer string) *httptest.ResponseRecorder {
+	config, a := f.config, f.app
+	raw, _ := json.Marshal(body)
+	r := httptest.NewRequest(method, path, bytes.NewReader(raw))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Origin", config.AppURL)
+	r.Header.Set("X-CSRF-Token", csrf)
+	if cookie != nil {
+		r.AddCookie(cookie)
+	}
+	if bearer != "" {
+		r.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	w := httptest.NewRecorder()
+	a.Handler().ServeHTTP(w, r)
+	return w
+}
+
+// The key exists because the organization exists, not because someone asked for a
+// package. Nothing in this test ever creates one.
+func (f installerBootstrapFixture) provision(t *testing.T, tenant string) InstallerProvision {
+	ctx, db, a := f.ctx, f.db, f.app
+	t.Helper()
+	tx, e := tenantTx(ctx, db, tenant)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer tx.Rollback(ctx)
+	p, e := a.installerProvision(ctx, tx, tenant, "windows")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if len(p.BootstrapToken) != 43 || p.Edition != Edition || p.Platform != "windows" || p.UpdatePublicKey == "" {
+		t.Fatal("deployment provision malformed")
+	}
+	return p
+}
+
+func (f installerBootstrapFixture) read(t *testing.T, cookie *http.Cookie, token, path string) *DeploymentKey {
+	t.Helper()
+	w := f.call(t, "GET", path, nil, cookie, token, "")
+	requireHTTP(t, w, 200)
+	var response struct {
+		Key *DeploymentKey `json:"key"`
+	}
+	if e := json.Unmarshal(w.Body.Bytes(), &response); e != nil {
+		t.Fatal(e)
+	}
+	return response.Key
+}
+
+func (f installerBootstrapFixture) setApproval(t *testing.T, mode string) {
+	owner, csrf := f.owner, f.csrf
+	t.Helper()
+	w := f.call(t, "GET", "/api/shadow/settings", nil, owner, csrf, "")
+	requireHTTP(t, w, 200)
+	var current map[string]any
+	if e := json.Unmarshal(w.Body.Bytes(), &current); e != nil {
+		t.Fatal(e)
+	}
+	config, _ := current["config"].(map[string]any)
+	if config == nil {
+		t.Fatal("shadow settings carried no configuration")
+	}
+	config["enrollment"] = map[string]any{"approval": mode, "cidrs": []string{}}
+	requireHTTP(t, f.call(t, "PUT", "/api/shadow/settings", map[string]any{"revision": current["revision"], "config": config, "inherit_sections": []string{}}, owner, csrf, ""), 200)
+}
+
+func installerRequest(id string) installationRequest {
+	return installationRequest{InstallationID: id, InstallationSecret: randomToken(), Hostname: "synthetic-workstation", Platform: "windows", Version: "0.3.0", Capabilities: []string{"browser.navigation"}}
+}
+
+func (f installerBootstrapFixture) testAutomatic(t *testing.T) {
+	a, config := f.app, f.config
+	w := httptest.NewRecorder()
+	a.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/api/setup", nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"pending":false`) {
+		t.Fatalf("setup status in automatic mode: %d %s", w.Code, w.Body.String())
+	}
+	r := httptest.NewRequest("POST", "/api/setup/session", strings.NewReader(`{"token":"any-token-of-any-length-whatsoever"}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Origin", config.AppURL)
+	w = httptest.NewRecorder()
+	a.Handler().ServeHTTP(w, r)
+	if w.Code != 404 {
+		t.Fatalf("setup session in automatic mode answered %d", w.Code)
+	}
+}
+
+func (f installerBootstrapFixture) testKey(t *testing.T) {
+	org, owner, csrf := f.org, f.owner, f.csrf
+	key := f.read(t, owner, csrf, "/api/deployment-key")
+	if key == nil || key.RotatedAt != nil {
+		t.Fatal("organization opened without a deployment key")
+	}
+	secret := f.provision(t, org).BootstrapToken
+	if w := f.call(t, "GET", "/api/deployment-key", nil, owner, csrf, ""); strings.Contains(w.Body.String(), secret) {
+		t.Fatal("console API returned the deployment secret")
+	}
+}
+
+func (f installerBootstrapFixture) testPermissions(t *testing.T) {
+	a, config, org, owner, csrf := f.app, f.config, f.org, f.owner, f.csrf
+	requireHTTP(t, f.call(t, "GET", "/api/deployment-key", nil, nil, "", ""), 401)
+	reader, readerCSRF := f.newSession(t, org, "viewer")
+	requireHTTP(t, f.call(t, "GET", "/api/deployment-key", nil, reader, readerCSRF, ""), 403)
+	requireHTTP(t, f.call(t, "POST", "/api/deployment-key/rotate", map[string]any{}, reader, readerCSRF, ""), 403)
+	requireHTTP(t, f.call(t, "POST", "/api/deployment-key/rotate", map[string]any{}, owner, "wrong", ""), 403)
+	a.config.UpdatePublicKey = nil
+	requireHTTP(t, f.call(t, "GET", "/api/installer/windows", nil, owner, csrf, ""), 503)
+	a.config.UpdatePublicKey = config.UpdatePublicKey
+	requireHTTP(t, f.call(t, "GET", "/api/installer/solaris", nil, owner, csrf, ""), 400)
+}
+
+func (f installerBootstrapFixture) testRetry(t *testing.T) {
+	ctx, db, org, owner, csrf := f.ctx, f.db, f.org, f.owner, f.csrf
+	var e error
+	f.setApproval(t, "automatic")
+	token := f.provision(t, org).BootstrapToken
+	body := installerRequest("11111111-1111-4111-8111-111111111111")
+	w := f.call(t, "POST", "/v2/install", body, nil, "", token)
+	requireHTTP(t, w, 201)
+	var first map[string]string
+	json.Unmarshal(w.Body.Bytes(), &first)
+	w = f.call(t, "POST", "/v2/install", body, nil, "", token)
+	requireHTTP(t, w, 200)
+	var retry map[string]string
+	json.Unmarshal(w.Body.Bytes(), &retry)
+	if first["credential"] != retry["credential"] || first["device_id"] != retry["device_id"] {
+		t.Fatal("retry changed identity")
+	}
+	requireHTTP(t, f.call(t, "GET", "/v2/policy", nil, nil, "", first["credential"]), 200)
+	// Knowing an installation identifier is not knowing the installation.
+	forged := body
+	forged.InstallationSecret = randomToken()
+	requireHTTP(t, f.call(t, "POST", "/v2/install", forged, nil, "", token), 401)
+	forged = body
+	forged.Hostname = "changed-host"
+	requireHTTP(t, f.call(t, "POST", "/v2/install", forged, nil, "", token), 401)
+	tx, e := tenantTx(ctx, db, org)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer tx.Rollback(ctx)
+	var sealedToken, sealedCredential, kind string
+	if e = tx.QueryRow(ctx, `SELECT p.secret_ciphertext,i.credential_ciphertext,d.kind FROM installer_profiles p JOIN installer_installations i ON i.profile_id=p.id JOIN devices d ON d.id=i.device_id WHERE i.installation_id=$1`, body.InstallationID).Scan(&sealedToken, &sealedCredential, &kind); e != nil {
+		t.Fatal(e)
+	}
+	expected := "browser"
+	if Edition == "commercial" {
+		expected = "native"
+	}
+	if kind != expected || strings.Contains(sealedToken, token) || strings.Contains(sealedCredential, first["credential"]) {
+		t.Fatal("installation storage or composition invalid")
+	}
+	tx.Rollback(ctx)
+	requireHTTP(t, f.call(t, "POST", "/api/devices/"+first["device_id"]+"/revoke", map[string]any{}, owner, csrf, ""), 200)
+	// A revoked device never recovers its credential, even with a valid key.
+	requireHTTP(t, f.call(t, "POST", "/v2/install", body, nil, "", token), 401)
+}
+
+func (f installerBootstrapFixture) testApproval(t *testing.T) {
+	ctx, db, org := f.ctx, f.db, f.org
+	var e error
+	f.setApproval(t, "manual")
+	token := f.provision(t, org).BootstrapToken
+	body := installerRequest("66666666-6666-4666-8666-666666666666")
+	w := f.call(t, "POST", "/v2/install", body, nil, "", token)
+	requireHTTP(t, w, 201)
+	var created map[string]string
+	json.Unmarshal(w.Body.Bytes(), &created)
+	tx, e := tenantTx(ctx, db, org)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer tx.Rollback(ctx)
+	var status string
+	if e = tx.QueryRow(ctx, `SELECT status FROM devices WHERE id=$1`, created["device_id"]).Scan(&status); e != nil {
+		t.Fatal(e)
+	}
+	if status != "pending" {
+		t.Fatal("manual approval bypassed by the MSI path: " + status)
+	}
+	tx.Rollback(ctx)
+	// A device awaiting approval still repairs its installation.
+	requireHTTP(t, f.call(t, "POST", "/v2/install", body, nil, "", token), 200)
+	f.setApproval(t, "automatic")
+}
+
+func (f installerBootstrapFixture) testNetwork(t *testing.T) {
+	org := f.org
+
+	rule := func(cidr, domain string) map[string]any { return map[string]any{"cidr": cidr, "domain": domain} }
+	// A domain never approves without a network, and hostile names are refused.
+	for _, rules := range [][]map[string]any{{rule("", "corp.example.com")}, {rule("192.0.2.0/24", "corp;example.com")}, {rule("192.0.2.0/24", strings.Repeat("a", 254))}} {
+		if code := f.setNetworkEnrollment(t, map[string]any{"approval": "network", "cidrs": []string{}, "rules": rules}); code != 400 {
+			t.Fatalf("invalid approval rule accepted: %v -> %d", rules, code)
 		}
-		secret := provision(org).BootstrapToken
-		if w := call("GET", "/api/deployment-key", nil, owner, csrf, ""); strings.Contains(w.Body.String(), secret) {
-			t.Fatal("console API returned the deployment secret")
+	}
+	many := make([]map[string]any, 51)
+	for i := range many {
+		many[i] = rule("192.0.2.0/24", "")
+	}
+	if code := f.setNetworkEnrollment(t, map[string]any{"approval": "network", "cidrs": []string{}, "rules": many}); code != 400 {
+		t.Fatalf("51 approval rules accepted: %d", code)
+	}
+	// httptest requests come from 192.0.2.1.
+	if code := f.setNetworkEnrollment(t, map[string]any{"approval": "network", "cidrs": []string{}, "rules": []map[string]any{rule("192.0.2.0/24", "corp.example.com"), rule("198.51.100.0/24", "")}}); code != 200 {
+		t.Fatalf("valid rules refused: %d", code)
+	}
+	token := f.provision(t, org).BootstrapToken
+
+	for _, c := range []struct {
+		id, want string
+		domains  []machineDomain
+	}{
+		{"a1111111-1111-4111-8111-111111111111", "approved", []machineDomain{{"ad", "CORP.Example.com"}}},
+		{"a2222222-2222-4222-8222-222222222222", "pending", []machineDomain{{"ad", "other.example.com"}}},
+		{"a3333333-3333-4333-8333-333333333333", "pending", nil},
+		{"a4444444-4444-4444-8444-444444444444", "pending", []machineDomain{{"realm", "corp.example.com.evil.test"}}},
+	} {
+		if code, status := f.enrolNetworkDevice(t, token, c.id, c.domains); code != 201 || status != c.want {
+			t.Fatalf("%v: %d %s, want %s", c.domains, code, status, c.want)
 		}
-	})
-	t.Run("permissions and configured trust", func(t *testing.T) {
-		requireHTTP(t, call("GET", "/api/deployment-key", nil, nil, "", ""), 401)
-		reader, readerCSRF := newSession(org, "viewer")
-		requireHTTP(t, call("GET", "/api/deployment-key", nil, reader, readerCSRF, ""), 403)
-		requireHTTP(t, call("POST", "/api/deployment-key/rotate", map[string]any{}, reader, readerCSRF, ""), 403)
-		requireHTTP(t, call("POST", "/api/deployment-key/rotate", map[string]any{}, owner, "wrong", ""), 403)
-		a.config.UpdatePublicKey = nil
-		requireHTTP(t, call("GET", "/api/installer/windows", nil, owner, csrf, ""), 503)
-		a.config.UpdatePublicKey = config.UpdatePublicKey
-		requireHTTP(t, call("GET", "/api/installer/solaris", nil, owner, csrf, ""), 400)
-	})
-	t.Run("installation retry is idempotent and secrets stay sealed", func(t *testing.T) {
-		setApproval("automatic")
-		token := provision(org).BootstrapToken
-		body := request("11111111-1111-4111-8111-111111111111")
-		w := call("POST", "/v2/install", body, nil, "", token)
-		requireHTTP(t, w, 201)
-		var first map[string]string
-		json.Unmarshal(w.Body.Bytes(), &first)
-		w = call("POST", "/v2/install", body, nil, "", token)
-		requireHTTP(t, w, 200)
-		var retry map[string]string
-		json.Unmarshal(w.Body.Bytes(), &retry)
-		if first["credential"] != retry["credential"] || first["device_id"] != retry["device_id"] {
-			t.Fatal("retry changed identity")
-		}
-		requireHTTP(t, call("GET", "/v2/policy", nil, nil, "", first["credential"]), 200)
-		// Knowing an installation identifier is not knowing the installation.
-		forged := body
-		forged.InstallationSecret = randomToken()
-		requireHTTP(t, call("POST", "/v2/install", forged, nil, "", token), 401)
-		forged = body
-		forged.Hostname = "changed-host"
-		requireHTTP(t, call("POST", "/v2/install", forged, nil, "", token), 401)
-		tx, e := tenantTx(ctx, db, org)
-		if e != nil {
-			t.Fatal(e)
-		}
-		defer tx.Rollback(ctx)
-		var sealedToken, sealedCredential, kind string
-		if e = tx.QueryRow(ctx, `SELECT p.secret_ciphertext,i.credential_ciphertext,d.kind FROM installer_profiles p JOIN installer_installations i ON i.profile_id=p.id JOIN devices d ON d.id=i.device_id WHERE i.installation_id=$1`, body.InstallationID).Scan(&sealedToken, &sealedCredential, &kind); e != nil {
-			t.Fatal(e)
-		}
-		expected := "browser"
-		if Edition == "commercial" {
-			expected = "native"
-		}
-		if kind != expected || strings.Contains(sealedToken, token) || strings.Contains(sealedCredential, first["credential"]) {
-			t.Fatal("installation storage or composition invalid")
-		}
-		tx.Rollback(ctx)
-		requireHTTP(t, call("POST", "/api/devices/"+first["device_id"]+"/revoke", map[string]any{}, owner, csrf, ""), 200)
-		// A revoked device never recovers its credential, even with a valid key.
-		requireHTTP(t, call("POST", "/v2/install", body, nil, "", token), 401)
-	})
-	t.Run("the MSI path obeys the approval policy", func(t *testing.T) {
-		setApproval("manual")
-		token := provision(org).BootstrapToken
-		body := request("66666666-6666-4666-8666-666666666666")
-		w := call("POST", "/v2/install", body, nil, "", token)
-		requireHTTP(t, w, 201)
-		var created map[string]string
-		json.Unmarshal(w.Body.Bytes(), &created)
-		tx, e := tenantTx(ctx, db, org)
-		if e != nil {
-			t.Fatal(e)
-		}
-		defer tx.Rollback(ctx)
-		var status string
-		if e = tx.QueryRow(ctx, `SELECT status FROM devices WHERE id=$1`, created["device_id"]).Scan(&status); e != nil {
-			t.Fatal(e)
-		}
-		if status != "pending" {
-			t.Fatal("manual approval bypassed by the MSI path: " + status)
-		}
-		tx.Rollback(ctx)
-		// A device awaiting approval still repairs its installation.
-		requireHTTP(t, call("POST", "/v2/install", body, nil, "", token), 200)
-		setApproval("automatic")
-	})
-	t.Run("network rules combine a CIDR with the declared machine domain", func(t *testing.T) {
-		setEnrollment := func(enrollment map[string]any) int {
-			t.Helper()
-			w := call("GET", "/api/shadow/settings", nil, owner, csrf, "")
-			requireHTTP(t, w, 200)
-			var current map[string]any
-			if e := json.Unmarshal(w.Body.Bytes(), &current); e != nil {
-				t.Fatal(e)
-			}
-			config, _ := current["config"].(map[string]any)
-			config["enrollment"] = enrollment
-			return call("PUT", "/api/shadow/settings", map[string]any{"revision": current["revision"], "config": config, "inherit_sections": []string{}}, owner, csrf, "").Code
-		}
-		rule := func(cidr, domain string) map[string]any { return map[string]any{"cidr": cidr, "domain": domain} }
-		// A domain never approves without a network, and hostile names are refused.
-		for _, rules := range [][]map[string]any{{rule("", "corp.example.com")}, {rule("192.0.2.0/24", "corp;example.com")}, {rule("192.0.2.0/24", strings.Repeat("a", 254))}} {
-			if code := setEnrollment(map[string]any{"approval": "network", "cidrs": []string{}, "rules": rules}); code != 400 {
-				t.Fatalf("invalid approval rule accepted: %v -> %d", rules, code)
-			}
-		}
-		many := make([]map[string]any, 51)
-		for i := range many {
-			many[i] = rule("192.0.2.0/24", "")
-		}
-		if code := setEnrollment(map[string]any{"approval": "network", "cidrs": []string{}, "rules": many}); code != 400 {
-			t.Fatalf("51 approval rules accepted: %d", code)
-		}
-		// httptest requests come from 192.0.2.1.
-		if code := setEnrollment(map[string]any{"approval": "network", "cidrs": []string{}, "rules": []map[string]any{rule("192.0.2.0/24", "corp.example.com"), rule("198.51.100.0/24", "")}}); code != 200 {
-			t.Fatalf("valid rules refused: %d", code)
-		}
-		token := provision(org).BootstrapToken
-		enrol := func(id string, domains []machineDomain) (int, string) {
-			body := request(id)
-			body.MachineDomains = domains
-			w := call("POST", "/v2/install", body, nil, "", token)
-			if w.Code != 201 {
-				return w.Code, ""
-			}
-			var created map[string]string
-			json.Unmarshal(w.Body.Bytes(), &created)
-			tx, e := tenantTx(ctx, db, org)
-			if e != nil {
-				t.Fatal(e)
-			}
-			defer tx.Rollback(ctx)
-			var status string
-			var stored []machineDomain
-			if e = tx.QueryRow(ctx, `SELECT status,machine_domains FROM devices WHERE id=$1`, created["device_id"]).Scan(&status, &stored); e != nil {
-				t.Fatal(e)
-			}
-			if len(stored) != len(domains) {
-				t.Fatalf("declared domains not kept: %v", stored)
-			}
-			return w.Code, status
-		}
-		for _, c := range []struct {
-			id, want string
-			domains  []machineDomain
-		}{
-			{"a1111111-1111-4111-8111-111111111111", "approved", []machineDomain{{"ad", "CORP.Example.com"}}},
-			{"a2222222-2222-4222-8222-222222222222", "pending", []machineDomain{{"ad", "other.example.com"}}},
-			{"a3333333-3333-4333-8333-333333333333", "pending", nil},
-			{"a4444444-4444-4444-8444-444444444444", "pending", []machineDomain{{"realm", "corp.example.com.evil.test"}}},
-		} {
-			if code, status := enrol(c.id, c.domains); code != 201 || status != c.want {
-				t.Fatalf("%v: %d %s, want %s", c.domains, code, status, c.want)
-			}
-		}
-		if code, _ := enrol("a5555555-5555-4555-8555-555555555555", []machineDomain{{"workgroup", "corp.example.com"}}); code != 400 {
-			t.Fatalf("unknown domain kind accepted: %d", code)
-		}
-		// A network rule without a domain approves whatever the machine declares.
-		if code := setEnrollment(map[string]any{"approval": "network", "cidrs": []string{}, "rules": []map[string]any{rule("192.0.2.0/24", "")}}); code != 200 {
-			t.Fatalf("domainless rule refused: %d", code)
-		}
-		if _, status := enrol("a6666666-6666-4666-8666-666666666666", nil); status != "approved" {
-			t.Fatalf("network rule without domain: %s", status)
-		}
-		setApproval("automatic")
-	})
-	t.Run("reinstallation distinguishes deletion from revocation", func(t *testing.T) {
-		setApproval("manual")
-		token := provision(org).BootstrapToken
-		body := request("88888888-8888-4888-8888-888888888888")
-		w := call("POST", "/v2/install", body, nil, "", token)
-		requireHTTP(t, w, 201)
-		var device map[string]string
-		if err := json.Unmarshal(w.Body.Bytes(), &device); err != nil {
-			t.Fatal(err)
-		}
-		probe := reinstallationRequest{DeviceID: device["device_id"], Credential: device["credential"], Nonce: "99999999-9999-4999-8999-999999999999"}
-		check := func(t *testing.T, expected string) {
-			t.Helper()
-			w := call("POST", "/v2/install/reinstallation", probe, nil, "", token)
-			requireHTTP(t, w, 200)
-			var envelope map[string]string
-			if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
-				t.Fatal(err)
-			}
-			payload, err := base64.StdEncoding.DecodeString(envelope["payload"])
-			if err != nil {
-				t.Fatal(err)
-			}
-			signature, err := base64.StdEncoding.DecodeString(envelope["signature"])
-			if err != nil || !ed25519.Verify(a.policyKey(org).Public().(ed25519.PublicKey), payload, signature) {
-				t.Fatal("unsigned reinstallation result")
-			}
-			var result map[string]string
-			if err := json.Unmarshal(payload, &result); err != nil {
-				t.Fatal(err)
-			}
-			if result["status"] != expected || result["device_id"] != probe.DeviceID || result["nonce"] != probe.Nonce || result["purpose"] != "milvago/reinstallation/v1" {
-				t.Fatal("wrong confirmation", result)
-			}
-		}
-		check(t, "present")
-		requireHTTP(t, call("POST", "/v2/install/reinstallation", probe, nil, "", randomToken()), 401)
-		forged := probe
-		forged.Credential = randomToken()
-		requireHTTP(t, call("POST", "/v2/install/reinstallation", forged, nil, "", token), 401)
-		requireHTTP(t, call("POST", "/api/devices/"+probe.DeviceID+"/revoke", map[string]any{}, owner, csrf, ""), 200)
-		check(t, "revoked")
-		requireHTTP(t, call("POST", "/v2/install", body, nil, "", token), 401)
-		// Deleting a device erases its history: a fresh second factor first.
-		requireHTTP(t, call("DELETE", "/api/devices/"+probe.DeviceID, nil, owner, csrf, ""), 403)
-		if _, e := admin.Exec(ctx, `UPDATE sessions SET mfa=true,mfa_verified_at=clock_timestamp() WHERE token_hash=$1`, hash(owner.Value)); e != nil {
-			t.Fatal(e)
-		}
-		requireHTTP(t, call("DELETE", "/api/devices/"+probe.DeviceID, nil, owner, csrf, ""), 200)
-		check(t, "deleted")
-		// Deletion removes the former installation record. A new authorized
-		// enrollment still obeys manual approval and is idempotent on retry.
-		body.InstallationID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-		w = call("POST", "/v2/install", body, nil, "", token)
-		requireHTTP(t, w, 201)
-		var replacement map[string]string
-		if err := json.Unmarshal(w.Body.Bytes(), &replacement); err != nil {
-			t.Fatal(err)
-		}
-		if replacement["device_id"] == probe.DeviceID {
-			t.Fatal("deleted identity reused")
-		}
-		requireHTTP(t, call("GET", "/v2/policy", nil, nil, "", replacement["credential"]), 401)
-		requireHTTP(t, call("POST", "/v2/install", body, nil, "", token), 200)
-		setApproval("automatic")
-	})
-	t.Run("rotation and revocation invalidate distributed installers", func(t *testing.T) {
-		before := provision(org).BootstrapToken
-		requireHTTP(t, call("POST", "/api/deployment-key/rotate", map[string]any{}, owner, csrf, ""), 200)
-		after := provision(org).BootstrapToken
-		if before == after {
-			t.Fatal("rotation reused the secret")
-		}
-		body := request("33333333-3333-4333-8333-333333333333")
-		requireHTTP(t, call("POST", "/v2/install", body, nil, "", before), 401)
-		w := call("POST", "/v2/install", body, nil, "", after)
-		requireHTTP(t, w, 201)
-		var device map[string]string
-		json.Unmarshal(w.Body.Bytes(), &device)
-		// A rotation must not orphan an installation the previous key created: a
-		// repair is recovered by the identity the agent chose, not by the key.
-		requireHTTP(t, call("POST", "/api/deployment-key/rotate", map[string]any{}, owner, csrf, ""), 200)
-		third := provision(org).BootstrapToken
-		w = call("POST", "/v2/install", body, nil, "", third)
-		requireHTTP(t, w, 200)
-		var repaired map[string]string
-		json.Unmarshal(w.Body.Bytes(), &repaired)
-		if repaired["device_id"] != device["device_id"] || repaired["credential"] != device["credential"] {
-			t.Fatal("rotation orphaned an existing installation")
-		}
-		if key := read(owner, csrf, "/api/deployment-key"); key == nil || key.RotatedAt == nil {
-			t.Fatal("rotation left no live key, or did not record when it happened")
-		}
-		requireHTTP(t, call("POST", "/api/deployment-key/revoke", map[string]any{}, owner, csrf, ""), 200)
-		if read(owner, csrf, "/api/deployment-key") != nil {
-			t.Fatal("revoked key still reported")
-		}
-		// A revocation that the next restart undoes is not a revocation: the console
-		// has just told the administrator no installation is possible until they act.
-		if e = a.ensureDeploymentKeys(ctx); e != nil {
-			t.Fatal(e)
-		}
-		if read(owner, csrf, "/api/deployment-key") != nil {
-			t.Fatal("a restart reissued a deliberately revoked key")
-		}
-		requireHTTP(t, call("POST", "/v2/install", request("44444444-4444-4444-8444-444444444444"), nil, "", third), 401)
-		requireHTTP(t, call("GET", "/api/installer/windows", nil, owner, csrf, ""), 409)
-		// Devices already installed are untouched by a revocation.
-		requireHTTP(t, call("GET", "/v2/policy", nil, nil, "", device["credential"]), 200)
-		requireHTTP(t, call("POST", "/api/deployment-key/rotate", map[string]any{}, owner, csrf, ""), 200)
-	})
-	t.Run("force RLS and isolation between organizations", func(t *testing.T) {
-		var count int
-		if e = db.QueryRow(ctx, `SELECT count(*) FROM installer_profiles`).Scan(&count); e != nil || count != 0 {
-			t.Fatal("unscoped installer read", count, e)
-		}
-		if e = db.QueryRow(ctx, `SELECT count(*) FROM pg_class WHERE relname IN ('installer_profiles','installer_installations') AND relrowsecurity AND relforcerowsecurity`).Scan(&count); e != nil || count != 2 {
-			t.Fatal("installer RLS not forced", e)
-		}
-		if Edition != "commercial" {
-			return
-		}
-		w := call("POST", "/api/organizations", map[string]any{"name": "Synthetic child organization", "parent_id": org}, owner, csrf, "")
-		requireHTTP(t, w, 201)
-		var created Organization
-		if e = json.Unmarshal(w.Body.Bytes(), &created); e != nil {
-			t.Fatal(e)
-		}
-		other := created.ID
-		if other == "" {
-			t.Fatal("organization created without an identifier")
-		}
-		if provision(org).BootstrapToken == provision(other).BootstrapToken {
-			t.Fatal("organizations share a deployment key")
-		}
-		childSession, childCSRF := newSession(other, "owner")
-		if read(childSession, childCSRF, "/api/deployment-key") == nil {
-			t.Fatal("child organization opened without a key")
-		}
-		// A member of the child has no standing over the parent, by either route.
-		requireHTTP(t, call("GET", "/api/organizations/"+org+"/deployment-key", nil, childSession, childCSRF, ""), 403)
-		requireHTTP(t, call("POST", "/api/organizations/"+org+"/deployment-key/rotate", map[string]any{}, childSession, childCSRF, ""), 403)
-		// The parent owner reaches the child without switching session into it, and can
-		// act on it: reading was never the hard part, and a key that cannot be
-		// withdrawn from the page that shows it is not an incident-response tool.
-		if read(owner, csrf, "/api/organizations/"+other+"/deployment-key") == nil {
-			t.Fatal("parent owner cannot read the child key")
-		}
-		childToken := provision(other).BootstrapToken
-		requireHTTP(t, call("POST", "/api/organizations/"+other+"/deployment-key/rotate", map[string]any{}, owner, csrf, ""), 200)
-		if provision(other).BootstrapToken == childToken {
-			t.Fatal("rotating the child from the parent page changed nothing")
-		}
-		if read(owner, csrf, "/api/deployment-key") == nil {
-			t.Fatal("acting on the child disturbed the parent key")
-		}
-		requireHTTP(t, call("POST", "/api/organizations/"+other+"/deployment-key/revoke", map[string]any{}, owner, csrf, ""), 200)
-		if read(owner, csrf, "/api/organizations/"+other+"/deployment-key") != nil {
-			t.Fatal("the child key survived a revocation from the parent page")
-		}
-		tx, e := tenantTx(ctx, db, other)
-		if e != nil {
-			t.Fatal(e)
-		}
-		defer tx.Rollback(ctx)
-		if _, e = a.installerProvision(ctx, tx, org, "windows"); e == nil {
-			t.Fatal("child transaction read the parent key")
-		}
-	})
+	}
+	if code, _ := f.enrolNetworkDevice(t, token, "a5555555-5555-4555-8555-555555555555", []machineDomain{{"workgroup", "corp.example.com"}}); code != 400 {
+		t.Fatalf("unknown domain kind accepted: %d", code)
+	}
+	// A network rule without a domain approves whatever the machine declares.
+	if code := f.setNetworkEnrollment(t, map[string]any{"approval": "network", "cidrs": []string{}, "rules": []map[string]any{rule("192.0.2.0/24", "")}}); code != 200 {
+		t.Fatalf("domainless rule refused: %d", code)
+	}
+	if _, status := f.enrolNetworkDevice(t, token, "a6666666-6666-4666-8666-666666666666", nil); status != "approved" {
+		t.Fatalf("network rule without domain: %s", status)
+	}
+	f.setApproval(t, "automatic")
+}
+
+func (f installerBootstrapFixture) testReinstallation(t *testing.T) {
+	ctx, admin, org, owner, csrf := f.ctx, f.admin, f.org, f.owner, f.csrf
+	f.setApproval(t, "manual")
+	token := f.provision(t, org).BootstrapToken
+	body := installerRequest("88888888-8888-4888-8888-888888888888")
+	w := f.call(t, "POST", "/v2/install", body, nil, "", token)
+	requireHTTP(t, w, 201)
+	var device map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &device); err != nil {
+		t.Fatal(err)
+	}
+	probe := reinstallationRequest{DeviceID: device["device_id"], Credential: device["credential"], Nonce: "99999999-9999-4999-8999-999999999999"}
+
+	f.checkReinstallation(t, token, probe, "present")
+	requireHTTP(t, f.call(t, "POST", "/v2/install/reinstallation", probe, nil, "", randomToken()), 401)
+	forged := probe
+	forged.Credential = randomToken()
+	requireHTTP(t, f.call(t, "POST", "/v2/install/reinstallation", forged, nil, "", token), 401)
+	requireHTTP(t, f.call(t, "POST", "/api/devices/"+probe.DeviceID+"/revoke", map[string]any{}, owner, csrf, ""), 200)
+	f.checkReinstallation(t, token, probe, "revoked")
+	requireHTTP(t, f.call(t, "POST", "/v2/install", body, nil, "", token), 401)
+	// Deleting a device erases its history: a fresh second factor first.
+	requireHTTP(t, f.call(t, "DELETE", "/api/devices/"+probe.DeviceID, nil, owner, csrf, ""), 403)
+	if _, e := admin.Exec(ctx, `UPDATE sessions SET mfa=true,mfa_verified_at=clock_timestamp() WHERE token_hash=$1`, hash(owner.Value)); e != nil {
+		t.Fatal(e)
+	}
+	requireHTTP(t, f.call(t, "DELETE", "/api/devices/"+probe.DeviceID, nil, owner, csrf, ""), 200)
+	f.checkReinstallation(t, token, probe, "deleted")
+	// Deletion removes the former installation record. A new authorized
+	// enrollment still obeys manual approval and is idempotent on retry.
+	body.InstallationID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	w = f.call(t, "POST", "/v2/install", body, nil, "", token)
+	requireHTTP(t, w, 201)
+	var replacement map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &replacement); err != nil {
+		t.Fatal(err)
+	}
+	if replacement["device_id"] == probe.DeviceID {
+		t.Fatal("deleted identity reused")
+	}
+	requireHTTP(t, f.call(t, "GET", "/v2/policy", nil, nil, "", replacement["credential"]), 401)
+	requireHTTP(t, f.call(t, "POST", "/v2/install", body, nil, "", token), 200)
+	f.setApproval(t, "automatic")
+}
+
+func (f installerBootstrapFixture) testRotation(t *testing.T) {
+	ctx, a, org, owner, csrf := f.ctx, f.app, f.org, f.owner, f.csrf
+	var e error
+	before := f.provision(t, org).BootstrapToken
+	requireHTTP(t, f.call(t, "POST", "/api/deployment-key/rotate", map[string]any{}, owner, csrf, ""), 200)
+	after := f.provision(t, org).BootstrapToken
+	if before == after {
+		t.Fatal("rotation reused the secret")
+	}
+	body := installerRequest("33333333-3333-4333-8333-333333333333")
+	requireHTTP(t, f.call(t, "POST", "/v2/install", body, nil, "", before), 401)
+	w := f.call(t, "POST", "/v2/install", body, nil, "", after)
+	requireHTTP(t, w, 201)
+	var device map[string]string
+	json.Unmarshal(w.Body.Bytes(), &device)
+	// A rotation must not orphan an installation the previous key created: a
+	// repair is recovered by the identity the agent chose, not by the key.
+	requireHTTP(t, f.call(t, "POST", "/api/deployment-key/rotate", map[string]any{}, owner, csrf, ""), 200)
+	third := f.provision(t, org).BootstrapToken
+	w = f.call(t, "POST", "/v2/install", body, nil, "", third)
+	requireHTTP(t, w, 200)
+	var repaired map[string]string
+	json.Unmarshal(w.Body.Bytes(), &repaired)
+	if repaired["device_id"] != device["device_id"] || repaired["credential"] != device["credential"] {
+		t.Fatal("rotation orphaned an existing installation")
+	}
+	if key := f.read(t, owner, csrf, "/api/deployment-key"); key == nil || key.RotatedAt == nil {
+		t.Fatal("rotation left no live key, or did not record when it happened")
+	}
+	requireHTTP(t, f.call(t, "POST", "/api/deployment-key/revoke", map[string]any{}, owner, csrf, ""), 200)
+	if f.read(t, owner, csrf, "/api/deployment-key") != nil {
+		t.Fatal("revoked key still reported")
+	}
+	// A revocation that the next restart undoes is not a revocation: the console
+	// has just told the administrator no installation is possible until they act.
+	if e = a.ensureDeploymentKeys(ctx); e != nil {
+		t.Fatal(e)
+	}
+	if f.read(t, owner, csrf, "/api/deployment-key") != nil {
+		t.Fatal("a restart reissued a deliberately revoked key")
+	}
+	requireHTTP(t, f.call(t, "POST", "/v2/install", installerRequest("44444444-4444-4444-8444-444444444444"), nil, "", third), 401)
+	requireHTTP(t, f.call(t, "GET", "/api/installer/windows", nil, owner, csrf, ""), 409)
+	// Devices already installed are untouched by a revocation.
+	requireHTTP(t, f.call(t, "GET", "/v2/policy", nil, nil, "", device["credential"]), 200)
+	requireHTTP(t, f.call(t, "POST", "/api/deployment-key/rotate", map[string]any{}, owner, csrf, ""), 200)
+}
+
+func (f installerBootstrapFixture) testIsolation(t *testing.T) {
+	ctx, db := f.ctx, f.db
+	var e error
+	var count int
+	if e = db.QueryRow(ctx, `SELECT count(*) FROM installer_profiles`).Scan(&count); e != nil || count != 0 {
+		t.Fatal("unscoped installer read", count, e)
+	}
+	if e = db.QueryRow(ctx, `SELECT count(*) FROM pg_class WHERE relname IN ('installer_profiles','installer_installations') AND relrowsecurity AND relforcerowsecurity`).Scan(&count); e != nil || count != 2 {
+		t.Fatal("installer RLS not forced", e)
+	}
+	if Edition != "commercial" {
+		return
+	}
+	f.assertChildIsolation(t)
+}
+
+func (f installerBootstrapFixture) assertChildIsolation(t *testing.T) {
+	ctx, db, a, org, owner, csrf := f.ctx, f.db, f.app, f.org, f.owner, f.csrf
+	var e error
+	w := f.call(t, "POST", "/api/organizations", map[string]any{"name": "Synthetic child organization", "parent_id": org}, owner, csrf, "")
+	requireHTTP(t, w, 201)
+	var created Organization
+	if e = json.Unmarshal(w.Body.Bytes(), &created); e != nil {
+		t.Fatal(e)
+	}
+	other := created.ID
+	if other == "" {
+		t.Fatal("organization created without an identifier")
+	}
+	if f.provision(t, org).BootstrapToken == f.provision(t, other).BootstrapToken {
+		t.Fatal("organizations share a deployment key")
+	}
+	childSession, childCSRF := f.newSession(t, other, "owner")
+	if f.read(t, childSession, childCSRF, "/api/deployment-key") == nil {
+		t.Fatal("child organization opened without a key")
+	}
+	// A member of the child has no standing over the parent, by either route.
+	requireHTTP(t, f.call(t, "GET", "/api/organizations/"+org+"/deployment-key", nil, childSession, childCSRF, ""), 403)
+	requireHTTP(t, f.call(t, "POST", "/api/organizations/"+org+"/deployment-key/rotate", map[string]any{}, childSession, childCSRF, ""), 403)
+	// The parent owner reaches the child without switching session into it, and can
+	// act on it: reading was never the hard part, and a key that cannot be
+	// withdrawn from the page that shows it is not an incident-response tool.
+	if f.read(t, owner, csrf, "/api/organizations/"+other+"/deployment-key") == nil {
+		t.Fatal("parent owner cannot read the child key")
+	}
+	childToken := f.provision(t, other).BootstrapToken
+	requireHTTP(t, f.call(t, "POST", "/api/organizations/"+other+"/deployment-key/rotate", map[string]any{}, owner, csrf, ""), 200)
+	if f.provision(t, other).BootstrapToken == childToken {
+		t.Fatal("rotating the child from the parent page changed nothing")
+	}
+	if f.read(t, owner, csrf, "/api/deployment-key") == nil {
+		t.Fatal("acting on the child disturbed the parent key")
+	}
+	requireHTTP(t, f.call(t, "POST", "/api/organizations/"+other+"/deployment-key/revoke", map[string]any{}, owner, csrf, ""), 200)
+	if f.read(t, owner, csrf, "/api/organizations/"+other+"/deployment-key") != nil {
+		t.Fatal("the child key survived a revocation from the parent page")
+	}
+	tx, e := tenantTx(ctx, db, other)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer tx.Rollback(ctx)
+	if _, e = a.installerProvision(ctx, tx, org, "windows"); e == nil {
+		t.Fatal("child transaction read the parent key")
+	}
+}
+
+func (f installerBootstrapFixture) setNetworkEnrollment(t *testing.T, enrollment map[string]any) int {
+	owner, csrf := f.owner, f.csrf
+	t.Helper()
+	w := f.call(t, "GET", "/api/shadow/settings", nil, owner, csrf, "")
+	requireHTTP(t, w, 200)
+	var current map[string]any
+	if e := json.Unmarshal(w.Body.Bytes(), &current); e != nil {
+		t.Fatal(e)
+	}
+	config, _ := current["config"].(map[string]any)
+	config["enrollment"] = enrollment
+	return f.call(t, "PUT", "/api/shadow/settings", map[string]any{"revision": current["revision"], "config": config, "inherit_sections": []string{}}, owner, csrf, "").Code
+}
+
+func (f installerBootstrapFixture) enrolNetworkDevice(t *testing.T, token, id string, domains []machineDomain) (int, string) {
+	t.Helper()
+	ctx, db, org := f.ctx, f.db, f.org
+	body := installerRequest(id)
+	body.MachineDomains = domains
+	w := f.call(t, "POST", "/v2/install", body, nil, "", token)
+	if w.Code != 201 {
+		return w.Code, ""
+	}
+	var created map[string]string
+	json.Unmarshal(w.Body.Bytes(), &created)
+	tx, e := tenantTx(ctx, db, org)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer tx.Rollback(ctx)
+	var status string
+	var stored []machineDomain
+	if e = tx.QueryRow(ctx, `SELECT status,machine_domains FROM devices WHERE id=$1`, created["device_id"]).Scan(&status, &stored); e != nil {
+		t.Fatal(e)
+	}
+	if len(stored) != len(domains) {
+		t.Fatalf("declared domains not kept: %v", stored)
+	}
+	return w.Code, status
+}
+
+func (f installerBootstrapFixture) checkReinstallation(t *testing.T, token string, probe reinstallationRequest, expected string) {
+	a, org := f.app, f.org
+	t.Helper()
+	w := f.call(t, "POST", "/v2/install/reinstallation", probe, nil, "", token)
+	requireHTTP(t, w, 200)
+	var envelope map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := base64.StdEncoding.DecodeString(envelope["payload"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature, err := base64.StdEncoding.DecodeString(envelope["signature"])
+	if err != nil || !ed25519.Verify(a.policyKey(org).Public().(ed25519.PublicKey), payload, signature) {
+		t.Fatal("unsigned reinstallation result")
+	}
+	var result map[string]string
+	if err := json.Unmarshal(payload, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["status"] != expected || result["device_id"] != probe.DeviceID || result["nonce"] != probe.Nonce || result["purpose"] != "milvago/reinstallation/v1" {
+		t.Fatal("wrong confirmation", result)
+	}
 }

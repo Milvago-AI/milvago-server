@@ -55,11 +55,15 @@ func lockTestDatabase() (func(), error) {
 		return func() {}, nil
 	}
 
+	return waitForTestDatabaseLock(ctx, conn, required)
+}
+
+func waitForTestDatabaseLock(ctx context.Context, conn *pgx.Conn, required bool) (func(), error) {
 	deadline := time.Now().Add(testDatabaseLockWait)
 	announced := false
 	for {
 		var held bool
-		err = conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", testDatabaseLockKey).Scan(&held)
+		err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", testDatabaseLockKey).Scan(&held)
 		if err != nil {
 			_ = conn.Close(ctx)
 			if required {

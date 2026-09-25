@@ -236,43 +236,9 @@ func (a *App) revokeWithdrawnIdentities(ctx context.Context) {
 	if e != nil {
 		return
 	}
-	rows, e := a.db.Query(ctx, `SELECT id FROM organizations`)
+	holders, e := a.withdrawnKeyHolders(ctx)
 	if e != nil {
 		return
-	}
-	orgs := []string{}
-	for rows.Next() {
-		var org string
-		if e = rows.Scan(&org); e != nil {
-			break
-		}
-		orgs = append(orgs, org)
-	}
-	rows.Close()
-	if e != nil || rows.Err() != nil {
-		return
-	}
-	// Collected before any provider call, so no transaction is held open across
-	// network I/O. users carries no row-level security, so the join is sound once
-	// the tenant is set for api_keys.
-	holders := []keyHolder{}
-	for _, org := range orgs {
-		tx, e := tenantTx(ctx, a.db, org)
-		if e != nil {
-			continue
-		}
-		found, e := tx.Query(ctx, `SELECT DISTINCT k.user_id,u.subject FROM api_keys k JOIN users u ON u.id=k.user_id WHERE k.revoked_at IS NULL AND k.expires_at>now()`)
-		if e == nil {
-			for found.Next() {
-				h := keyHolder{org: org}
-				if e = found.Scan(&h.user, &h.subject); e != nil {
-					break
-				}
-				holders = append(holders, h)
-			}
-			found.Close()
-		}
-		tx.Rollback(ctx)
 	}
 	// One verdict per account for the whole sweep: the same person can hold keys
 	// in several organizations, and the provider is asked once.
@@ -305,29 +271,76 @@ func (a *App) revokeWithdrawnIdentities(ctx context.Context) {
 		verdicts[h.subject] = u.withdrawn()
 	}
 	for _, h := range holders {
-		if !verdicts[h.subject] {
-			continue
+		if verdicts[h.subject] {
+			a.revokeWithdrawnKeyHolder(ctx, h)
 		}
-		tx, e := tenantTx(ctx, a.db, h.org)
+	}
+}
+
+func (a *App) withdrawnKeyHolders(ctx context.Context) ([]keyHolder, error) {
+	rows, e := a.db.Query(ctx, `SELECT id FROM organizations`)
+	if e != nil {
+		return nil, e
+	}
+	orgs := []string{}
+	for rows.Next() {
+		var org string
+		if e = rows.Scan(&org); e != nil {
+			break
+		}
+		orgs = append(orgs, org)
+	}
+	rows.Close()
+	if e != nil {
+		return nil, e
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Collected before any provider call, so no transaction is held open across
+	// network I/O. users carries no row-level security, so the join is sound once
+	// the tenant is set for api_keys.
+	holders := []keyHolder{}
+	for _, org := range orgs {
+		tx, e := tenantTx(ctx, a.db, org)
 		if e != nil {
 			continue
 		}
-		tag, e := tx.Exec(ctx, `UPDATE api_keys SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL`, h.user)
-		if e != nil || tag.RowsAffected() == 0 {
-			tx.Rollback(ctx)
-			continue
+		found, e := tx.Query(ctx, `SELECT DISTINCT k.user_id,u.subject FROM api_keys k JOIN users u ON u.id=k.user_id WHERE k.revoked_at IS NULL AND k.expires_at>now()`)
+		if e == nil {
+			for found.Next() {
+				h := keyHolder{org: org}
+				if e = found.Scan(&h.user, &h.subject); e != nil {
+					break
+				}
+				holders = append(holders, h)
+			}
+			found.Close()
 		}
-		// Attributed to the account whose keys these were; api_key_id stays null
-		// because no key performed this -- maintenance did.
-		if e = audit(ctx, tx, h.org, h.user, "api_key.identity_withdrawn", h.user); e != nil {
-			tx.Rollback(ctx)
-			continue
-		}
-		if e = tx.Commit(ctx); e != nil {
-			continue
-		}
-		a.log.Info("revoked API keys for a withdrawn identity", "organization", h.org, "keys", tag.RowsAffected())
+		tx.Rollback(ctx)
 	}
+	return holders, nil
+}
+
+func (a *App) revokeWithdrawnKeyHolder(ctx context.Context, h keyHolder) {
+	tx, e := tenantTx(ctx, a.db, h.org)
+	if e != nil {
+		return
+	}
+	tag, e := tx.Exec(ctx, `UPDATE api_keys SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL`, h.user)
+	if e != nil || tag.RowsAffected() == 0 {
+		tx.Rollback(ctx)
+		return
+	}
+	// Maintenance attributes the revocation to the account, not an API key.
+	if e = audit(ctx, tx, h.org, h.user, "api_key.identity_withdrawn", h.user); e != nil {
+		tx.Rollback(ctx)
+		return
+	}
+	if e = tx.Commit(ctx); e != nil {
+		return
+	}
+	a.log.Info("revoked API keys for a withdrawn identity", "organization", h.org, "keys", tag.RowsAffected())
 }
 
 type apiKeyView struct {
