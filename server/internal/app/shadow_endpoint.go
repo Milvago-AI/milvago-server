@@ -227,17 +227,25 @@ func validateEventDetector(v *V2Event) error {
 		return bad("Invalid detector channel.")
 	}
 	for _, n := range []*int64{v.CatalogRevision, v.InputTokens, v.OutputTokens, v.BodyBytes} {
-		if n != nil && (*n < 0 || *n > 1000000000000) {
+		if !validEventMeasurement(n) {
 			return bad("Invalid measurement.")
 		}
 	}
 	if v.PlatformID != "" && !modelPlatformShape(v.PlatformID, v.Source) {
 		return bad("Invalid platform for this channel.")
 	}
-	if v.DecisionReason != "" && (!slices.Contains(eventDecisionReasons, v.DecisionReason) || v.PlatformID == "" || v.Action != "blocked" || v.Kind != "prompt") {
+	if !validEventDecision(v) {
 		return bad("Invalid model decision metadata.")
 	}
 	return nil
+}
+
+func validEventMeasurement(n *int64) bool {
+	return n == nil || (*n >= 0 && *n <= 1000000000000)
+}
+
+func validEventDecision(v *V2Event) bool {
+	return v.DecisionReason == "" || (slices.Contains(eventDecisionReasons, v.DecisionReason) && v.PlatformID != "" && v.Action == "blocked" && v.Kind == "prompt")
 }
 
 func validateEventIdentity(v *V2Event, now time.Time) error {
@@ -270,17 +278,14 @@ func validateEventContent(v *V2Event) error {
 			return bad("Invalid category.")
 		}
 	}
-	if (v.Prompt != nil && (v.Kind != "prompt" || len(*v.Prompt) > 32768)) || (v.Response != nil && (v.Kind != "response" || len(*v.Response) > 32768)) {
+	if !validEventBodyKind(v) {
 		return bad("Content does not match the event kind or exceeds 32 KiB.")
 	}
 	if len(v.Files) > 20 || (len(v.Files) > 0 && v.Kind != "prompt") {
 		return bad("File names are limited to 20 entries on a request.")
 	}
 	for _, name := range v.Files {
-		// Bidi overrides too: "invoice\u202efdp.exe" displays as invoiceexe.pdf.
-		if name == "" || len(name) > 200 || !utf8.ValidString(name) || strings.ContainsFunc(name, func(c rune) bool {
-			return unicode.IsControl(c) || unicode.Is(unicode.Bidi_Control, c) || c == '\u2028' || c == '\u2029'
-		}) {
+		if !validEventFileName(name) {
 			return bad("Invalid file name.")
 		}
 	}
@@ -288,6 +293,18 @@ func validateEventContent(v *V2Event) error {
 		return bad("Invalid collected profile.")
 	}
 	return nil
+}
+
+func validEventBodyKind(v *V2Event) bool {
+	return (v.Prompt == nil || (v.Kind == "prompt" && len(*v.Prompt) <= 32768)) &&
+		(v.Response == nil || (v.Kind == "response" && len(*v.Response) <= 32768))
+}
+
+func validEventFileName(name string) bool {
+	// Bidi overrides can make one file extension display as another.
+	return name != "" && len(name) <= 200 && utf8.ValidString(name) && !strings.ContainsFunc(name, func(c rune) bool {
+		return unicode.IsControl(c) || unicode.Is(unicode.Bidi_Control, c) || c == '\u2028' || c == '\u2029'
+	})
 }
 
 func (a *App) v2Policy(w http.ResponseWriter, r *http.Request) {
@@ -382,6 +399,22 @@ func (a *App) v2Complete(w http.ResponseWriter, r *http.Request) {
 // only the authenticated device's own events are reachable, content and counters are
 // out of reach entirely, and a replay changes nothing. The "fill only when empty"
 // shape follows the one already in service for invitations (invitations.go).
+func validateCompletion(c V2Completion) error {
+	for _, s := range []string{c.Model, c.Effort, c.ConversationID} {
+		if s != "" && !validMetadata(s, 200) {
+			return bad("Invalid optional metadata.")
+		}
+	}
+	if c.BodyBytes != nil && (*c.BodyBytes < 0 || *c.BodyBytes > 1e12) {
+		return bad("Invalid measurement.")
+	}
+	// An empty completion cannot count as an applied observation.
+	if c.Model == "" && c.Effort == "" && c.ConversationID == "" && c.BodyBytes == nil {
+		return bad("A completion must carry at least one observation.")
+	}
+	return nil
+}
+
 func validateCompletions(completions []V2Completion) error {
 	seen := map[string]bool{}
 	for _, c := range completions {
@@ -389,18 +422,8 @@ func validateCompletions(completions []V2Completion) error {
 			return bad("Completion identities must be valid and unique within a batch.")
 		}
 		seen[c.ID] = true
-		for _, s := range []string{c.Model, c.Effort, c.ConversationID} {
-			if s != "" && !validMetadata(s, 200) {
-				return bad("Invalid optional metadata.")
-			}
-		}
-		if c.BodyBytes != nil && (*c.BodyBytes < 0 || *c.BodyBytes > 1e12) {
-			return bad("Invalid measurement.")
-		}
-		// A completion that says nothing would still touch its row and count as
-		// applied. Refusing it keeps "applied" meaning something was learned.
-		if c.Model == "" && c.Effort == "" && c.ConversationID == "" && c.BodyBytes == nil {
-			return bad("A completion must carry at least one observation.")
+		if e := validateCompletion(c); e != nil {
+			return e
 		}
 	}
 	return nil

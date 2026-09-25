@@ -633,6 +633,33 @@ func (a *App) cookieRouteTx(r *http.Request, opaque string) (pgx.Tx, *Session, e
 	return tx, s, e
 }
 
+func (a *App) authorizeConsoleRequest(r *http.Request, tx pgx.Tx, s *Session, permission string) (*http.Request, error) {
+	// Authority is resolved only after the privacy and permission barrier.
+	r, e := a.privacyRequest(r, tx, s)
+	if e != nil {
+		return r, e
+	}
+	if tx.QueryRow(r.Context(), "SELECT role,permissions FROM effective_access($1,$2)", s.UserID, s.OrganizationID).Scan(&s.Role, &s.Permissions) != nil {
+		return r, forbidden()
+	}
+	// A key's current authority is the intersection with its declared ceiling.
+	if s.APIKeyID != "" {
+		s.Permissions = intersect(s.Permissions, s.keyPermissions)
+	}
+	if permission != "" && !hasPermission(s.Permissions, permission) {
+		return r, forbidden()
+	}
+	var requireMFA bool
+	if e = tx.QueryRow(r.Context(), "SELECT require_mfa FROM settings WHERE organization_id=$1", s.OrganizationID).Scan(&requireMFA); e != nil {
+		return r, e
+	}
+	// A bearer key cannot supply MFA evidence; its creation required a session.
+	if requireMFA && s.APIKeyID == "" && !s.MFA && r.URL.Path != logoutPath {
+		return r, apiError{403, "mfa_required", "Sign in with multi-factor authentication."}
+	}
+	return r, nil
+}
+
 func (a *App) handler(permission string, h apiHandler, mode credentialMode) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// A body reservation remains held until the request has ended.
@@ -645,46 +672,9 @@ func (a *App) handler(permission string, h apiHandler, mode credentialMode) http
 			return
 		}
 		defer tx.Rollback(r.Context())
-		// Resolve authority only after the privacy/permission mutation barrier.
-		r, e = a.privacyRequest(r, tx, s)
+		r, e = a.authorizeConsoleRequest(r, tx, s, permission)
 		if e != nil {
 			a.fail(w, e)
-			return
-		}
-		// Resolve the effective role/permissions for this org (direct membership,
-		// or the nearest ancestor membership for hierarchy access). A creator
-		// whose membership was removed resolves to no row at all, so the key that
-		// borrows their authority goes inert here with no revocation needed.
-		if tx.QueryRow(r.Context(), `SELECT role,permissions FROM effective_access($1,$2)`, s.UserID, s.OrganizationID).Scan(&s.Role, &s.Permissions) != nil {
-			a.fail(w, forbidden())
-			return
-		}
-		// The intersection must overwrite s.Permissions, not sit beside it:
-		// handlers re-read the field for field-level gating (putSettings refuses
-		// a rename without organizations.manage even though the route only asks
-		// for settings.manage), so a key narrowed only at the route boundary
-		// would still pass those inner checks.
-		if s.APIKeyID != "" {
-			s.Permissions = intersect(s.Permissions, s.keyPermissions)
-		}
-		if permission != "" && !hasPermission(s.Permissions, permission) {
-			a.fail(w, forbidden())
-			return
-		}
-		// The session must carry MFA evidence from its verified authentication.
-		// A key cannot present a second factor at all, and requiring one would
-		// make the feature unusable in exactly the organizations that enforce
-		// MFA; its legitimacy comes from creation, which is session-only and did
-		// pass this gate. Note the condition names that reason -- s.MFA itself
-		// stays honest, so the unconditional step-up check in setContentAccess
-		// keeps refusing keys instead of being silently disarmed.
-		var requireMFA bool
-		if e := tx.QueryRow(r.Context(), `SELECT require_mfa FROM settings WHERE organization_id=$1`, s.OrganizationID).Scan(&requireMFA); e != nil {
-			a.fail(w, e)
-			return
-		}
-		if requireMFA && s.APIKeyID == "" && !s.MFA && r.URL.Path != logoutPath {
-			a.fail(w, apiError{403, "mfa_required", "Sign in with multi-factor authentication."})
 			return
 		}
 

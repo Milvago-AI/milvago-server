@@ -997,6 +997,27 @@ func (a *App) presentPrivateDevice(r *http.Request, s *Session, row map[string]a
 	return nil
 }
 
+type privateDevicePage struct {
+	items                []map[string]any
+	scan                 bool
+	query, userQuery     string
+	limit, offset, total int
+}
+
+func (p *privateDevicePage) add(row map[string]any) {
+	if p.scan {
+		if (p.query != "" && !strings.Contains(strings.ToLower(row["hostname"].(string)), p.query)) ||
+			(p.userQuery != "" && !strings.Contains(strings.ToLower(row["os_user"].(string)), p.userQuery)) {
+			return
+		}
+		p.total++
+		if p.total <= p.offset || len(p.items) >= p.limit {
+			return
+		}
+	}
+	p.items = append(p.items, row)
+}
+
 func (a *App) privateDeviceRows(r *http.Request, tx pgx.Tx, s *Session, f privateDeviceFilter, show bool, matched int) ([]map[string]any, int, error) {
 	limit, offset, deviceID, groupID, excludeGroupID := f.limit, f.offset, f.deviceID, f.groupID, f.excludeGroupID
 	query, userQuery, platform, status := f.query, f.userQuery, f.platform, f.status
@@ -1018,7 +1039,7 @@ func (a *App) privateDeviceRows(r *http.Request, tx pgx.Tx, s *Session, f privat
 		return nil, 0, e
 	}
 	defer rows.Close()
-	items := []map[string]any{}
+	page := privateDevicePage{items: []map[string]any{}, scan: scan, query: query, userQuery: userQuery, limit: limit, offset: offset, total: total}
 	for rows.Next() {
 		var raw []byte
 		if e = rows.Scan(&raw); e != nil {
@@ -1031,24 +1052,12 @@ func (a *App) privateDeviceRows(r *http.Request, tx pgx.Tx, s *Session, f privat
 		if e = a.presentPrivateDevice(r, s, row, show); e != nil {
 			return nil, 0, e
 		}
-		// Only the two sealed filters are left to decide here, and only when one is
-		// active: the database already applied the others and, on that path, the page.
-		if scan {
-			if (query != "" && !strings.Contains(strings.ToLower(row["hostname"].(string)), query)) ||
-				(userQuery != "" && !strings.Contains(strings.ToLower(row["os_user"].(string)), userQuery)) {
-				continue
-			}
-			total++
-			if total <= offset || len(items) >= limit {
-				continue
-			}
-		}
-		items = append(items, row)
+		page.add(row)
 	}
 	if e = rows.Err(); e != nil {
 		return nil, 0, e
 	}
-	return items, total, nil
+	return page.items, page.total, nil
 }
 
 func (a *App) privateDevices(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {

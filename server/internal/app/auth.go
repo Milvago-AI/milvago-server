@@ -156,269 +156,292 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	}
 	http.Redirect(w, r, a.oauth.AuthCodeURL(state, opts...), http.StatusFound)
 }
-func (a *App) callback(w http.ResponseWriter, r *http.Request) {
+
+type loginAttempt struct {
+	verifier, nonce                   string
+	associationOrg, associationDevice *string
+	associationHash                   []byte
+	stepUp                            bool
+}
+
+type loginClaims struct {
+	Email    string   `json:"email"`
+	Name     string   `json:"name"`
+	Verified bool     `json:"email_verified"`
+	AMR      []string `json:"amr"`
+	ACR      string   `json:"acr"`
+	AuthTime int64    `json:"auth_time"`
+}
+
+func (a *App) consumeLoginAttempt(w http.ResponseWriter, r *http.Request) (loginAttempt, error) {
+	var attempt loginAttempt
 	cookie, e := r.Cookie(a.cookieName("login"))
 	if e != nil {
-		a.fail(w, bad("The login attempt has expired."))
-		return
+		return attempt, bad("The login attempt has expired.")
 	}
 	a.cookie(w, a.cookieName("login"), "", -1)
-	var verifier, nonce string
-	var associationOrg, associationDevice *string
-	var associationHash []byte
-	var stepUp bool
-	e = a.db.QueryRow(r.Context(), `DELETE FROM login_attempts WHERE state_hash=$1 AND binding_hash=$2 AND expires_at>now() RETURNING verifier,nonce,association_org,association_device,association_hash,step_up`, hash(r.URL.Query().Get("state")), hash(cookie.Value)).Scan(&verifier, &nonce, &associationOrg, &associationDevice, &associationHash, &stepUp)
+	e = a.db.QueryRow(r.Context(), "DELETE FROM login_attempts WHERE state_hash=$1 AND binding_hash=$2 AND expires_at>now() RETURNING verifier,nonce,association_org,association_device,association_hash,step_up", hash(r.URL.Query().Get("state")), hash(cookie.Value)).
+		Scan(&attempt.verifier, &attempt.nonce, &attempt.associationOrg, &attempt.associationDevice, &attempt.associationHash, &attempt.stepUp)
 	if e != nil || r.URL.Query().Get("code") == "" {
-		a.fail(w, bad("Invalid or reused login attempt."))
-		return
+		return attempt, bad("Invalid or reused login attempt.")
 	}
-	ctx := oidc.ClientContext(r.Context(), a.oidcClient)
-	token, e := a.oauth.Exchange(ctx, r.URL.Query().Get("code"), oauth2.VerifierOption(verifier))
+	return attempt, nil
+}
+
+func (a *App) verifyLoginToken(ctx context.Context, code string, attempt loginAttempt) (*oauth2.Token, *oidc.IDToken, string, loginClaims, error) {
+	var claims loginClaims
+	token, e := a.oauth.Exchange(ctx, code, oauth2.VerifierOption(attempt.verifier))
 	if e != nil {
-		a.fail(w, apiError{401, "identity_failed", "Identity provider rejected the authorization code."})
-		return
+		return nil, nil, "", claims, apiError{401, "identity_failed", "Identity provider rejected the authorization code."}
 	}
 	raw, ok := token.Extra("id_token").(string)
 	if !ok {
-		a.fail(w, apiError{401, "identity_failed", "Identity token is missing."})
-		return
+		return nil, nil, "", claims, apiError{401, "identity_failed", "Identity token is missing."}
 	}
 	id, e := a.verifier.Verify(ctx, raw)
-	if e != nil || !equal(id.Nonce, nonce) {
-		a.fail(w, apiError{401, "identity_failed", "Identity token validation failed."})
-		return
-	}
-	var claims struct {
-		Email    string   `json:"email"`
-		Name     string   `json:"name"`
-		Verified bool     `json:"email_verified"`
-		AMR      []string `json:"amr"`
-		ACR      string   `json:"acr"`
-		AuthTime int64    `json:"auth_time"`
+	if e != nil || !equal(id.Nonce, attempt.nonce) {
+		return nil, nil, "", claims, apiError{401, "identity_failed", "Identity token validation failed."}
 	}
 	if e = id.Claims(&claims); e == nil {
 		claims.Name = identityText(claims.Name)
 	}
-	// An e-mail is refused, not cleaned: folded, "admin<U+200E>@corp.example" -- a
-	// distinct verified address for Keycloak -- would match the bootstrap e-mail and
-	// take the first owner's place (audit of 2026-09-24).
+	// A verified address with control characters must be refused, not folded:
+	// distinct identity provider accounts could otherwise match the bootstrap.
 	if e != nil || !claims.Verified || claims.Email == "" || identityText(claims.Email) != claims.Email {
-		a.fail(w, apiError{403, "verified_email_required", "A verified email address is required."})
+		return nil, nil, "", claims, apiError{403, "verified_email_required", "A verified email address is required."}
+	}
+	return token, id, raw, claims, nil
+}
+
+func loginMFAEvidence(claims loginClaims) bool {
+	if claims.ACR == "2" {
+		return true
+	}
+	for _, amr := range claims.AMR {
+		if amr == "mfa" || amr == "otp" {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) loginIdentityKind(ctx context.Context, subject string) string {
+	// A lookup failure never blocks sign-in; the stored identity type survives.
+	admin, e := a.identityAdmin(ctx)
+	if e != nil {
+		return ""
+	}
+	u, e := admin.user(subject)
+	if e != nil {
+		a.log.Warn("identity account lookup failed", "error", e)
+		return ""
+	}
+	if u == nil {
+		return ""
+	}
+	kind, e := admin.identityType(u)
+	if e != nil {
+		a.log.Warn("identity type lookup failed", "error", e)
+		return ""
+	}
+	return kind
+}
+
+func (a *App) bootstrapLoginAccount(ctx context.Context, tx pgx.Tx, org, user, kind string, id *oidc.IDToken, claims loginClaims) (string, error) {
+	var members int
+	if e := tx.QueryRow(ctx, "SELECT count(*) FROM memberships WHERE organization_id=$1", org).Scan(&members); e != nil {
+		return "", e
+	}
+	if members != 0 {
+		return "", forbidden()
+	}
+	if user == "" {
+		if e := tx.QueryRow(ctx, "INSERT INTO users(subject,email,display_name,identity_type) VALUES($1,$2,$3,COALESCE(NULLIF($4,''),'local')) RETURNING id", id.Subject, claims.Email, claims.Name, kind).Scan(&user); e != nil {
+			return "", e
+		}
+	}
+	if _, e := tx.Exec(ctx, "INSERT INTO memberships(organization_id,user_id,role) VALUES($1,$2,'owner')", org, user); e != nil {
+		return "", e
+	}
+	if _, e := tx.Exec(ctx, "UPDATE app_config SET bootstrap_consumed=true WHERE singleton"); e != nil {
+		return "", e
+	}
+	if e := audit(ctx, tx, org, user, "organization.bootstrap", org); e != nil {
+		return "", e
+	}
+	return user, nil
+}
+
+func (a *App) establishLoginAccount(ctx context.Context, tx pgx.Tx, id *oidc.IDToken, claims loginClaims, kind string) (string, string, error) {
+	var org, bootstrapEmail string
+	var consumed bool
+	if e := tx.QueryRow(ctx, "SELECT organization_id,bootstrap_email,bootstrap_consumed FROM app_config WHERE singleton FOR UPDATE").Scan(&org, &bootstrapEmail, &consumed); e != nil {
+		return "", "", e
+	}
+	if _, e := tx.Exec(ctx, "SELECT set_config('milvago.organization_id',$1,true)", org); e != nil {
+		return "", "", e
+	}
+	var user string
+	if e := tx.QueryRow(ctx, "SELECT id FROM users WHERE subject=$1", id.Subject).Scan(&user); e != nil && !errors.Is(e, pgx.ErrNoRows) {
+		return "", "", e
+	}
+	// An empty bootstrap address cannot match an account with no email.
+	// ASCII case is deliberate; Unicode folding can conflate different accounts.
+	if !consumed && bootstrapEmail != "" && asciiLower(claims.Email) == bootstrapEmail {
+		var e error
+		user, e = a.bootstrapLoginAccount(ctx, tx, org, user, kind, id, claims)
+		if e != nil {
+			return "", "", e
+		}
+	}
+	if user == "" {
+		return "", "", apiError{403, "membership_required", "Your account has no organization membership."}
+	}
+	var identityType string
+	if e := tx.QueryRow(ctx, "UPDATE users SET email=$1,display_name=$2,identity_type=COALESCE(NULLIF($3,''),identity_type) WHERE id=$4 RETURNING identity_type", claims.Email, claims.Name, kind, user).Scan(&identityType); e != nil {
+		return "", "", e
+	}
+	if identityType != "local" {
+		license, e := a.licenseStatus(ctx)
+		if e != nil {
+			return "", "", e
+		}
+		if license.Restricted {
+			return "", "", errLicenseRestricted
+		}
+	}
+	// Prefer an explicit top-level organization, then a stable name order.
+	if e := tx.QueryRow(ctx, "SELECT u.id FROM user_organizations($1) u JOIN organizations o ON o.id=u.id ORDER BY (o.parent_id IS NOT NULL), u.name, u.id LIMIT 1", user).Scan(&org); e != nil {
+		if errors.Is(e, pgx.ErrNoRows) {
+			return "", "", apiError{403, "membership_required", "Your account has no organization membership."}
+		}
+		return "", "", e
+	}
+	if _, e := tx.Exec(ctx, "SELECT set_config('milvago.organization_id',$1,true)", org); e != nil {
+		return "", "", e
+	}
+	return user, org, nil
+}
+
+func loginVerifiedAt(mfa, stepUp bool, authTime int64) *time.Time {
+	var verifiedAt *time.Time
+	if mfa && authTime > 0 {
+		t := time.Unix(authTime, 0)
+		if !t.After(time.Now().Add(30 * time.Second)) {
+			verifiedAt = &t
+		}
+	}
+	// A step-up carries prompt=login and max_age=0; the configured identity
+	// realm enforces fresh level-two authentication even without auth_time.
+	if verifiedAt == nil && mfa && stepUp {
+		now := time.Now()
+		verifiedAt = &now
+	}
+	return verifiedAt
+}
+
+type verifiedLogin struct {
+	attempt loginAttempt
+	token   *oauth2.Token
+	id      *oidc.IDToken
+	raw     string
+	claims  loginClaims
+}
+
+func (a *App) createLoginSession(ctx context.Context, tx pgx.Tx, org, user string, flow verifiedLogin, mfa bool) (string, time.Time, error) {
+	session, csrf := randomToken(), randomToken()
+	digest := hash(session)
+	tokens, e := json.Marshal(sessionTokens{Token: *flow.token, IDToken: flow.raw})
+	if e != nil {
+		return "", time.Time{}, e
+	}
+	nonceBytes := make([]byte, a.config.SessionCipher.NonceSize())
+	if _, e = rand.Read(nonceBytes); e != nil {
+		return "", time.Time{}, e
+	}
+	encrypted := a.config.SessionCipher.Seal(nonceBytes, nonceBytes, tokens, digest)
+	expiry := time.Now().Add(8 * time.Hour)
+	verifiedAt := loginVerifiedAt(mfa, flow.attempt.stepUp, flow.claims.AuthTime)
+	if _, e = tx.Exec(ctx, "INSERT INTO sessions(token_hash,user_id,organization_id,csrf_token,encrypted_tokens,mfa,expires_at,identity_expires_at,oidc_nonce,mfa_verified_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)", digest, user, org, csrf, encrypted, mfa, expiry, flow.id.Expiry, flow.attempt.nonce, verifiedAt); e != nil {
+		return "", time.Time{}, e
+	}
+	if e = audit(ctx, tx, org, user, "session.login", user); e != nil {
+		return "", time.Time{}, e
+	}
+	if e = tx.Commit(ctx); e != nil {
+		return "", time.Time{}, e
+	}
+	return session, expiry, nil
+}
+
+func (a *App) completeLogin(w http.ResponseWriter, r *http.Request, ctx context.Context, flow verifiedLogin) error {
+	mfa := loginMFAEvidence(flow.claims)
+	kind := a.loginIdentityKind(ctx, flow.id.Subject)
+	tx, e := a.db.Begin(ctx)
+	if e != nil {
+		return e
+	}
+	defer tx.Rollback(ctx)
+	user, org, e := a.establishLoginAccount(ctx, tx, flow.id, flow.claims, kind)
+	if e != nil {
+		return e
+	}
+	var requireMFA bool
+	if e = tx.QueryRow(ctx, "SELECT require_mfa FROM settings WHERE organization_id=$1", org).Scan(&requireMFA); e != nil {
+		return e
+	}
+	if requireMFA && !mfa {
+		if flow.attempt.stepUp {
+			return apiError{403, "mfa_required", "Multi-factor authentication is required for this organization."}
+		}
+		var language string
+		if e = tx.QueryRow(ctx, sqlDefaultLanguage).Scan(&language); e != nil {
+			return e
+		}
+		http.Redirect(w, r, "/auth/login?mfa=1&lang="+url.QueryEscape(language), http.StatusFound)
+		return nil
+	}
+	session, expiry, e := a.createLoginSession(ctx, tx, org, user, flow, mfa)
+	if e != nil {
+		return e
+	}
+	a.cookie(w, a.cookieName("session"), session, int(time.Until(expiry).Seconds()))
+	target := "/"
+	if r.URL.Query().Get("kc_action_status") != "" {
+		target = "/#profile"
+	}
+	http.Redirect(w, r, target, http.StatusFound)
+	return nil
+}
+
+func (a *App) callback(w http.ResponseWriter, r *http.Request) {
+	attempt, e := a.consumeLoginAttempt(w, r)
+	if e != nil {
+		a.fail(w, e)
 		return
 	}
-	if associationOrg != nil && associationDevice != nil {
+	ctx := oidc.ClientContext(r.Context(), a.oidcClient)
+	token, id, raw, claims, e := a.verifyLoginToken(ctx, r.URL.Query().Get("code"), attempt)
+	if e != nil {
+		a.fail(w, e)
+		return
+	}
+	if attempt.associationOrg != nil && attempt.associationDevice != nil {
 		var associationClaims map[string]json.RawMessage
 		if e = id.Claims(&associationClaims); e != nil {
 			a.fail(w, bad("Invalid verified association claims."))
 			return
 		}
-		if e = a.finishDeviceAssociation(w, r, *associationOrg, *associationDevice, associationHash, deviceAssociationIdentity{subject: id.Subject, email: claims.Email, name: claims.Name, claims: associationClaims}); e != nil {
+		if e = a.finishDeviceAssociation(w, r, *attempt.associationOrg, *attempt.associationDevice, attempt.associationHash, deviceAssociationIdentity{subject: id.Subject, email: claims.Email, name: claims.Name, claims: associationClaims}); e != nil {
 			a.fail(w, e)
 		}
 		return
 	}
-	mfa := claims.ACR == "2"
-	for _, amr := range claims.AMR {
-		if amr == "mfa" || amr == "otp" {
-			mfa = true
-		}
-	}
-	// Account source (local / sso / ldap) as known by Keycloak. A lookup
-	// failure never blocks sign-in: the last stored type is kept.
-	kind := ""
-	if admin, e := a.identityAdmin(ctx); e == nil {
-		if u, e := admin.user(id.Subject); e == nil && u != nil {
-			if k, e := admin.identityType(u); e == nil {
-				kind = k
-			} else {
-				a.log.Warn("identity type lookup failed", "error", e)
-			}
-		} else if e != nil {
-			a.log.Warn("identity account lookup failed", "error", e)
-		}
-	}
-	tx, e := a.db.Begin(ctx)
-	if e != nil {
+	if e = a.completeLogin(w, r, ctx, verifiedLogin{attempt: attempt, token: token, id: id, raw: raw, claims: claims}); e != nil {
 		a.fail(w, e)
-		return
 	}
-	defer tx.Rollback(ctx)
-	var org, bootstrapEmail string
-	var consumed bool
-	e = tx.QueryRow(ctx, `SELECT organization_id,bootstrap_email,bootstrap_consumed FROM app_config WHERE singleton FOR UPDATE`).Scan(&org, &bootstrapEmail, &consumed)
-	if e != nil {
-		a.fail(w, e)
-		return
-	}
-	if _, e = tx.Exec(ctx, `SELECT set_config('milvago.organization_id',$1,true)`, org); e != nil {
-		a.fail(w, e)
-		return
-	}
-	// Only invited or imported accounts have a row; an unknown identity must
-	// leave no trace behind.
-	var user string
-	if e = tx.QueryRow(ctx, `SELECT id FROM users WHERE subject=$1`, id.Subject).Scan(&user); e != nil && !errors.Is(e, pgx.ErrNoRows) {
-		a.fail(w, e)
-		return
-	}
-	// An empty bootstrap address means the setup wizard has not run yet: it must
-	// never match an identity that simply has no e-mail.
-	// ASCII case only: Unicode folding matched "ſupport@" (U+017F), a distinct realm
-	// account, to a bootstrap "support@" and made it the first owner (audit of
-	// 2026-09-24). The bootstrap address is stored lower-cased by plainAddress.
-	if !consumed && bootstrapEmail != "" && asciiLower(claims.Email) == bootstrapEmail {
-		var n int
-		if e = tx.QueryRow(ctx, `SELECT count(*) FROM memberships WHERE organization_id=$1`, org).Scan(&n); e != nil {
-			a.fail(w, e)
-			return
-		}
-		if n != 0 {
-			a.fail(w, forbidden())
-			return
-		}
-		if user == "" {
-			if e = tx.QueryRow(ctx, `INSERT INTO users(subject,email,display_name,identity_type) VALUES($1,$2,$3,COALESCE(NULLIF($4,''),'local')) RETURNING id`, id.Subject, claims.Email, claims.Name, kind).Scan(&user); e != nil {
-				a.fail(w, e)
-				return
-			}
-		}
-		if _, e = tx.Exec(ctx, `INSERT INTO memberships(organization_id,user_id,role) VALUES($1,$2,'owner');`, org, user); e != nil {
-			a.fail(w, e)
-			return
-		}
-		if _, e = tx.Exec(ctx, `UPDATE app_config SET bootstrap_consumed=true WHERE singleton`); e != nil {
-			a.fail(w, e)
-			return
-		}
-		if e = audit(ctx, tx, org, user, "organization.bootstrap", org); e != nil {
-			a.fail(w, e)
-			return
-		}
-	}
-	if user == "" {
-		a.fail(w, apiError{403, "membership_required", "Your account has no organization membership."})
-		return
-	}
-	var identityType string
-	if e = tx.QueryRow(ctx, `UPDATE users SET email=$1,display_name=$2,identity_type=COALESCE(NULLIF($3,''),identity_type) WHERE id=$4 RETURNING identity_type`, claims.Email, claims.Name, kind, user).Scan(&identityType); e != nil {
-		a.fail(w, e)
-		return
-	}
-	// Without a licence, Community signs in local accounts only: no SSO, no
-	// directory. The stored type stands in when the live lookup above failed.
-	if identityType != "local" {
-		l, e := a.licenseStatus(ctx)
-		if e != nil {
-			a.fail(w, e)
-			return
-		}
-		if l.Restricted {
-			a.fail(w, errLicenseRestricted)
-			return
-		}
-	}
-	// Resolve explicit membership or the nearest inherited MSP membership.
-	//
-	// The order is a choice, not an accident. Sorting on the identifier alone landed a
-	// member of several organizations on whichever one happened to own the smallest
-	// random UUID -- a different one per deployment, and never the one they think of as
-	// theirs. The topmost organization reachable comes first, then alphabetical order,
-	// so the landing place is stable across sign-ins and is the one a human would name.
-	//
-	// `organizations` carries no row-level policy, unlike `memberships`: joining the
-	// latter here would be filtered by a tenant that is not set yet and would quietly
-	// contribute nothing to the ordering.
-	if e = tx.QueryRow(ctx, `SELECT u.id FROM user_organizations($1) u
-		JOIN organizations o ON o.id=u.id
-		ORDER BY (o.parent_id IS NOT NULL), u.name, u.id LIMIT 1`, user).Scan(&org); e != nil {
-		if errors.Is(e, pgx.ErrNoRows) {
-			a.fail(w, apiError{403, "membership_required", "Your account has no organization membership."})
-		} else {
-			a.fail(w, e)
-		}
-		return
-	}
-	if _, e = tx.Exec(ctx, `SELECT set_config('milvago.organization_id',$1,true)`, org); e != nil {
-		a.fail(w, e)
-		return
-	}
-	var requireMFA bool
-	if e = tx.QueryRow(ctx, `SELECT require_mfa FROM settings WHERE organization_id=$1`, org).Scan(&requireMFA); e != nil {
-		a.fail(w, e)
-		return
-	}
-	// MFA is evidence from this verified ID token, never an account-type exemption.
-	// Step up once when the issuer did not attest the required assurance.
-	if requireMFA && !mfa {
-		if stepUp {
-			a.fail(w, apiError{403, "mfa_required", "Multi-factor authentication is required for this organization."})
-			return
-		}
-		var language string
-		if e = tx.QueryRow(ctx, sqlDefaultLanguage).Scan(&language); e != nil {
-			a.fail(w, e)
-			return
-		}
-		http.Redirect(w, r, "/auth/login?mfa=1&lang="+url.QueryEscape(language), http.StatusFound)
-		return
-	}
-	session, csrf := randomToken(), randomToken()
-	digest := hash(session)
-	tokens, e := json.Marshal(sessionTokens{Token: *token, IDToken: raw})
-	if e != nil {
-		a.fail(w, e)
-		return
-	}
-	nonceBytes := make([]byte, a.config.SessionCipher.NonceSize())
-	if _, e = rand.Read(nonceBytes); e != nil {
-		a.fail(w, e)
-		return
-	}
-	encrypted := a.config.SessionCipher.Seal(nonceBytes, nonceBytes, tokens, digest)
-	expiry := time.Now().Add(8 * time.Hour)
-	var verifiedAt *time.Time
-	if mfa && claims.AuthTime > 0 {
-		t := time.Unix(claims.AuthTime, 0)
-		if !t.After(time.Now().Add(30 * time.Second)) {
-			verifiedAt = &t
-		}
-	}
-	// A step-up asked for `prompt=login` with `max_age=0`: the issuer must re-authenticate
-	// or refuse, so a code returned on that flow attests an authentication that just
-	// happened. Keycloak does not put `auth_time` in this token, which left
-	// `mfa_verified_at` empty on every step-up — and `requireFreshMFA` reads only that
-	// column, so it refused for ever: the person verified their second factor, came back,
-	// and was asked again, with no way through. The timestamp is taken here only for a
-	// step-up, never for an ordinary sign-in, where a silent SSO could carry an old one.
-	// The prompt and max_age travel through the browser, which can strip them: what
-	// actually forces a fresh second factor is the realm's `loa-max-age: 0` for level 2
-	// (scripts/identity-flows.mjs). A realm reconfigured without it makes this
-	// timestamp claim a freshness it did not check (audit of 2026-09-24).
-	if verifiedAt == nil && mfa && stepUp {
-		now := time.Now()
-		verifiedAt = &now
-	}
-	_, e = tx.Exec(ctx, `INSERT INTO sessions(token_hash,user_id,organization_id,csrf_token,encrypted_tokens,mfa,expires_at,identity_expires_at,oidc_nonce,mfa_verified_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, digest, user, org, csrf, encrypted, mfa, expiry, id.Expiry, nonce, verifiedAt)
-	if e != nil {
-		a.fail(w, e)
-		return
-	}
-	if e = audit(ctx, tx, org, user, "session.login", user); e != nil {
-		a.fail(w, e)
-		return
-	}
-	if e = tx.Commit(ctx); e != nil {
-		a.fail(w, e)
-		return
-	}
-	a.cookie(w, a.cookieName("session"), session, int(time.Until(expiry).Seconds()))
-	target := "/"
-	if r.URL.Query().Get("kc_action_status") != "" {
-		// Return from a Keycloak application-initiated profile action.
-		target = "/#profile"
-	}
-	http.Redirect(w, r, target, http.StatusFound)
 }
+
 func (a *App) logout(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
 	// Read the sealed ID token before the row goes away: it turns the identity
 	// provider's sign-out into a direct redirect instead of a confirmation page.
