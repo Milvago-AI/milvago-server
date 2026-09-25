@@ -29,7 +29,15 @@ const replayable = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
  */
 // Leaving the page is the one step a test cannot execute, so it goes through here and
 // nowhere else: the decision stays testable, the navigation stays real.
-export const browser = { navigate: (url: string) => { window.location.href = url; } };
+// Guards against an open redirect: only a same-origin, http(s) destination is honored.
+function isSafeRedirectUrl(url: string): boolean {
+  if (!url) return false;
+  try {
+    const parsed = new URL(String(url).replace(/[\t\n\r]/g, ''), window.location.origin);
+    return parsed.origin === window.location.origin && (parsed.protocol === 'http:' || parsed.protocol === 'https:');
+  } catch (e) { return false; }
+}
+export const browser = { navigate: (url: string) => { if (isSafeRedirectUrl(url)) window.location.href = url; } };
 
 // sessionStorage outlives an abandoned verification and session restore can write it to
 // disk, so a body carrying a secret (LDAP bind password, export token) is never held: the
