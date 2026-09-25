@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and community
+    url: https://discord.gg/69JPyVjqv
+    about: Ask questions and talk with other Milvago users on Discord.
+  - name: Report a vulnerability
+    url: https://github.com/Milvago-AI/milvago-server/security/advisories/new
+    about: Privately, never in a public issue. See SECURITY.md.
+  - name: Enterprise edition and commercial support
+    url: https://www.milvago.ai
+    about: Milvago AI, LLC.

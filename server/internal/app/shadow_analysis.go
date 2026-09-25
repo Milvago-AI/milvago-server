@@ -163,18 +163,18 @@ var osActorPattern = regexp.MustCompile(`^os:[0-9a-f]{64}$`)
 
 const shadowProjection = `e.id,e.kind,e.occurred_at,e.provider,e.source,e.tool,e.model,e.effort,e.conversation_id,e.correlation_id,e.url,e.action,e.platform_id,e.decision_reason,e.characters,e.labels,e.policy_revision,e.device_id,d.hostname,d.hostname_ciphertext,coalesce(e.collaborator_id::text,'unknown'),coalesce(c.alias,'Unattributed'),e.sensitivity,e.files,e."user",e.detector,e.catalog_revision,e.input_tokens,e.output_tokens,e.body_bytes,e.characters_known,EXISTS(SELECT 1 FROM shadow_content sc WHERE sc.organization_id=e.organization_id AND sc.device_id=e.device_id AND sc.event_id=e.id AND sc.expires_at>now()),` + actorBucket
 
-// Un envoi accompagné d'un fichier laisse DEUX enregistrements sous la même corrélation :
-// le fichier part chez le fournisseur dès qu'il est attaché, donc il est enregistré avant
-// le texte (voir browser-extensions.md). Cet enregistrement appartient à l'envoi, il n'en
-// est pas un second — la console le montre d'ailleurs dans la même bulle depuis le
-// 2026-09-15, alors que les compteurs en annonçaient deux.
+// A submission accompanied by a file leaves TWO records under the same correlation: the
+// file leaves for the provider as soon as it is attached, so it is recorded before the
+// text. This record belongs to the submission, it is not a
+// second one -- the console has in fact shown it in the same bubble since 2026-09-15,
+// while the counters used to announce two.
 //
-// Les COMPTEURS l'écartent donc. Le journal, le détail et les exports le gardent : c'est
-// un enregistrement réel, horodaté et auditable, et c'est lui qui prouve qu'un fichier est
-// parti avant le texte. Le critère est celui de la fusion d'affichage — un prompt à zéro
-// caractère qui partage sa corrélation avec un prompt porteur de texte — et pas la
-// présence de noms de fichiers : quand leur remontée est désactivée, l'enregistrement
-// d'attache n'en porte aucun (constaté le 2026-09-15 sur la corrélation 224a8be4).
+// The COUNTERS therefore exclude it. The journal, the detail view and the exports keep
+// it: it is a real, timestamped, auditable record, and it is the one that proves a file
+// left before the text. The criterion is that of the display merge -- a zero-character
+// prompt sharing its correlation with a prompt carrying text -- and not the presence of
+// file names: when their reporting is disabled, the attachment record carries none
+// (observed 2026-09-15 on correlation 224a8be4).
 func attachmentOnly(alias string) string {
 	a := alias + "."
 	return `(` + a + `kind='prompt' AND ` + a + `characters=0 AND ` + a + `correlation_id<>'' AND EXISTS(SELECT 1 FROM shadow_events b WHERE b.organization_id=` + a + `organization_id AND b.device_id=` + a + `device_id AND b.correlation_id=` + a + `correlation_id AND b.kind='prompt' AND b.characters>0))`

@@ -1,8 +1,8 @@
 import { useContext, useMemo, useState } from 'react';
-// La santé de la capture ne s'affiche plus ici : elle vit dans Découverte, avec le
-// reste de ce qui parle de couverture (plateformes connues, domaines candidats, état
-// des détecteurs). La cartographie répond à « qui parle à quoi », pas à « est-ce que
-// j'observe bien » — deux questions que la même page mélangeait.
+// Capture health is no longer shown here: it lives in Discovery, with the
+// rest of what speaks to coverage (known platforms, candidate domains, detector
+// status). Cartography answers "who talks to what", not "am I
+// observing well" -- two questions the same page used to mix together.
 import { Card, Context, Empty, Icon, Kpi, PageBar, ResourceView, useResource, useText } from '../ui';
 import { FilterBar, SavedFilters, ExportMenu } from './FilterBar';
 import { FlowDiagram } from './FlowDiagram';

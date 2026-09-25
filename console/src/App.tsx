@@ -73,8 +73,8 @@ import {
 import type { Language, Translate } from "./ui";
 import { resumeSecondFactor } from "./secondFactor";
 import type { TranslationKey } from "./locales/en";
-// Un ensemble plutôt qu'un tableau : la seule question posée est l'appartenance,
-// et elle l'est à chaque changement de fragment d'URL.
+// A set rather than an array: the only question asked is membership,
+// and it is asked on every change of URL fragment.
 const pages = new Set<Page>([
   "overview",
   "map",
@@ -122,13 +122,13 @@ function pageFromHash(): Page {
   return pages.has(value) ? value : "overview";
 }
 
-// Ce que chaque entrée de navigation rend, et à quelle condition.
+// What each navigation entry renders, and under what condition.
 //
-// Auparavant une seule chaîne de ternaires imbriqués portait les dix-huit pages
-// et leurs gardes : complexité cognitive 368, et la garde d'une page n'était
-// lisible qu'en comptant les parenthèses de celles d'avant. Une entrée par page,
-// à retours anticipés, dit la même chose — la garde d'abord, la page ensuite —
-// et se relit isolément. Aucune condition n'a changé de sens.
+// Previously a single chain of nested ternaries carried the eighteen pages
+// and their guards: cognitive complexity 368, and a page's guard was only
+// readable by counting the parentheses of the ones before it. One entry per page,
+// with early returns, says the same thing -- the guard first, the page after --
+// and reads back in isolation. No condition changed meaning.
 type PageContext = {
   session: Session;
   t: Translate;
@@ -136,11 +136,11 @@ type PageContext = {
 };
 
 const pageViews: Partial<Record<Page, (context: PageContext) => ReactNode>> = {
-  // Une organisation en agrégat seul, ou un profil qui agrège sans lire les
-  // postes, n'a pas de vue d'ensemble à montrer : ses chiffres sont le rapport.
-  // Sans `events.read`, le serveur répond lui-même le rapport agrégé à GET /api/overview
-  // (console.go) : rendre la vue d'ensemble sur ce corps-là laissait la page sans ses
-  // compteurs et sans le rappel des postes en attente, en silence.
+  // An organization in aggregate-only mode, or a profile that aggregates without reading
+  // devices, has no overview to show: its figures are the report.
+  // Without `events.read`, the server itself answers the aggregate report at GET /api/overview
+  // (console.go): rendering the overview on that body left the page without its
+  // counters and without the reminder of pending devices, silently.
   overview: ({ session, t }) => {
     const aggregateOnly =
       session.privacy?.aggregate_only ||
@@ -218,8 +218,8 @@ const pageViews: Partial<Record<Page, (context: PageContext) => ReactNode>> = {
       </>
     );
   },
-  // Effacer une identité sans pouvoir régler la confidentialité donne la rotation
-  // d'alias seule : la page existe, son contenu suit le droit le plus fort.
+  // Erasing an identity without being able to manage privacy gives alias
+  // rotation alone: the page exists, its content follows the stronger right.
   privacy: ({ session, t, refreshSession }) => {
     const manages = can(session, "settings.manage");
     if (!manages && !can(session, "identity.erase"))
@@ -249,8 +249,8 @@ const pageViews: Partial<Record<Page, (context: PageContext) => ReactNode>> = {
       </>
     );
   },
-  // Le fragment d'URL se tape aussi facilement qu'un lien se suit : le drapeau est
-  // verifié ici aussi, et pas seulement là où l'entrée de navigation est construite.
+  // The URL fragment is typed as easily as a link is followed: the flag is
+  // checked here too, and not only where the navigation entry is built.
   detection: ({ session, t }) => {
     if (!can(session, "policy.manage") || !session.console_debug)
       return <Empty title={t("accessRestricted")} />;
@@ -409,11 +409,11 @@ export function App() {
   useEffect(() => {
     document.title = `Milvago — ${pageNames[page]}`;
   }, [page, language]);
-  // Un objet neuf à chaque rendu ferait re-rendre tout ce qui lit le contexte, à
-  // chaque frappe dans n'importe quel écran. Le mémo doit être posé ici, avant les
-  // retours anticipés : un hook ne peut pas vivre après un `return` conditionnel.
-  // `session` y est encore possiblement absente ; les deux fournisseurs qui lisent
-  // cette valeur sont tous deux placés après le `return` qui écarte ce cas.
+  // A fresh object on every render would re-render everything that reads the context, on
+  // every keystroke in any screen. The memo has to sit here, before the
+  // early returns: a hook cannot live after a conditional `return`.
+  // `session` may still be absent at this point; the two providers that read
+  // this value are both placed after the `return` that rules out that case.
   const contextValue = useMemo(
     () => ({ language, session: session as Session, refreshSession }),
     [language, session, refreshSession],
@@ -446,11 +446,11 @@ export function App() {
       <span className="brand-name">Milvago</span>
     </a>
   );
-  // Tant que la session n'est pas connue, n'affirmer ni « connecté » ni « déconnecté ».
-  // Rendre la page d'accueil pendant la vérification faisait apparaître un écran
-  // « Se connecter » juste APRÈS une authentification réussie, le temps que
-  // /api/session réponde : l'utilisateur voyait le contraire de ce qui venait de se
-  // passer, puis la console. L'en-tête reste, donc rien ne saute à l'écran.
+  // As long as the session is not known, assert neither "signed in" nor "signed out".
+  // Rendering the landing page during the check made a "Sign in" screen
+  // appear right AFTER a successful authentication, for as long as
+  // /api/session took to answer: the user saw the opposite of what had just
+  // happened, then the console. The header stays, so nothing jumps on screen.
   if (loading)
     return (
       <div className="entry">
@@ -495,9 +495,9 @@ export function App() {
           <p className="entry-description">
             {t("oneSpaceToUnderstandBrowserUsage")}
           </p>
-          {/* `loading` est déjà faux ici : le rendu de chargement a été rendu plus
-              haut et a quitté la fonction. La branche « vérification de session »
-              qui se trouvait à cet endroit ne pouvait donc jamais s'afficher. */}
+          {/* `loading` is already false here: the loading render happened higher
+              up and left the function. The "checking session" branch
+              that used to sit here could therefore never display. */}
           {sessionError ? (
             <div className="notice error" role="alert">
               <p>
@@ -1045,8 +1045,8 @@ function BrowserPresence({ browsers }: Readonly<{ browsers?: Record<string, stri
 // anyone ran it or what they sent.
 type Observation = { device_id: string; hostname: string; tool: string; kind: string; observed_at: string; first_seen?: string };
 type CatalogEntry = { id: string; name: string; vendor: string; category: string; hosting: string; risk: string };
-// Le niveau de risque d'une application, en teinte et en libellé. Un risque
-// inconnu ou absent ne porte pas de teinte et se lit « faible », comme avant.
+// The risk level of an application, as a tone and a label. An unknown or
+// absent risk carries no tone and reads as "low", as before.
 const RISK_TONES: Partial<Record<string, "danger" | "warning">> = { high: "danger", medium: "warning" };
 const RISK_LABELS: Partial<Record<string, TranslationKey>> = { high: "high", medium: "medium" };
 const KIND_LABELS: Record<string, TranslationKey> = {
@@ -1101,11 +1101,11 @@ function ApplicationsPage() {
                       <th>{t("application")}</th>
                       <th>{t("vendor")}</th>
                       <th>{t("risk")}</th>
-                      {/* Sur quels postes l'outil a été trouvé. Un compte seul oblige à
-                          rouvrir chaque machine pour savoir laquelle intervenir ; le nom
-                          est déjà renvoyé par /api/tools, la console le jetait en
-                          regroupant par outil. La colonne « Hébergement » est partie :
-                          elle affichait local/cloud et rien, nulle part, n'en dépendait. */}
+                      {/* Which devices the tool was found on. A count alone forces a
+                          reopen of every machine to know which one to act on; the name
+                          is already returned by /api/tools, the console was discarding it by
+                          grouping by tool. The "Hosting" column is gone:
+                          it showed local/cloud and nothing, anywhere, depended on it. */}
                       <th>{t("devices")}</th>
                       <th>{t("onWhichDevices")}</th>
                       <th>{t("recognisedBy")}</th>
@@ -1121,12 +1121,12 @@ function ApplicationsPage() {
                           <td>{entry?.vendor ?? "—"}</td>
                           <td><Badge tone={RISK_TONES[entry?.risk ?? ""]}>{t(RISK_LABELS[entry?.risk ?? ""] ?? "low")}</Badge></td>
                           <td>{row.devices.size}</td>
-                          {/* Les premiers noms, puis un reste compté : une liste de
-                              quarante machines dans une cellule ne se lit pas, et le
-                              détail par poste vit déjà dans la fiche de la machine. */}
-                          {/* La cellule est un contrôle : la liste complète s'ouvre au
-                              lieu d'obliger à rouvrir chaque machine pour savoir
-                              lesquelles portent l'outil. */}
+                          {/* The first names, then a counted remainder: a list of
+                              forty machines in a cell does not read well, and the
+                              per-device detail already lives in the machine's own page. */}
+                          {/* The cell is a control: the full list opens
+                              instead of forcing a reopen of every machine to find out
+                              which ones carry the tool. */}
                           <td><button type="button" className="text-link" title={t("foundOnDevices")} onClick={() => setInspected({ name: entry?.name ?? tool, rows: row.rows })}>
                             {[...row.devices].sort((a, b) => a.localeCompare(b)).slice(0, 3).join(", ")}
                             {row.devices.size > 3 && <span className="cell-detail">{t("andNMoreDevices", [row.devices.size - 3])}</span>}
@@ -1169,8 +1169,8 @@ function ApplicationsPage() {
     </>
   );
 }
-// Aucun poste du tout, ou aucun qui corresponde au filtre : deux écrans vides
-// distincts. `null` signifie qu'il y a des lignes à montrer.
+// No device at all, or none matching the filter: two distinct empty
+// screens. `null` means there are rows to show.
 function deviceEmptyState(total: number, matching: number, t: Translate) {
   if (total === 0) {
     return <Empty title={t("readyForYourFirstDevice")}>{t("downloadThePreconfiguredMsiOrRpm")}</Empty>;
@@ -1789,10 +1789,10 @@ function DevicesPage() {
   );
 }
 type MemberAction = "role" | "remove" | "language";
-// Les quatre textes d'une action sur un membre, rangés par action plutôt que
-// répétés en ternaires emboîtés à quatre endroits : le titre du dialogue, sa
-// phrase d'explication, le libellé du bouton et le message de confirmation.
-// Ajouter une action oblige désormais à fournir ses quatre textes.
+// The four texts of an action on a member, organized by action rather than
+// repeated in nested ternaries in four places: the dialog's title, its
+// explanatory sentence, the button's label and the confirmation message.
+// Adding an action now requires supplying its four texts.
 const MEMBER_ACTION_TEXT: Record<
   MemberAction,
   { title: TranslationKey; explanation: TranslationKey; submit: TranslationKey; done: TranslationKey }
@@ -1830,9 +1830,9 @@ function languageLabel(t: Translate, value: Member["language"]) {
   return languages.find((l) => l.code === value)?.label ?? t("default");
 }
 
-// Pourquoi la ligne d'un membre est en lecture seule. Les raisons sont examinées
-// dans l'ordre d'avant : soi-même, une autre organisation, un propriétaire, et à
-// défaut un simple manque de droit.
+// Why a member's row is read-only. The reasons are checked
+// in the same order as before: yourself, another organization, an owner, and
+// failing that a simple lack of rights.
 function readOnlyMemberReason(member: Member, session: Session): TranslationKey {
   if (member.id === session.user.id) { return "thisIsYouYouCannotChange"; }
   if (member.organization_id !== session.organization.id) { return "switchToThisOrganizationToManage"; }
@@ -2483,7 +2483,7 @@ function SettingsPanel() {
   };
   // A permission lost between renders must never leave an unreachable area selected.
   const current = areas.includes(area) ? area : "organization";
-  // Une section par garde, plutôt qu'une chaîne de ternaires emboîtés.
+  // One section per guard, rather than a chain of nested ternaries.
   function settingsArea() {
     if (current === "organization") {
       return (
@@ -2540,7 +2540,7 @@ function SettingsEditor({ initial }: Readonly<{ initial: Settings }>) {
         name: settings.name,
         event_retention_days: settings.event_retention_days,
         public_url: settings.public_url,
-        ...(settings.default_language_editable ? { default_language: settings.default_language ?? "fr" } : {}),
+        ...(settings.default_language_editable ? { default_language: settings.default_language ?? "en" } : {}),
       });
       if (updated) {
         setSettings(updated);
@@ -2600,7 +2600,7 @@ function SettingsEditor({ initial }: Readonly<{ initial: Settings }>) {
         </label>
         <label>
           {t("instanceDefaultLanguage")}
-          <select value={settings.default_language ?? "fr"} disabled={!settings.default_language_editable}
+          <select value={settings.default_language ?? "en"} disabled={!settings.default_language_editable}
             onChange={e => { setSaved(false); setSettings({ ...settings, default_language: e.target.value as Language }); }}>
             {languages.map(l => <option key={l.code} value={l.code}>{l.label}</option>)}
           </select>
@@ -2789,8 +2789,8 @@ function OrganizationsPanel() {
 /** One organization's own page, reached from its row at #organizations?id=. It carries what
  * belongs to that organization rather than to the session's — the deployment key first, since
  * a parent administrator has to be able to rotate a child's without switching into it. */
-// L'organisation parente : la racine n'en a pas, une autre sans parent connu non
-// plus, et sinon le lien vers elle.
+// The parent organization: the root has none, another with no known parent
+// doesn't either, and otherwise the link to it.
 function parentOrganizationCell(org: Org, t: Translate) {
   if (org.is_root) { return t("noneRootOrganization"); }
   if (!org.parent_id) { return <span className="muted">—</span>; }

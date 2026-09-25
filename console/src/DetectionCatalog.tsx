@@ -4,8 +4,8 @@ import { Badge, Button, Context, Dialog, Empty, ErrorNotice, Icon, Notice, Resou
 import type { TranslationKey } from './locales/en';
 
 type NetworkRule = { method: string; host: string; path: string; text_path: string; text_paths: string[]; model_path: string; effort_path: string; conversation_path: string };
-// `asset_hosts` : hôtes que la page peut charger sous contrôle de contenu (mesurés, jamais couverts).
-// Pas encore éditable ici ; les dialogues étalent le fournisseur existant, donc la valeur servie survit à une modification.
+// `asset_hosts`: hosts the page can load under content control (measured, never covered).
+// Not yet editable here; the dialogs lay out the existing provider, so the served value survives an edit.
 type Provider = { id: string; label: string; domains: string[]; aliases: string[]; conversation_path: string; conversation_segment: number; qualified_at: string; dom: { editor: string; send: string; response: string }; network: NetworkRule[]; asset_hosts?: string[] };
 type NativeTool = { id: string; platform: string; qualified_versions: string[]; parser: string; telemetry_text_qualified_versions: string[] };
 type Content = { providers: Provider[]; native_tools: NativeTool[]; heuristics: { keys: string[]; mime_types: string[] } };

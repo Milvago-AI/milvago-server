@@ -123,14 +123,16 @@ func TestDefaultLanguageIntegration(t *testing.T) {
 	}
 	// Public preferences: the default language and the edition name shown on the
 	// signed-out entry page, and nothing else.
-	if len(public) != 2 || public["default_language"] != "fr" || public["edition"] != Edition {
+	// English is the instance default (product decision of 2026-09-25); the test then moves
+	// it to French, so that persisting a change is actually observed.
+	if len(public) != 2 || public["default_language"] != "en" || public["edition"] != Edition {
 		t.Fatal("public preferences must contain only the default language and the edition")
 	}
-	body := map[string]any{"name": "Test organization", "event_retention_days": 90, "public_url": f.a.config.PublicURL, "default_language": "en"}
+	body := map[string]any{"name": "Test organization", "event_retention_days": 90, "public_url": f.a.config.PublicURL, "default_language": "fr"}
 	requireHTTP(t, f.call("PUT", "/api/settings", body, "invalid"), 403)
 	body["default_language"] = "invalid"
 	requireHTTP(t, f.call("PUT", "/api/settings", body, f.csrf), 400)
-	body["default_language"] = "en"
+	body["default_language"] = "fr"
 	requireHTTP(t, f.call("PUT", "/api/settings", body, f.csrf), 200)
 	// Shortening retention deletes history within the hour: a fresh second factor.
 	body["event_retention_days"] = 30
@@ -145,12 +147,12 @@ func TestDefaultLanguageIntegration(t *testing.T) {
 		if e := json.Unmarshal(w.Body.Bytes(), &result); e != nil {
 			t.Fatal(e)
 		}
-		if result["default_language"] != "en" {
+		if result["default_language"] != "fr" {
 			t.Fatalf("%s did not persist language", path)
 		}
 	}
 	// Identity-provider login receives the instance default, or the user's explicit UI choice.
-	for _, test := range []struct{ path, want string }{{"/auth/login", "en"}, {"/auth/login?lang=fr", "fr"}, {"/auth/login?lang=invalid", "en"}} {
+	for _, test := range []struct{ path, want string }{{"/auth/login", "fr"}, {"/auth/login?lang=en", "en"}, {"/auth/login?lang=invalid", "fr"}} {
 		w := f.call("GET", test.path, nil, "")
 		requireHTTP(t, w, 302)
 		target, e := url.Parse(w.Header().Get("Location"))
@@ -164,10 +166,10 @@ func TestDefaultLanguageIntegration(t *testing.T) {
 	if _, e := f.admin.Exec(context.Background(), "UPDATE memberships SET role='admin' WHERE user_id=$1", f.user); e != nil {
 		t.Fatal(e)
 	}
-	body["default_language"] = "fr"
+	body["default_language"] = "en"
 	requireHTTP(t, f.call("PUT", "/api/settings", body, f.csrf), 403)
 	var language string
-	if e := f.admin.QueryRow(context.Background(), "SELECT default_language FROM app_config").Scan(&language); e != nil || language != "en" {
+	if e := f.admin.QueryRow(context.Background(), "SELECT default_language FROM app_config").Scan(&language); e != nil || language != "fr" {
 		t.Fatal("unauthorized language change")
 	}
 	if Edition == "community" {

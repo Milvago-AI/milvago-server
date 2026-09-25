@@ -8,7 +8,10 @@ CREATE TABLE IF NOT EXISTS app_config (
 );
 ALTER TABLE app_config ADD COLUMN IF NOT EXISTS public_url text NOT NULL DEFAULT '';
 ALTER TABLE app_config ADD COLUMN IF NOT EXISTS public_url_confirmed boolean NOT NULL DEFAULT false;
-ALTER TABLE app_config ADD COLUMN IF NOT EXISTS default_language text NOT NULL DEFAULT 'fr';
+ALTER TABLE app_config ADD COLUMN IF NOT EXISTS default_language text NOT NULL DEFAULT 'en';
+-- English by default (product decision of 2026-09-25). Only a new instance is affected: an
+-- existing row keeps the language its owner chose.
+ALTER TABLE app_config ALTER COLUMN default_language SET DEFAULT 'en';
 -- The instance licence, a signed JWT verified on every read (license.go).
 ALTER TABLE app_config ADD COLUMN IF NOT EXISTS license text NOT NULL DEFAULT '';
 -- Dropped and re-added rather than declared inline: an inline CHECK is only

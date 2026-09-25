@@ -381,9 +381,9 @@ func TestDetectionContentNeverMarshalsNullLists(t *testing.T) {
 	}
 }
 
-// Le champ précède le catalogue qui l'utilisera : l'agent refuse les champs inconnus, donc
-// le serveur doit le lire, le borner et le taire quand il est vide — sans quoi les
-// catalogues d'aujourd'hui changeraient d'octets et un agent antérieur les refuserait.
+// The field precedes the catalogue that will use it: the agent refuses unknown fields, so
+// the server has to read it, bound it and stay silent when it is empty -- otherwise
+// today's catalogues would change bytes and an earlier agent would refuse them.
 func TestDetectionAssetHosts(t *testing.T) {
 	provider := func(assetHosts string) []byte {
 		return []byte(`{"providers":[{"id":"p","label":"p","domains":["example.test"],"aliases":[],` +
@@ -407,7 +407,7 @@ func TestDetectionAssetHosts(t *testing.T) {
 		{"too many", `,"asset_hosts":["a1.t","a2.t","a3.t","a4.t","a5.t","a6.t","a7.t","a8.t","a9.t"]`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			// `decodeDetection` valide déjà : un catalogue refusé ne sort pas du décodage.
+			// `decodeDetection` already validates: a refused catalogue never leaves decoding.
 			c, e := decodeDetection(provider(tc.assetHosts))
 			if (e == nil) != tc.ok {
 				t.Fatalf("decode ok=%v, want %v (%v)", e == nil, tc.ok, e)

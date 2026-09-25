@@ -26,9 +26,9 @@ func TestShadowValidation(t *testing.T) {
 	if e := validateShadow(c); e != nil {
 		t.Fatal(e)
 	}
-	// Les deux éditions démarrent avec les mises à jour signées actives : la console ne
-	// montre la section Exploitation que sous MILVAGO_DEBUG, donc c'est ce défaut qui
-	// gouverne un déploiement ordinaire.
+	// Both editions start with signed updates active: the console only shows the
+	// Operations section under MILVAGO_DEBUG, so this default is what governs an
+	// ordinary deployment.
 	if !c.Operations.Updates.Enabled {
 		t.Fatal("signed updates must be enabled in the default policy of both editions")
 	}
@@ -36,10 +36,11 @@ func TestShadowValidation(t *testing.T) {
 	if validateShadow(c) == nil {
 		t.Fatal("nested repetition accepted")
 	}
-	// Décision produit du 2026-09-16 : un libellé que sa propre expression capture est
-	// refusé — le marqueur `[LIBELLE]` inséré dans le texte masqué serait masqué à son tour,
-	// sans fin. L'essai porte sur le libellé seul, avec la casse de la règle : « NUMERO » contre
-	// `[0-9]+` reste permis, `[NUMERO1]` étant la forme voulue du marqueur numéroté.
+	// Product decision of 2026-09-16: a label that its own expression captures is
+	// refused -- the marker `[LABEL]` inserted into the masked text would in turn be
+	// masked, without end. The check is on the label alone, with the rule's case
+	// sensitivity: "NUMERO" against `[0-9]+` remains allowed, `[NUMERO1]` being the
+	// intended form of the numbered marker.
 	for _, tc := range []struct {
 		label, pattern string
 		ci, ok         bool

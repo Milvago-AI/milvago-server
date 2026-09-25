@@ -68,8 +68,8 @@ function ConversationRow({ item, sensitivity, open }: Readonly<{ item: Conversat
     <td><Person event={event} /></td>
     <td className="nowrap"><DateValue value={item.last_at} /><span className="cell-detail">{t("startedAt")} <DateValue value={item.started_at} /></span></td>
     <td className="nowrap">{exchanged === 1 ? t("oneMessage") : t("nMessages", [String(exchanged)])}</td>
-    {/* Un document parti avec la conversation. L'icône porte un libellé accessible :
-        une pastille muette ne se lit pas à la voix, et cette colonne se filtre. */}
+    {/* A file that left with the conversation. The icon carries an accessible label:
+        a silent badge does not read aloud, and this column is filterable. */}
     <td className="nowrap">{item.has_attachment
       ? <Badge tone="warning"><Icon name="file" />{t("withAttachment")}</Badge>
       : <span className="muted">—</span>}</td>
@@ -135,14 +135,14 @@ function ThreadPage({ conversation, cursor, oldest, newest, report, loaded, deta
 }
 
 /**
- * Un envoi accompagné d'un fichier produit DEUX enregistrements : le fichier part chez
- * le fournisseur dès qu'il est attaché, donc il est enregistré avant le texte, sous la
- * même corrélation. Affichés tels quels, ils donnaient deux bulles dont une vide, pour
- * un seul envoi. La pièce jointe rejoint donc la bulle de son message.
+ * A send accompanied by a file produces TWO records: the file leaves for
+ * the provider as soon as it is attached, so it is recorded before the text, under the
+ * same correlation. Displayed as-is, they produced two bubbles, one of them empty, for
+ * a single send. The attachment therefore joins the bubble of its message.
  *
- * Fusion à l'AFFICHAGE seulement : les deux enregistrements restent distincts, chacun
- * avec son horodatage et son détail, et rien n'est réécrit. Un fichier attaché sans
- * envoi qui suit garde sa propre bulle — il décrit alors bien ce qui s'est passé.
+ * Merged at DISPLAY time only: the two records stay distinct, each
+ * with its own timestamp and detail, and nothing is rewritten. A file attached with no
+ * send that follows keeps its own bubble -- it then correctly describes what happened.
  */
 export function fold(items: ThreadMessage[]): ThreadMessage[] {
   const attached = new Map<string, string[]>(), hosts = new Set<string>();
@@ -159,9 +159,9 @@ export function fold(items: ThreadMessage[]): ThreadMessage[] {
   });
 }
 
-// Le type du fichier se lit dans son extension : c'est la seule chose dont on dispose,
-// aucun octet n'étant jamais lu. Une extension inconnue reste un fichier, pas une
-// devinette.
+// The file's type is read from its extension: it is the only thing available,
+// as no byte is ever read. An unknown extension remains a file, not a
+// guess.
 const FILE_ICONS: [RegExp, IconName][] = [
   [/\.(png|jpe?g|gif|webp|bmp|svg|heic|heif|avif|tiff?)$/i, 'file-image'],
   [/\.(pdf|docx?|odt|rtf|txt|md|pages)$/i, 'file-text'],
@@ -176,11 +176,11 @@ export const fileIcon = (name: string): IconName => FILE_ICONS.find(([pattern]) 
  * is a React text node, never markup: content is written by whoever used the AI
  * service, and it is rendered here exactly as it was captured.
  *
- * Un clic sur la bulle ouvre son détail, **sauf** si du texte est sélectionné : sans
- * cette garde, relire un message en le surlignant ouvrirait un dialogue au relâchement.
- * La bulle et sa petite icône ouvrent toutes deux le détail au clavier. La bulle
- * reste un conteneur car son texte doit pouvoir être sélectionné et elle contient
- * des contrôles qui ne peuvent pas être imbriqués dans un bouton natif.
+ * A click on the bubble opens its detail, **except** when text is selected: without
+ * this guard, re-reading a message by highlighting it would open a dialog on release.
+ * The bubble and its small icon both open the detail from the keyboard. The bubble
+ * stays a container because its text must remain selectable and it holds
+ * controls that cannot be nested inside a native button.
  */
 function Message({ message, open }: Readonly<{ message: ThreadMessage; open: () => void }>) {
   const t = useText();
@@ -219,10 +219,10 @@ function Message({ message, open }: Readonly<{ message: ThreadMessage; open: () 
 }
 
 /**
- * Le détail d'un enregistrement ne concerne qu'un sens : un envoi OU une réponse. Les
- * deux sections étaient affichées côte à côte sous « Requête conservée » / « Réponse
- * conservée », si bien qu'un détail de requête montrait un cadre de réponse vide.
- * C'est le genre de l'enregistrement qui décide, et son titre le nomme simplement.
+ * The detail of a record concerns only one direction: a prompt OR a response. The
+ * two sections used to be shown side by side under "Retained request" / "Retained
+ * response", so a request's detail showed an empty response frame.
+ * It is the record's kind that decides, and its title simply names it.
  */
 function RetainedText({ event, content }: Readonly<{ event: ShadowEvent; content?: { prompt?: string; response?: string } }>) {
   const t = useText();

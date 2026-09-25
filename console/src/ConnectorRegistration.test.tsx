@@ -1,7 +1,7 @@
-// L'écran qui décide qui peut inscrire un connecteur tout seul. Ce qui est épinglé
-// ici est ce qui borne la fonctionnalité : la section n'existe qu'en Enterprise et
-// pour un propriétaire, l'état « ouvert à tout le monde » est nommé pour ce qu'il
-// est, et l'enregistrement envoie une liste d'hôtes, pas un texte.
+// The screen that decides who can register a connector on its own. What is pinned
+// here is what bounds the feature: the section exists only in Enterprise and
+// for an owner, the "open to everyone" state is named for what it
+// is, and registration sends a list of hosts, not free text.
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';

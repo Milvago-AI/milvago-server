@@ -7,14 +7,14 @@ import (
 	"time"
 )
 
-// Un envoi accompagné d'un fichier laisse DEUX enregistrements sous la même corrélation :
-// le fichier part chez le fournisseur dès qu'il est attaché, donc il est enregistré avant
-// le texte. Les compteurs en annonçaient deux requêtes là où la console, depuis le
-// 2026-09-15, n'affiche plus qu'une bulle — l'écran et le chiffre se contredisaient.
+// A submission accompanied by a file leaves TWO records under the same correlation: the
+// file leaves for the provider as soon as it is attached, so it is recorded before the
+// text. The counters used to announce two requests where the console, since 2026-09-15,
+// shows only one bubble -- the screen and the figure contradicted each other.
 //
-// Le critère n'est PAS la présence de noms de fichiers : quand leur remontée est
-// désactivée, l'enregistrement d'attache n'en porte aucun. C'est un prompt à zéro
-// caractère partageant sa corrélation avec un prompt porteur de texte.
+// The criterion is NOT the presence of file names: when their reporting is disabled, the
+// attachment record carries none. It is a zero-character prompt sharing its correlation
+// with a prompt carrying text.
 func addAttachmentRecord(t *testing.T, f *observabilityFixture, subject, device string, at time.Time, correlation string, files []string) {
 	t.Helper()
 	names, e := json.Marshal(files)
@@ -34,12 +34,12 @@ func TestAttachmentRecordCountsWithItsSend(t *testing.T) {
 
 	t.Run("a conversation announces one request per send, attachment included", func(t *testing.T) {
 		f, subject, device := privacyFixture(t)
-		// L'attache d'abord, le texte ensuite, sous la même corrélation : l'ordre réel.
+		// The attachment first, the text next, under the same correlation: the real order.
 		addAttachmentRecord(t, f, subject, device, base, "correlation-file", []string{"schema-synthetique.png"})
 		addThreadEvent(t, f, subject, device, base.Add(time.Second), "prompt", "", "correlation-file", "observed", "Analyse ce document.")
 		addThreadEvent(t, f, subject, device, base.Add(2*time.Second), "response", "", "correlation-file", "observed", "Réponse de test.")
-		// Le même échange sans remontée des noms : l'enregistrement d'attache n'a pas de
-		// fichiers, et doit quand même être reconnu.
+		// The same exchange with no name reporting: the attachment record carries no
+		// files, and must still be recognized.
 		addAttachmentRecord(t, f, subject, device, base.Add(3*time.Second), "correlation-silent", nil)
 		addThreadEvent(t, f, subject, device, base.Add(4*time.Second), "prompt", "", "correlation-silent", "observed", "Et celui-ci ?")
 
@@ -66,8 +66,8 @@ func TestAttachmentRecordCountsWithItsSend(t *testing.T) {
 
 	t.Run("an attachment with no send that follows keeps its own count", func(t *testing.T) {
 		f, subject, device := privacyFixture(t)
-		// Attaché puis abandonné : il n'y a pas d'envoi auquel le rattacher, et cet
-		// enregistrement décrit alors exactement ce qui s'est passé.
+		// Attached then abandoned: there is no submission to attach it to, and this
+		// record then describes exactly what happened.
 		addAttachmentRecord(t, f, subject, device, base, "correlation-lonely", []string{"schema-synthetique.png"})
 		items := readConversations(t, f, window)
 		if len(items) != 1 || items[0].Prompts != 1 {
@@ -83,7 +83,7 @@ func TestAttachmentRecordCountsWithItsSend(t *testing.T) {
 		addThreadEvent(t, f, subject, device, recent.Add(2*time.Second), "response", "", "correlation-metrics", "observed", "Réponse de test.")
 		addThreadEvent(t, f, subject, device, recent.Add(3*time.Second), "navigation", "", "correlation-metrics", "observed", "")
 
-		// La route est gouvernée par MILVAGO_SHADOW_METRICS, que le harnais laisse fermée.
+		// The route is gated by MILVAGO_SHADOW_METRICS, which the harness leaves closed.
 		f.a.config.ShadowMetrics = true
 		w := f.call("GET", "/api/shadow/metrics", nil, "")
 		requireHTTP(t, w, 200)
@@ -99,8 +99,8 @@ func TestAttachmentRecordCountsWithItsSend(t *testing.T) {
 		if out.Prompts != 1 || out.Responses != 1 || out.Navigations != 1 {
 			t.Fatalf("one send, one request: %+v", out)
 		}
-		// Le total reste la somme des natures : écarter l'enregistrement d'un compteur et
-		// pas de l'autre ferait mentir la page qui les additionne.
+		// The total remains the sum of the kinds: excluding the record from one counter
+		// and not the other would make the page that adds them up lie.
 		if out.Events != out.Prompts+out.Responses+out.Navigations {
 			t.Fatalf("counters no longer add up: %+v", out)
 		}

@@ -17,9 +17,9 @@ type Platform = { id: string; label: string; domains: string[]; paths?: string[]
  */
 export function KnownPlatformsPanel() {
   const t = useText();
-  // `busy` porte aussi le gel d'une instance de démonstration : la liste des
-  // plateformes reste entièrement lisible, seule la case qui met en sourdine devient
-  // inerte.
+  // `busy` also carries the freeze of a demo instance: the list of
+  // platforms stays fully readable, only the checkbox that mutes becomes
+  // inert.
   const { session } = useContext(Context);
   const resource = useResource<{ platforms: Platform[] }>('/api/detection/platforms');
   const mutation = useMutation();

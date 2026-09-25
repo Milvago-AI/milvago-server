@@ -195,10 +195,10 @@ func (a *App) shadowConversations(w http.ResponseWriter, r *http.Request, tx pgx
 		count(*) FILTER (WHERE kind='navigation') AS navigations,
 		count(*) FILTER (WHERE action='blocked') AS blocked,
 		count(*) FILTER (WHERE action='redirected') AS redirected,
-		-- Attaché au FIL, pas au dernier message : une pièce jointe arrive avec la
-		-- requête, et le dernier enregistrement du fil est le plus souvent la réponse,
-		-- qui n'en porte aucune. Lire les fichiers du seul dernier message aurait donc
-		-- affiché « aucun fichier » sur presque toutes les conversations qui en ont un.
+		-- Attached to the THREAD, not to the last message: an attachment arrives with
+		-- the request, and the thread's last record is most often the response, which
+		-- carries none. Reading files off the last message alone would therefore have
+		-- displayed "no file" on almost every conversation that has one.
 		bool_or(has_files) AS has_attachment,
 		(array_agg(id ORDER BY occurred_at DESC,id DESC))[1] AS latest,
 		-- The most recent record that names a model, not the model of the most recent

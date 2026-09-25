@@ -1,5 +1,10 @@
 # Contributing
 
+Thanks for helping. Before a large change, say hello on the
+[Milvago AI Discord](https://discord.gg/69JPyVjqv) or open an issue: agreeing on the approach
+first saves everyone a rewrite. Everyone taking part follows the
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Licensing of contributions
 
 A contribution is accepted under the license of the component it touches —

@@ -109,10 +109,10 @@ func TestAPIKeyLifetimeAllowlist(t *testing.T) {
 	}
 }
 
-// La clé publiée d'une démonstration ne s'affiche que là, et seulement quand
-// l'opérateur l'a mise dans l'environnement : une instance client ne remplit aucune
-// des deux conditions, et une valeur oubliée dans l'environnement d'une instance qui
-// accepte les écritures ne doit pas devenir un identifiant affiché.
+// The key published for a demo is shown only there, and only when the operator
+// put it in the environment: a customer instance meets neither condition, and a
+// value forgotten in the environment of an instance that accepts writes must
+// never become a displayed identifier.
 func TestDemoMCPKeyIsKeptOnlyForAReadOnlyInstance(t *testing.T) {
 	for _, c := range []struct {
 		readOnly bool

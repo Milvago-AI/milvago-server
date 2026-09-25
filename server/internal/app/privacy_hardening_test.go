@@ -447,8 +447,8 @@ func findShadowEvent(t *testing.T, body []byte, id string) map[string]any {
 
 func TestOSIdentityWithoutAssociation(t *testing.T) {
 	// Each subtest builds its own fixture so neither depends on the other having
-	// run first: -shuffle=on reorders sibling subtests, and this package's own
-	// discipline (test-suite.md) is to never let declaration order be a contract.
+	// run first: -shuffle=on reorders sibling subtests, and this package never lets
+	// declaration order be a contract.
 	t.Run("pseudonymous: unattributed and no user disclosed", func(t *testing.T) {
 		const sentinel = "SENTINEL-OSONLY-SUBJECT"
 		p, event := osOnlyEventFixture(t, sentinel)

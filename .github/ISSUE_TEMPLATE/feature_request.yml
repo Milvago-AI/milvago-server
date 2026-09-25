@@ -1,0 +1,34 @@
+name: Feature request
+description: Propose a change or a new capability.
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Some capabilities (multiple organizations, native desktop inventory, model control, MCP
+        server, observability export) belong to the Enterprise edition and are out of scope here.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what stops you today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should Milvago do? Describe the behavior, not only the screen.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched the existing issues and discussions on Discord.
+          required: true

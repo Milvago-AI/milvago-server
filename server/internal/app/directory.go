@@ -76,8 +76,8 @@ var (
 
 func (a *App) registerDirectoryRoutes() {
 	a.console("GET /api/settings/ldap", permDirectoryManage, a.directory)
-	// Fresh second factor on all three, so session-only on the registration line
-	// (rest-api.md): deleting removes every account imported from the directory.
+	// Fresh second factor on all three, so session-only on the registration line (an API
+	// key cannot present one): deleting removes every account imported from the directory.
 	// No directory without a licence in Community (license.go); removing one stays
 	// possible.
 	a.sessionOnly("PUT /api/settings/ldap", permDirectoryManage, a.licensed(a.putDirectory))

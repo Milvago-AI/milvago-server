@@ -129,17 +129,17 @@ export function Shell({ session, page, pageNames, theme, toggleTheme, logout, sw
   }, [open]);
   const administration = administrationItems(session);
   const groups: { label: string; items: { page: Page; icon: IconName; href: string }[] }[] = [
-    // Applications IA a quitté Parc pour Surveillance (décision produit,
-    // 2026-09-17) : l'écran répond « quelles IA tournent chez moi », pas « quel est
-    // l'état de ce poste ». Il reste Enterprise seulement — `/api/tools` n'existe pas
-    // ailleurs — et sous la même garde d'analyse qu'avant.
+    // AI Applications moved from Fleet to Monitoring (product decision,
+    // 2026-09-17): the screen answers "which AIs are running for me", not "what is
+    // this device's state". It stays Enterprise only -- `/api/tools` does not exist
+    // elsewhere -- and under the same analysis guard as before.
     //
-    // Icône `apps` (fenêtre d'application) et non `list` : l'écran voisinait Conversations
-    // avec la même, et deux entrées de la même section portant le même pictogramme se
-    // confondent. Ni une grille non plus — `layout-grid` est indistinguable du
-    // `layout-dashboard` de Vue d'ensemble à 16 px, ce qui ne ferait que déplacer la
-    // collision d'un voisin à l'autre. Mesuré, pas supposé : `scratchpad/icon-strip.mjs`
-    // rend les pictogrammes du rail et les candidats à la taille réelle.
+    // Icon `apps` (application window) rather than `list`: the screen sat next to Conversations
+    // with the same one, and two entries in the same section carrying the same icon
+    // become indistinguishable. Not a grid either -- `layout-grid` is indistinguishable from
+    // the `layout-dashboard` of Overview at 16px, which would only move the
+    // collision from one neighbor to the other. Measured, not assumed: `scratchpad/icon-strip.mjs`
+    // renders the rail's icons and the candidates at actual size.
     { label: t("monitoring"), items: [{ page: 'overview', icon: 'dashboard', href: '#overview' }, { page: 'map', icon: 'map', href: '#map' }, { page: 'events', icon: 'list', href: '#events' }, ...(session.edition === 'commercial' && canAnalyze(session) ? [{ page: 'applications' as Page, icon: 'apps' as IconName, href: '#applications' }] : []), ...(can(session, 'policy.manage') ? [{ page: 'discovery' as Page, icon: 'search' as IconName, href: '#discovery' }] : []), ...(can(session, 'reports.aggregate') ? [{ page: 'reports' as Page, icon: 'scroll' as IconName, href: '#reports' }] : [])] },
     { label: t("fleet"), items: [{ page: 'devices', icon: 'device', href: '#devices' }, { page: 'groups', icon: 'users', href: '#groups' }] },
     { label: t("administration"), items: administration },

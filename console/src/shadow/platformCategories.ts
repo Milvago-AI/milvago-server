@@ -1,6 +1,6 @@
 import type { TranslationKey } from '../locales/en';
 
-/** Generated from provider.md -- do not hand-edit; regenerate when the inventory moves.
+/** Generated from the known-platforms inventory -- do not hand-edit; regenerate when it moves.
  *
  * The grouping lives here rather than in the signed catalogue on purpose: a category is
  * an editorial convenience for one console screen, and adding a field to

@@ -127,14 +127,14 @@ describe('Discovery', () => {
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: 'aggregator.example.invalid' }));
     expect(await screen.findByRole('link', { name: 'LT-FIN-2051' })).toHaveAttribute('href', '#devices?id=20000000-0000-4000-8000-000000000002');
-    // La fenêtre annoncée est celle de la rétention de l'organisation, pas un nombre fixe.
+    // The announced window is the organization's retention, not a fixed number.
     expect(screen.getByText(/90 derniers jours/)).toBeInTheDocument();
   });
   it('pages and filters the machines behind a platform, in the dialog itself', async () => {
     window.location.hash = '#discovery';
     const platforms = { items: [], platforms: [{ provider: 'aggregator.example.invalid', visits: 120, devices: 24, accounts: 20, last_seen: '2026-09-16T09:00:00Z' }] };
-    // Une flotte entière derrière une seule plateforme : c'est le cas qui rendait la
-    // fenêtre illisible, pas la ligne unique des essais précédents.
+    // An entire fleet behind a single platform: this is the case that made the
+    // window unreadable, not the single row of previous attempts.
     const items = Array.from({ length: 24 }, (_, index) => ({
       device_id: `30000000-0000-4000-8000-0000000000${String(index + 10)}`,
       hostname: `${index % 2 ? 'LT-FIN' : 'LT-ENG'}-${2000 + index}`,
@@ -148,13 +148,13 @@ describe('Discovery', () => {
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: 'aggregator.example.invalid' }));
     const dialog = await screen.findByRole('dialog');
-    // Vingt lignes rendues sur vingt-quatre, et la vingt-et-unième est à un clic.
+    // Twenty rows rendered out of twenty-four, and the twenty-first is one click away.
     expect(await within(dialog).findByRole('link', { name: 'LT-ENG-2000' })).toBeInTheDocument();
     expect(within(dialog).getAllByRole('link')).toHaveLength(20);
     expect(within(dialog).queryByRole('link', { name: 'LT-FIN-2023' })).not.toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: '2' }));
     expect(within(dialog).getByRole('link', { name: 'LT-FIN-2023' })).toBeInTheDocument();
-    // La recherche filtre pendant la frappe, sur la liste entière et non sur la page lue.
+    // The search filters as you type, over the whole list and not just the page read.
     fireEvent.change(within(dialog).getByRole('searchbox'), { target: { value: 'lt-fin-2023' } });
     await waitFor(() => expect(within(dialog).getAllByRole('link')).toHaveLength(1));
     expect(within(dialog).getByRole('link', { name: 'LT-FIN-2023' })).toBeInTheDocument();

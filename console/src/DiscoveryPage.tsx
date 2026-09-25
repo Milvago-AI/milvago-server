@@ -87,9 +87,9 @@ export function DiscoveryPage() {
             ? <button type="button" className="text-link" title={t("reachedByDevices")} onClick={() => setInspected({ title: row.domain, path: `/api/detection/candidates/${encodeURIComponent(row.domain)}/devices` })}>{row.domain}</button>
             : row.domain}</td>
           <td>{row.count}</td>
-          {/* Une instance de démonstration montre les domaines découverts et ne les
-              classe pas : la colonne reste, vide, plutôt que de porter des boutons
-              que le serveur refuserait. */}
+          {/* A demo instance shows the discovered domains and does not
+              classify them: the column stays, empty, rather than carrying buttons
+              that the server would refuse. */}
           <td><div className="row-actions">
             {!frozen && published.has(row.domain) && row.status !== "promoted" && <button className="button secondary small" disabled={mutation.pending} onClick={() => void set(row.domain, "promoted")}>{t("catalogPromoteCandidate")}</button>}
             {!frozen && <button className="button secondary small" disabled={mutation.pending} onClick={() => void set(row.domain, row.status === "ignored" ? "new" : "ignored")}>{t(row.status === "ignored" ? "detectionReconsider" : "detectionIgnore")}</button>}
@@ -116,10 +116,10 @@ export function DiscoveryPage() {
 function ReachedByDialog({ title, path, close }: Readonly<{ title: string; path: string; close: () => void }>) {
   const t = useText();
   const devices = useResource<CandidateDevices>(path);
-  // Une plateforme atteinte par toute une flotte donne des centaines de lignes : la
-  // recherche filtre pendant la frappe et la pagination borne ce qui est rendu. Le
-  // filtre porte aussi sur l'identifiant, parce que c'est ce qu'un lecteur venu d'une
-  // fiche de poste a sous la main.
+  // A platform reached by an entire fleet yields hundreds of rows: the
+  // search filters as you type and pagination bounds what is rendered. The
+  // filter also matches the identifier, because that is what a reader coming from a
+  // device sheet has at hand.
   const [query, setQuery] = useState("");
   const term = query.trim().toLowerCase();
   const items = (devices.data?.items ?? []).filter(row => !term || row.hostname.toLowerCase().includes(term) || row.device_id.toLowerCase().includes(term));

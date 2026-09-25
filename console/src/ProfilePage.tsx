@@ -92,11 +92,11 @@ function ProfileView({ profile }: Readonly<{ profile: Profile }>) {
               : t("thisAccountComesFromTheLdap")}
           </Notice>
         )}
-        {/* Une instance de démonstration ne propose aucune de ces trois actions : le
-            mot de passe, l'adresse et le second facteur sont ceux du compte que tous
-            les visiteurs partagent, et le premier qui en change verrouille les
-            suivants. Le serveur refuse déjà `?action=` sous ce drapeau ; ceci retire
-            les boutons qui y menaient. */}
+        {/* A demonstration instance offers none of these three actions: the password,
+            the address and the second factor belong to the account every visitor
+            shares, and the first one to change them would lock out the next. The server
+            already refuses `?action=` under this flag; this removes the buttons that
+            led there. */}
         {frozen && <Notice tone="neutral">{t("demoReadOnlyProfileNotice")}</Notice>}
         <div className="actions">
           {!frozen && profile.editable.email && (
@@ -146,7 +146,7 @@ function IdentityForm({
 }>) {
   const t = useText();
   // The saved values live here, not in the resource: reloading it would unmount
-  // this form and drop the confirmation (see design-system.md "Piège d'état").
+  // this form and drop the confirmation.
   const [saved, setSaved] = useState<Pick<
     Profile,
     "first_name" | "last_name" | "language"

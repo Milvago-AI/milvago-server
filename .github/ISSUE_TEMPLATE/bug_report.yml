@@ -1,0 +1,65 @@
+name: Bug report
+description: Something does not work as documented.
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. **Security problems do not go here**: follow SECURITY.md.
+        Never paste real prompts, personal data, credentials or tokens — redact them.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: The image tag, release or commit SHA you run.
+      placeholder: "v0.x.y or a1b2c3d"
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment
+      options:
+        - docker compose from this repository
+        - Other container runtime
+        - Built from source
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence that shows the problem.
+      placeholder: |
+        1. …
+        2. …
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: What you actually saw, including error messages.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Server or browser console output, redacted.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched the existing issues.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

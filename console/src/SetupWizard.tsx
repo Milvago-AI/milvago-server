@@ -13,7 +13,7 @@ export function SetupWizard({ initial, close }: Readonly<{ initial: Settings; cl
   const t = useText();
   const { refreshSession } = useContext(Context);
   const [step, setStep] = useState(1);
-  const [language, setLanguage] = useState<Language>(initial.default_language ?? "fr");
+  const [language, setLanguage] = useState<Language>(initial.default_language ?? "en");
   const [name, setName] = useState(initial.name);
   const [url, setUrl] = useState(initial.public_url);
   const mutation = useMutation();

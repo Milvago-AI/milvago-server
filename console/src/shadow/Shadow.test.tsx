@@ -46,11 +46,11 @@ describe('Shadow AI workflows', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'Journal' })[0]);
     const params = new URLSearchParams(location.hash.split('?')[1]); expect(params.get('model')).toBe('unknown'); expect(params.get('provider')).toBe('chatgpt.com'); expect(params.get('actor_id')).toBe('actor-1');
   });
-  // Le tableau « Santé de la capture » a quitté la cartographie : tout ce qui parle de
-  // couverture est regroupé dans Découverte, où `/api/detection/health` donne le même
-  // signal en mieux (verdict par service, état du transport, seuils appliqués). Le test
-  // qui gardait ce tableau ici est donc retiré plutôt que réparé ; le comportement est
-  // couvert par la page Découverte et par `detectorState` côté serveur.
+  // The "Capture health" table left Cartography: everything that speaks to
+  // coverage is now grouped in Discovery, where `/api/detection/health` gives the same
+  // signal, better (verdict per service, transport status, applied thresholds). The test
+  // that kept this table here is therefore removed rather than repaired; the behavior is
+  // covered by the Discovery page and by `detectorState` on the server side.
   it('does not carry the capture-health table any more, which now lives in Discovery', async () => {
     serve(url => url.startsWith('/api/shadow/cartography') ? reply(map) : undefined); show(<CartographyPage />);
     await screen.findByRole('group', { name: /Cartographie des requêtes/ });
@@ -288,9 +288,9 @@ describe('Shadow AI workflows', () => {
     expect(await screen.findByText(/Aucun texte n’a été communiqué/)).toBeInTheDocument();
     expect(screen.getAllByRole('dialog')).toHaveLength(2);
   });
-  // Un envoi accompagné d'un fichier laisse DEUX enregistrements sous la même
-  // corrélation : le fichier part dès l'attache, donc il est enregistré avant le texte.
-  // Affichés tels quels, ils donnaient deux bulles dont une vide.
+  // A send accompanied by a file leaves TWO records under the same
+  // correlation: the file leaves as soon as it is attached, so it is recorded before the text.
+  // Displayed as-is, they produced two bubbles, one of them empty.
   const attachment: ShadowEvent = { ...event, id: 'event-file', occurred_at: '2026-09-07T07:59:55Z', characters: 0, correlation_id: 'corr-1', files: ['schema-synthetique.png'] };
   const sent: ShadowEvent = { ...event, correlation_id: 'corr-1' };
 
@@ -307,7 +307,7 @@ describe('Shadow AI workflows', () => {
     expect(within(bubble as HTMLElement).getByText('Analyse ce document.')).toBeInTheDocument();
     const files = within(bubble as HTMLElement).getByRole('list', { name: 'Fichiers joints' });
     expect(within(files).getByText('schema-synthetique.png')).toBeInTheDocument();
-    // Le fichier est sous le message, pas au-dessus : c'est ce que dit le DOM.
+    // The file is below the message, not above: that is what the DOM says.
     expect(bubble.querySelector('pre')!.compareDocumentPosition(files) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
@@ -315,7 +315,7 @@ describe('Shadow AI workflows', () => {
     conversations(url => url.startsWith('/api/shadow/conversation?') ? reply(thread([message(attachment, 'not_retained')])) : undefined);
     await openThread();
     expect(await screen.findByText('schema-synthetique.png')).toBeInTheDocument();
-    // Il n'y a pas de texte à masquer : annoncer « prompt caché » serait faux.
+    // There is no text to conceal: announcing "hidden prompt" would be false.
     expect(screen.queryByRole('button', { name: /PROMPT CACHÉ/ })).not.toBeInTheDocument();
   });
 
@@ -325,8 +325,8 @@ describe('Shadow AI workflows', () => {
     await openThread();
     await screen.findByText('Analyse ce document.');
     const bubble = document.querySelector('.bubble') as HTMLElement;
-    // Une sélection en cours : relire un message en le surlignant ne doit pas ouvrir
-    // un dialogue au relâchement.
+    // A selection in progress: re-reading a message by highlighting it must not open
+    // a dialog on release.
     const selection = vi.spyOn(window, 'getSelection').mockReturnValue({ isCollapsed: false } as Selection);
     fireEvent.click(bubble);
     expect(screen.getAllByRole('dialog')).toHaveLength(1);
@@ -352,7 +352,7 @@ describe('Shadow AI workflows', () => {
     await openThread();
     fireEvent.click(await screen.findByRole('button', { name: /Détail du message event-2/ }));
     expect(await screen.findByRole('heading', { name: 'Réponse' })).toBeInTheDocument();
-    // Un détail de réponse ne montre pas un cadre de requête vide, et inversement.
+    // A response detail does not show an empty request frame, and vice versa.
     expect(screen.queryByRole('heading', { name: 'Requête' })).not.toBeInTheDocument();
     expect(screen.queryByText(/conservée/)).not.toBeInTheDocument();
   });
@@ -404,9 +404,9 @@ describe('Shadow AI workflows', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('Configuration enregistrée.'); const call = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT')!; expect(JSON.parse(String(call[1]!.body))).toMatchObject({ revision: 5, config: { services: [{ id: 'chatgpt', mode: 'redirect', redirect_url: 'https://ai.example.org' }] } });
   });
 
-  // Décision produit du 2026-09-16 : un libellé que sa propre expression capture est refusé —
-  // le marqueur `[LIBELLE]` inséré dans le texte masqué serait masqué à son tour, sans fin. La
-  // console l'explique et retient l'enregistrement ; le serveur refuse de son côté.
+  // Product decision of 2026-09-16: a label that its own expression matches is refused --
+  // the `[LABEL]` placeholder inserted into the masked text would itself be masked again, endlessly. The
+  // console explains it and withholds the save; the server refuses on its side.
   it('refuses a custom masking rule whose label matches its own expression, and explains the loop', async () => {
     serve((url, init) => url === '/api/shadow/settings' && init?.method !== 'PUT' ? reply(settings) : undefined); show(<ShadowAdministration />); const user = userEvent.setup();
     await screen.findByText('Administration Shadow AI'); await screen.findByRole('checkbox', { name: 'Activer la collecte' });
@@ -415,13 +415,13 @@ describe('Shadow AI workflows', () => {
     await user.type(label, 'ABC'); await user.type(pattern, 'A.C');
     expect(await screen.findByRole('alert')).toHaveTextContent(/Le libellé correspond à l'expression de la règle/); expect(pattern).toHaveAttribute('aria-invalid', 'true');
     expect(screen.getByRole('button', { name: 'Enregistrer les changements' })).toBeDisabled();
-    // Une expression qui ne capture pas le libellé lève l'avertissement et rend l'enregistrement.
+    // An expression that does not match the label lifts the warning and enables the save.
     await user.clear(pattern); await user.type(pattern, 'X.Z');
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull()); expect(screen.getByRole('button', { name: 'Enregistrer les changements' })).toBeEnabled();
   });
-  // La colonne Fichier répond au fil entier, pas au dernier message : une pièce jointe
-  // part avec la requête, et le dernier enregistrement d'un fil est le plus souvent la
-  // réponse, qui n'en porte aucune.
+  // The File column answers for the whole thread, not the last message: an attachment
+  // leaves with the request, and the last record of a thread is most often the
+  // response, which carries none.
   it('marks a conversation that carried a file, and lets it be filtered on', async () => {
     const withFile = { key: 'conv:file-1', started_at: '2026-09-07T08:00:00Z', last_at: '2026-09-07T08:00:30Z', prompts: 1, responses: 1, navigations: 0, blocked: 0, redirected: 0, has_attachment: true, model: 'gpt-6-astra', effort: '', latest: response };
     const without = { ...withFile, key: 'conv:file-0', has_attachment: false };
@@ -433,25 +433,25 @@ describe('Shadow AI workflows', () => {
     });
     show(<ConversationsPage />);
     await screen.findByRole('columnheader', { name: 'Fichiers joints' });
-    // Une conversation porteuse est marquée, l'autre non. La recherche est bornée au
-    // tableau : l'option du filtre porte le même libellé, et la compter fausserait tout.
+    // One conversation carrying a file is marked, the other is not. The search is bounded to the
+    // table: the filter option carries the same label, and counting it would skew everything.
     expect(within(screen.getByRole('table')).getAllByText('Avec fichier')).toHaveLength(1);
-    // Et le filtre voyage bien jusqu'à la requête.
+    // And the filter does travel all the way to the request.
     const user = userEvent.setup();
     await user.selectOptions(screen.getByRole('combobox', { name: 'Fichiers joints' }), 'yes');
     await user.click(screen.getByRole('button', { name: /Appliquer/ }));
     await waitFor(() => expect(seen.some(url => url.includes('attachment=yes'))).toBe(true));
   });
-  // Une instance de démonstration doit montrer sa configuration Shadow AI et interdire
-  // de la changer. Les deux moitiés comptent : masquer la page reviendrait à cacher le
-  // produit, laisser le bouton reviendrait à promettre une action que le serveur refuse.
+  // A demo instance must show its Shadow AI configuration and forbid
+  // changing it. Both halves matter: hiding the page would amount to hiding the
+  // product, leaving the button would amount to promising an action the server refuses.
   it('shows the Shadow AI configuration on a demonstration instance, without any way to save it', async () => {
     serve(url => url === '/api/shadow/settings' ? reply(settings) : undefined);
     show(<ShadowAdministration />, { ...session, demo_read_only: true });
-    // La valeur réelle du serveur est affichée, pas un écran vide ni un refus.
+    // The server's actual value is shown, not an empty screen nor a refusal.
     const collection = await screen.findByRole('checkbox', { name: 'Activer la collecte' });
     expect(collection).toBeChecked();
-    // ... et elle est inerte, avec la raison écrite en toutes lettres.
+    // ... and it is inert, with the reason spelled out in full.
     expect(collection).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Enregistrer les changements' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Abandonner le brouillon' })).toBeNull();

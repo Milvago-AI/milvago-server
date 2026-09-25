@@ -1,5 +1,5 @@
-# Ce fichier est la preuve permanente que l'arbre publié se construit seul : il ne
-# connaît que ce dépôt, sans monorepo, sans registre interne et sans secret.
+# This workflow is the standing proof that the published tree builds on its own: it knows
+# only this repository — no monorepo, no internal registry, no secret.
 name: CI
 
 on:
@@ -11,13 +11,13 @@ permissions:
   contents: read
 
 jobs:
-  # Décision du 2026-09-22 : toute image livrée est distroless. La dernière étape de chaque
-  # Dockerfile — celle qui sort — part d'une base gcr.io/distroless épinglée par condensé,
-  # ou de scratch ; les étapes de construction et de vérification restent libres.
+  # Every shipped image is distroless: the last stage of each Dockerfile — the one that
+  # ships — starts from a gcr.io/distroless base pinned by digest, or from scratch. Build and
+  # verification stages are unrestricted.
   distroless:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Nothing here pushes: the token must not stay on disk for later steps.
           persist-credentials: false
@@ -27,7 +27,7 @@ jobs:
             last=$(grep -iE '^[[:space:]]*FROM[[:space:]]' "$f" | tail -n 1)
             case "$last" in
               *distroless/*@sha256:*|*[Ff][Rr][Oo][Mm]\ scratch*) ;;
-              *) echo "::error file=$f::image livree non distroless : $last"; bad=1;;
+              *) echo "::error file=$f::shipped image is not distroless: $last"; bad=1;;
             esac
           done
           exit $bad
@@ -35,9 +35,8 @@ jobs:
   console:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Nothing here pushes: the token must not stay on disk for later steps.
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -54,19 +53,18 @@ jobs:
   server:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Nothing here pushes: the token must not stay on disk for later steps.
           persist-credentials: false
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
-      # Sans tag de compilation : c'est l'édition Community qui est construite et testée.
+      # No build tag: this builds and tests the Community edition.
       - run: go test ./...
         working-directory: server
-      # Décision du 2026-09-24 : Trivy ne voit que l'image finale ; govulncheck lit les chemins
-      # d'appel réels du code source. Un code de sortie non nul bloque le job.
+      # Trivy only sees the final image; govulncheck reads the call paths actually reachable in
+      # the source. A non-zero exit fails the job.
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
         working-directory: server
       - run: go build -trimpath ./cmd/milvago

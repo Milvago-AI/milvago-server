@@ -815,8 +815,8 @@ func TestDatabaseSecurityAndHTTP(t *testing.T) {
 			// observed and not explained -- `child` is inserted raw here, with no
 			// settings, policies or seeded roles, unlike an organization created
 			// through the API. Do not "align" the two without establishing which
-			// function is right; qualifying parent-to-child access on real
-			// Enterprise data is still listed as outstanding in rbac.md.
+			// function is right; parent-to-child access on real Enterprise data is
+			// still to be qualified.
 			// Acting on `child` by its identifier answers to its MFA requirement, and an
 			// organization without a settings row requires MFA (fail closed, as for a
 			// switch). Real organizations always carry one; give the raw child its row.

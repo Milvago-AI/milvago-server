@@ -20,9 +20,9 @@ import {
   useText,
 } from "./ui";
 
-// `demo_mcp_key` n'arrive que d'une instance de démonstration en lecture seule, qui
-// publie sa clé MCP : elle ne peut pas en créer une, donc sans cela l'endpoint qu'elle
-// annonce reste inutilisable.
+// `demo_mcp_key` only ever comes from a read-only demo instance, which
+// publishes its MCP key: it cannot create one of its own, so without this the endpoint
+// it announces would be unusable.
 type ApiKeysResponse = { items: ApiKey[]; content_access_available: boolean; demo_mcp_key?: string };
 
 const expiryChoices: ApiKeyExpiryDays[] = [30, 90, 365];
@@ -165,8 +165,8 @@ function McpEndpointCard({ demoKey }: Readonly<{ demoKey: string }>) {
           {t("requiredOnEveryMethodDiscoveryIncluded")}
         </span>
       </div>
-      {/* La clé publiée d'une démonstration : elle s'affiche parce qu'elle est faite
-          pour être distribuée, et parce que l'instance ne peut pas en créer une. */}
+      {/* The published key of a demo instance: it is shown because it is meant
+          to be distributed, and because the instance cannot create one of its own. */}
       {demoKey && (
         <div className="field">
           <span className="label">{t("demoPublishedKey")}</span>

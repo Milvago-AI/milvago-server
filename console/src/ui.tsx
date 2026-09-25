@@ -203,9 +203,9 @@ export function PageBar({ title, actions, info }: Readonly<{ title: ReactNode; a
   return <><div className="pagebar"><h1 className="page-title">{title}</h1>{actions && <div className="actions">{actions}</div>}</div>{info && <div className="info-line"><Icon name="info" /><span>{info}</span></div>}</>;
 }
 export function Empty({ title, action, children }: Readonly<{ title: string; action?: ReactNode; children?: ReactNode }>) { return <div className="empty"><span className="empty-symbol"><Icon name="activity" size={20} /></span><h3>{title}</h3>{children && <p>{children}</p>}{action}</div>; }
-// Le titre d'une erreur, garde par garde plutôt qu'en ternaires emboîtés.
-// Les cas sont ceux d'avant, dans le même ordre : un refus d'accès, un conflit de
-// révision ou d'action, et tout le reste.
+// The title of an error, guard by guard rather than nested ternaries.
+// The cases are the same as before, in the same order: an access refusal, a
+// revision or action conflict, and everything else.
 function errorTitle(error: unknown, t: Translate) {
   if (!(error instanceof ApiError)) return t("requestFailed");
   if (error.status === 403) return t("accessDenied");
@@ -308,15 +308,15 @@ export function Dialog({ title, children, close, side }: Readonly<{ title: strin
   // open dialog otherwise shows a second scrollbar next to its own — three of them
   // once a drawer is stacked over a full screen dialog. Locked through a count of
   // open dialogs (lockPageScroll), so nested dialogs unwind in any order.
-  // Un clic sur le flou ferme, comme le bouton et Échap. Le fond appartient au
-  // `<dialog>` lui-même : ce qui distingue le flou du contenu est la position du
-  // pointeur, pas la cible de l'événement, sinon les marges intérieures fermeraient
-  // aussi. Le geste doit COMMENCER et finir dehors, pour qu'une sélection de texte
-  // relâchée hors du dialogue ne le ferme pas ; `detail === 0` écarte les clics
-  // d'origine clavier, qui n'ont pas de position. Un clic dans un dialogue imbriqué (le
-  // détail d'un message, tiroir ouvert par-dessus la conversation) remonte jusqu'ici
-  // hors de la boîte de celle-ci : il n'est pas un clic sur son flou, et « Fermer » du
-  // détail refermait aussi la conversation.
+  // A click on the backdrop closes, like the button and Escape. The backdrop belongs to
+  // the `<dialog>` itself: what distinguishes the backdrop from the content is the
+  // pointer position, not the event target, otherwise the inner margins would close
+  // it too. The gesture must START and end outside, so that a text selection
+  // released outside the dialog does not close it; `detail === 0` rules out
+  // keyboard-originated clicks, which carry no position. A click inside a nested dialog (the
+  // detail of a message, a drawer opened over the conversation) bubbles up here,
+  // outside this one's box: it is not a click on its own backdrop, and "Close" on the
+  // detail used to close the conversation as well.
   useEffect(() => { const dialog = ref.current!; const unlock = lockPageScroll(); const prior = document.activeElement as HTMLElement | null; dialog.showModal(); const cancel = (event: globalThis.Event) => { event.preventDefault(); closeRef.current(); }; const outside = (event: MouseEvent) => { const box = dialog.getBoundingClientRect(); return event.detail > 0 && (event.target as Element | null)?.closest('dialog') === dialog && (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom); }; let startedOutside = false; const down = (event: MouseEvent) => { startedOutside = outside(event); }; const click = (event: MouseEvent) => { if (startedOutside && outside(event)) closeRef.current(); }; dialog.addEventListener('cancel', cancel); dialog.addEventListener('mousedown', down); dialog.addEventListener('click', click); return () => { dialog.removeEventListener('cancel', cancel); dialog.removeEventListener('mousedown', down); dialog.removeEventListener('click', click); dialog.close(); unlock(); prior?.focus(); }; }, []);
   const variant = side ? dialogVariants[side] : '';
   return <dialog ref={ref} className={variant ? `dialog ${variant}` : 'dialog'} aria-labelledby={id}><div className="dialog-heading"><h2 id={id}>{title}</h2><button type="button" className="icon-button" onClick={close} aria-label={t("close")}><Icon name="close" /></button></div>{children}</dialog>;

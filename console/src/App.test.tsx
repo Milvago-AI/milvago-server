@@ -453,8 +453,8 @@ describe('Console workflows', () => {
     expect(within(row).getByText(/Processus en cours/)).toBeInTheDocument();
     expect(screen.getByText(/Une présence détectée n’établit ni un usage, ni un envoi/)).toBeInTheDocument();
   });
-  // La cellule montrait trois noms puis « et N autres », et il fallait rouvrir chaque
-  // machine pour savoir lesquelles. La liste entière est déjà dans la charge utile.
+  // The cell used to show three names then "and N more", and each
+  // machine had to be reopened to find out which. The whole list is already in the payload.
   it('lists every device an AI application was found on, from the cell itself', async () => {
     window.location.hash = '#applications';
     const observed = new Date(Date.now() - 3600_000).toISOString();
@@ -468,7 +468,7 @@ describe('Console workflows', () => {
     const cell = screen.getByRole('button', { name: /et 2 autres/ });
     await user.click(cell);
     const dialog = await screen.findByRole('dialog');
-    // Les cinq, pas les trois de la cellule, et chacun mène à sa fiche.
+    // All five, not the three from the cell, and each one leads to its own page.
     for (const name of devices) expect(within(dialog).getByRole('link', { name: `Poste ${name}` })).toBeInTheDocument();
     expect(within(dialog).getByRole('link', { name: 'Poste alpha' })).toHaveAttribute('href', '#devices?id=11111110-1111-4111-8111-111111111111');
   });

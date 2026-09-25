@@ -128,7 +128,7 @@ type NoticeState = { tone: "success" | "danger"; text: string };
 export function DirectoryCard() {
   const t = useText();
   const resource = useResource<LdapDirectory>("/api/settings/ldap");
-  // Lives here, not in the child unmounted by reload() — see design-system.md "Piège d'état".
+  // Lives here, not in the child: reload() unmounts that child, and its state would go with it.
   const [notice, setNotice] = useState<NoticeState | null>(null);
   return (
     <Card

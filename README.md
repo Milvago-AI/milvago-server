@@ -18,6 +18,7 @@
   <img alt="React 19" src="https://img.shields.io/badge/React-19-149ECA">
   <img alt="Distroless image" src="https://img.shields.io/badge/image-distroless%2C%20non--root-18181B">
   <img alt="Languages" src="https://img.shields.io/badge/UI-EN%20%C2%B7%20FR%20%C2%B7%20ES%20%C2%B7%20PT--BR-18181B">
+  <a href="https://discord.gg/69JPyVjqv"><img alt="Discord" src="https://img.shields.io/badge/Discord-join%20the%20community-5865F2?logo=discord&logoColor=white"></a>
 </p>
 
 ---
@@ -137,13 +138,21 @@ Enterprise is available from Milvago AI, LLC — [www.milvago.ai](https://www.mi
 Run the suites with `cd console && npm ci && npm test` and `cd server && go test ./...`.
 `docker compose build` runs both inside the build: an image is never produced from a red tree.
 
+## Community
+
+Questions, ideas, setups to share: join the **[Milvago AI Discord](https://discord.gg/69JPyVjqv)**.
+Bugs and feature requests go to [GitHub issues](https://github.com/Milvago-AI/milvago-server/issues);
+[SUPPORT.md](SUPPORT.md) says which channel fits what. Everyone taking part follows the
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Security
 
 Found a vulnerability? Please do not open a public issue — see [SECURITY.md](SECURITY.md).
 
 ## Contributing
 
-Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first.
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first, and see
+[CHANGELOG.md](CHANGELOG.md) for what changed between releases.
 
 ## License
 

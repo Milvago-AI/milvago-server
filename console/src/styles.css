@@ -1,4 +1,4 @@
-/* Milvago console — design system, charte graphique v2.1 (19 septembre 2026).
+/* Milvago console — design system, charte graphique v2.1 (September 19, 2026).
    Values mirror brand/tokens/milvago-tokens.css; the console keeps its own token
    names, which map one to one onto the brand's.
 
@@ -102,8 +102,8 @@ input[type=checkbox]{width:16px;height:16px;accent-color:var(--primary);margin:0
 .icon-button svg{width:16px;height:16px}
 .text-link{font-size:13px;font-weight:500;display:inline-flex;align-items:center;gap:6px;color:var(--text)}.text-link:hover{text-decoration:underline;text-underline-offset:3px}
 .text-link svg{width:14px;height:14px}
-/* Un lien qui agit sans naviguer reste un bouton pour le clavier et les technologies
-   d'assistance ; seule son apparence de champ disparaît. Même motif que `button.tag`. */
+/* A link that acts without navigating stays a button for the keyboard and assistive
+   technologies; only its field-like appearance disappears. Same pattern as `button.tag`. */
 button.text-link{background:none;border:0;padding:0;text-align:left}
 
 /* ---------- Shell ---------- */
@@ -117,7 +117,7 @@ button.text-link{background:none;border:0;padding:0;text-align:left}
 .brand-name{font-size:15px;font-weight:600;letter-spacing:-.2px;flex:1;min-width:0}
 .edition{font-size:11px;font-weight:500;color:var(--text-2);border:1px solid var(--border);border-radius:var(--radius-s);padding:2px 6px;line-height:16px;white-space:nowrap}
 .org{display:flex;flex-direction:column;gap:6px;padding:0 8px}
-/* Label cran (surtitre): 700 11/14, 1.4 px, uppercase, in accent-text, preceded
+/* Label tier (eyebrow): 700 11/14, 1.4 px, uppercase, in accent-text, preceded
    by a 22 x 2 px metal rule. The only place where the accent is systematic. */
 .org-label,.nav-label{font:700 11px/14px var(--font);letter-spacing:1.4px;text-transform:uppercase;color:var(--accent-text);display:flex;align-items:center;gap:8px}
 .org-label::before,.nav-label::before{content:'';width:22px;height:2px;flex:none;border-radius:1px;background:var(--metal)}
@@ -249,12 +249,12 @@ button.tag:hover:not(:disabled),a.tag:hover{border-color:var(--border-strong);co
 /* ---------- Tables ---------- */
 /* position: the scroll box also contains absolutely positioned descendants
    (.sr-only inside a wide table would otherwise widen the page). */
-/* `overflow-y:hidden` n'est pas décoratif : dès que `overflow-x` vaut `auto`, la
-   spécification CSS remplace un `overflow-y:visible` par `auto`. Un tableau dépassant
-   d'un pixel — une bordure, une hauteur de ligne arrondie — suffit alors à faire
-   apparaître un ascenseur vertical parasite sur ce seul bloc. Rien n'est masqué au
-   passage : ces conteneurs n'ont aucune contrainte de hauteur, ils s'étendent toujours
-   à la hauteur de leur contenu. */
+/* `overflow-y:hidden` is not decorative: as soon as `overflow-x` is `auto`, the
+   CSS specification replaces an `overflow-y:visible` with `auto`. A table overflowing
+   by a single pixel -- a border, a rounded line height -- is then enough to make a
+   spurious vertical scrollbar appear on this one block alone. Nothing is hidden in the
+   process: these containers have no height constraint, they always extend to
+   the height of their content. */
 .table-scroll{overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;min-width:0;position:relative}
 table{border-collapse:collapse;width:100%;text-align:left;font-size:13px}
 th{text-align:left;font:700 11px/14px var(--font);letter-spacing:1.4px;text-transform:uppercase;color:var(--text-2);background:var(--surface-2);padding:0 16px;height:40px;border-bottom:1px solid var(--border);white-space:nowrap}
@@ -280,10 +280,10 @@ th.right,td.right{text-align:right}
 .fine-print{font-size:12px;color:var(--text-2);margin:0;max-width:960px}
 
 /* ---------- Tabs / segments / vertical nav ---------- */
-/* Même raison que `.table-scroll` : une barre d'onglets ne défile qu'horizontalement,
-   et la bordure basse suffit à déclencher l'ascenseur vertical que `overflow-x:auto`
-   autorise implicitement. Le correctif était déjà appliqué localement à
-   `.catalog-toolbar .tabs` ; il vaut pour toutes les barres. */
+/* Same reason as `.table-scroll`: a tab bar only scrolls horizontally,
+   and the bottom border is enough to trigger the vertical scrollbar that `overflow-x:auto`
+   implicitly allows. The fix was already applied locally to
+   `.catalog-toolbar .tabs`; it holds for every bar. */
 .tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}
 .tabs:is(fieldset){border-top:0;border-right:0;border-left:0;padding:0;margin:0;min-width:0}
 .tab{height:40px;display:flex;align-items:center;padding:0 12px;font-size:13px;font-weight:500;color:var(--text-2);background:transparent;border:0;border-bottom:2px solid transparent;border-radius:0;margin-bottom:-1px;white-space:nowrap}
@@ -346,11 +346,11 @@ output.notice{margin-top:1em}
 @media (max-width:900px){
   .dialog.wide{width:100vw;max-width:100vw;height:100vh;max-height:100vh;border-radius:0;border:0}
 }
-/* Une liste lue dans un dialogue — les postes derrière une plateforme ou un domaine.
-   Plus large qu'un formulaire, parce que `.privacy-table` réclame déjà 680 px et qu'à
-   560 px la table sortait du cadre. Hauteur bornée, et c'est la table seule qui défile :
-   la recherche, le compteur et la pagination restent sous les yeux au lieu de partir
-   avec le contenu. */
+/* A list read inside a dialog -- the devices behind a platform or a domain.
+   Wider than a form, because `.privacy-table` already needs 680 px and at
+   560 px the table spilled out of the frame. Bounded height, and the table alone scrolls:
+   the search, the count and the pagination stay in view instead of leaving
+   with the content. */
 .dialog.list{width:min(880px,calc(100% - 32px));max-height:min(80vh,calc(100% - 40px));display:flex;flex-direction:column;overflow:hidden}
 .dialog.list .dialog-heading{flex:0 0 auto}
 .dialog.list>div:not(.dialog-heading){flex:1 1 auto;min-height:0;overflow:hidden}
@@ -412,11 +412,11 @@ output.notice{margin-top:1em}
 /* ---------- Settings / organizations / invitations ---------- */
 .settings-layout{display:grid;grid-template-columns:200px minmax(0,1fr);gap:24px;align-items:start}
 .settings-area{display:flex;flex-direction:column;gap:16px;min-width:0}
-/* Le panneau occupe sa colonne, comme les autres pages de configuration (Shadow AI,
-   Observabilité), au lieu d'être plafonné à 760 px : sur un écran large il paraissait
-   rétréci et sans rapport avec le reste de la console. Ce sont les CHAMPS qui gardent
-   une largeur de lecture — une zone de saisie de 1 500 px ne se lit pas — et non le
-   bloc qui les contient. */
+/* The panel fills its column, like the other configuration pages (Shadow AI,
+   Observability), instead of being capped at 760 px: on a wide screen it looked
+   shrunken and unrelated to the rest of the console. It is the FIELDS that keep
+   a readable width -- a 1,500 px input area does not read well -- not the
+   block that contains them. */
 .settings-panel fieldset{display:flex;flex-direction:column;gap:20px}
 .settings-panel fieldset label{max-width:540px}
 .settings-panel input[type=number]{max-width:180px}
@@ -439,7 +439,7 @@ output.notice{margin-top:1em}
 .entry-header .language-picker{width:auto}
 @media(max-width:360px){.entry-header .brand-name{display:none}}
 .entry-main{display:flex;flex-direction:column;justify-content:center;gap:28px;padding:40px 64px 40px 0;max-width:900px}
-/* Surtitre in the label cran, with the 22 x 2 px metal rule that signs v2.1. */
+/* Eyebrow in the label tier, with the 22 x 2 px metal rule that signs v2.1. */
 .entry-main .eyebrow{display:flex;align-items:center;gap:10px;font:700 11px/14px var(--font);letter-spacing:1.4px;text-transform:uppercase;color:var(--accent-text);margin:0}
 .entry-main .eyebrow::before{content:'';width:22px;height:2px;flex:none;border-radius:1px;background:var(--metal)}
 .entry-main h1{font-size:clamp(44px,5.3vw,76px);font-weight:600;letter-spacing:-.04em;line-height:1.04;margin:0}

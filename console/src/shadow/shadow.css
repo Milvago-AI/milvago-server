@@ -161,9 +161,9 @@
 .bubble.blocked{border-color:var(--danger)}
 .bubble pre{margin:0;font:inherit;white-space:pre-wrap;overflow-wrap:anywhere}
 .bubble-refusal{margin:0;font-size:12px;color:var(--danger)}
-/* Les fichiers joints, sous le message qu'ils accompagnent. Le nom doit rester lisible
-   en entier tant qu'il tient, et se couper par la fin sinon : un nom tronqué au milieu
-   d'une bulle étroite ne désigne plus rien. */
+/* Attached files, under the message they come with. The name stays whole while it fits and
+   is cut at its end otherwise: a name truncated in the middle of a narrow bubble no longer
+   points at anything. */
 .bubble-files{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px}
 .bubble-file{display:flex;align-items:center;gap:6px;min-width:0;padding:4px 8px;border:1px solid var(--border-strong);border-radius:var(--radius-s);background:var(--surface);font-size:12px;color:var(--text-2)}
 .bubble-file svg{flex:0 0 auto;color:var(--text-3)}

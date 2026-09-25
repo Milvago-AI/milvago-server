@@ -58,24 +58,23 @@ type DetectionNetwork struct {
 	// unless a rule needs it, because `Network` refuses unknown fields on the agent:
 	// a catalogue published with this segment reaches only agents that already know it.
 	ConversationURLSegment *int `json:"conversation_url_segment,omitempty"`
-	// Les champs de formulaire qui portent eux-mêmes un document JSON. ChatGPT
-	// anonyme/mobile envoie un `application/x-www-form-urlencoded` dont
-	// `imageAttachments` et `conversationState` sont des documents entiers ; sans les
-	// nommer, aucun chemin ne peut descendre dedans. Nommés plutôt que devinés : un
-	// prompt qui se trouve être du JSON deviendrait sinon un objet, et son texte
-	// disparaîtrait en silence.
+	// Form fields that themselves carry a JSON document. Anonymous/mobile ChatGPT
+	// sends an `application/x-www-form-urlencoded` request whose `imageAttachments`
+	// and `conversationState` fields are entire documents; without naming them, no
+	// path can reach inside. Named rather than guessed: a prompt that happens to be
+	// JSON would otherwise become an object, and its text would silently vanish.
 	JSONFields []string `json:"json_fields,omitempty"`
-	// Où la requête énonce les noms des fichiers joints. Seule voie là où le composeur
-	// n'expose pas de sélecteur de fichiers à intercepter. Jamais leur contenu.
+	// Where the request states the names of attached files. The only route where the
+	// composer exposes no file selector to intercept. Never their content.
 	FilesPath string `json:"files_path,omitempty"`
-	// Ce que la route transporte. Absent ou "prompt" : un envoi, que l'observation lit et
-	// que le contrôle de contenu soumet au texte approuvé. "file" : un téléversement, que
-	// le blocage des envois de fichiers scelle et que l'observation ignore — l'observer
-	// produirait un événement de requête à zéro caractère.
+	// What the route carries. Absent or "prompt": a submission, which observation reads
+	// and content control submits to the approved text. "file": an upload, which the
+	// file-upload block seals and observation ignores -- the observer would otherwise
+	// produce a zero-character request event.
 	Kind string `json:"kind,omitempty"`
-	// `omitempty` sur les deux, comme `conversation_url_segment` et pour la même
-	// raison : `Network` refuse les champs inconnus côté agent, donc un catalogue qui
-	// les porterait systématiquement serait rejeté en bloc par tout agent antérieur.
+	// `omitempty` on both, like `conversation_url_segment` and for the same reason:
+	// `Network` refuses unknown fields on the agent side, so a catalogue that always
+	// carried them would be rejected outright by every earlier agent.
 }
 type DetectionProvider struct {
 	ID                  string             `json:"id"`
@@ -87,13 +86,13 @@ type DetectionProvider struct {
 	DOM                 DetectionDOM       `json:"dom"`
 	Network             []DetectionNetwork `json:"network"`
 	QualifiedAt         string             `json:"qualified_at"`
-	// Hôtes que la page du fournisseur a le droit de CHARGER sous contrôle de contenu,
-	// en plus de son domaine et de ses sous-domaines : claude.ai sert son interface
-	// depuis `assets-proxy.anthropic.com`, un domaine enregistrable différent. Chargé,
-	// jamais couvert — ni script de contenu, ni attribution. Mesuré sur le site, jamais
-	// supposé. `omitempty` pour la raison donnée sur `Network` : l'agent refuse les
-	// champs inconnus, donc les catalogues d'aujourd'hui gardent leurs octets et seul un
-	// catalogue qui nomme un hôte porte le champ — après que les agents le connaissent.
+	// Hosts the provider's page is allowed to LOAD under content control, in addition
+	// to its own domain and subdomains: claude.ai serves its interface from
+	// `assets-proxy.anthropic.com`, a different registrable domain. Loaded, never
+	// covered -- no content script, no attribution. Measured on the site, never
+	// assumed. `omitempty` for the reason given on `Network`: the agent refuses
+	// unknown fields, so today's catalogues keep their bytes and only a catalogue
+	// that names a host carries the field -- once agents know it.
 	AssetHosts []string `json:"asset_hosts,omitempty"`
 }
 
@@ -198,9 +197,9 @@ func validateDetection(c DetectionContent) error {
 			}
 			domains[d] = true
 		}
-		// Un hôte d'assets est un nom d'hôte comme les autres, nommé une seule fois dans
-		// tout le catalogue. Qu'il ne soit le domaine ou l'alias d'AUCUN fournisseur se
-		// vérifie après la boucle, une fois chaque fournisseur déclaré.
+		// An asset host is a hostname like any other, named only once across the whole
+		// catalogue. That it is the domain or alias of NO provider is checked after the
+		// loop, once every provider has been declared.
 		for _, h := range p.AssetHosts {
 			if !domainPattern.MatchString(h) || len(h) > 253 || assetHosts[h] {
 				return bad("Invalid or duplicate asset host.")
@@ -223,11 +222,11 @@ func validateDetection(c DetectionContent) error {
 				return bad("Invalid network rule.")
 			}
 			for _, field := range n.JSONFields {
-				// Un nom de champ, pas un chemin : le déballage ne vaut qu'à la racine
-				// du corps, là où un formulaire place ses champs. Même forme qu'un
-				// segment de chemin — les champs réels sont en casse mixte
-				// (`imageAttachments`) — et les trois noms qui atteindraient le
-				// prototype sont refusés ici comme ils le sont dans le moteur.
+				// A field name, not a path: unwrapping only ever happens at the root of
+				// the body, where a form places its fields. Same shape as a path
+				// segment -- real fields are mixed case (`imageAttachments`) -- and the
+				// three names that would reach the prototype are refused here just as
+				// they are in the engine.
 				if !detectionFieldName.MatchString(field) || slices.Contains([]string{"__proto__", "constructor", "prototype"}, field) {
 					return bad("Invalid JSON field name.")
 				}
@@ -238,8 +237,8 @@ func validateDetection(c DetectionContent) error {
 		}
 	}
 	for h := range assetHosts {
-		// Une page couverte autorisée à appeler le site d'un autre fournisseur emporterait
-		// de la donnée d'un fournisseur à l'autre : un hôte d'assets n'est jamais couvert.
+		// A covered page allowed to call another provider's site would carry data from
+		// one provider to the other: an asset host is never covered.
 		if domains[h] {
 			return bad("An asset host cannot be a covered domain.")
 		}

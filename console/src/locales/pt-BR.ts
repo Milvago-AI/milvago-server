@@ -1,6 +1,6 @@
-// Traduction portugaise (Bresil) non relue par un locuteur natif.
-// Les formulations de securite (contenu des prompts, revocation, cle de
-// deploiement) meritent une relecture avant diffusion.
+// Portuguese (Brazil) translation not reviewed by a native speaker.
+// Security-related wording (prompt content, revocation, deployment
+// key) deserves a review before release.
 import type {
  TranslationKey } from "./en";
 

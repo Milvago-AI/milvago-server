@@ -131,7 +131,7 @@ var privacyTypes = []string{"email", "phone", "iban", "card", "social_id", "ssn_
 var classificationTypes = []string{"email", "phone", "iban", "card", "social_id", "ssn_us", "ip", "source_code", "medical", "keyword"}
 
 // defaultMedicalTerms are the built-in triggers for the "medical" label; administrators
-// can replace them under Shadow AI → Sensibilité des usages → Termes médicaux.
+// can replace them under Shadow AI → Usage Sensitivity → Medical Terms.
 func defaultMedicalTerms() []string {
 	return []string{"diagnostic", "ordonnance", "prescription", "medical record", "dossier médical"}
 }
@@ -281,13 +281,13 @@ func validateShadow(c ShadowConfig) error {
 		if strings.Contains(v.Pattern, "(?") || parseErr != nil || nestedRepetition(parsed, false) {
 			return bad("Lookaround and nested repetition are not supported.")
 		}
-		// Le libellé devient le marqueur inséré dans le texte masqué (`[LIBELLE]`, `[LIBELLE1]`…).
-		// S'il correspond lui-même à l'expression, le marqueur serait à son tour capturé et
-		// masqué : chaque passage réécrirait le précédent, sans fin. Refusé ici comme dans la
-		// console (décision produit du 2026-09-16). L'essai porte sur le libellé seul, avec la
-		// sensibilité à la casse de la règle — pas sur le numéro du marqueur, sans quoi toute
-		// règle numérique (« NUMERO », `[0-9]+`) serait refusée alors que `[NUMERO1]` est
-		// précisément la forme voulue.
+		// The label becomes the marker inserted into the masked text (`[LABEL]`, `[LABEL1]`...).
+		// If it matches the expression itself, the marker would in turn be captured and
+		// masked: each pass would rewrite the previous one, without end. Refused here as in the
+		// console (product decision of 2026-09-16). The check is on the label alone, with the
+		// rule's case sensitivity -- not on the marker's number, otherwise any numeric rule
+		// ("NUMERO", `[0-9]+`) would be refused even though `[NUMERO1]` is exactly the intended
+		// form.
 		probe := re
 		if v.CaseInsensitive {
 			if ci, e := regexp.Compile("(?i)" + v.Pattern); e == nil {

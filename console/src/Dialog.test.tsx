@@ -1,6 +1,6 @@
-// Fermer un dialogue : le bouton, Échap, et — demande utilisateur du 2026-09-15 — un
-// clic sur le flou. Le fond appartient au `<dialog>` lui-même, donc seule la position
-// du pointeur sépare le flou du contenu ; ces cas épinglent ce qui ne doit PAS fermer.
+// Closing a dialog: the button, Escape, and -- user request of 2026-09-15 -- a
+// click on the backdrop. The backdrop belongs to the `<dialog>` itself, so only the
+// pointer position separates the backdrop from the content; these cases pin what must NOT close.
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { Context, Dialog } from './ui';
@@ -13,8 +13,8 @@ beforeEach(() => {
   Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value() { this.removeAttribute('open'); } });
 });
 
-// jsdom ne dispose rien : la boîte du dialogue est déclarée ici, et c'est elle qui
-// définit ce qui est dedans (150, 150) et ce qui est dehors (10, 10).
+// jsdom lays out nothing: the dialog's box is declared here, and it
+// defines what is inside (150, 150) and what is outside (10, 10).
 function open() {
   const close = vi.fn();
   render(<Context.Provider value={{ session, language: 'en', refreshSession: async () => {} }}><Dialog title="Synthetic dialog" close={close}><p>Synthetic body</p></Dialog></Context.Provider>);

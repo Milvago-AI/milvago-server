@@ -1,14 +1,14 @@
-# Configuration locale et secrets : écrits par scripts/local-init.mjs, jamais versionnés.
+# Local configuration and secrets: written by scripts/local-init.mjs, never committed.
 .local/
 .env
 
-# Dépendances et sorties de construction.
+# Dependencies and build outputs.
 node_modules/
 dist/
 .cache/
 coverage/
 
-# Rien de tout cela n'a sa place dans un dépôt public.
+# None of this belongs in a public repository.
 *.log
 *.pem
 *.key

@@ -26,9 +26,9 @@ function modelStatusLabel(status: ModelAccessStatus['status'], t: ReturnType<typ
   return t("unavailable");
 }
 
-// Décision produit du 2026-09-23 : règles mêlant réseau et domaine. Chaque règle exige un CIDR ;
-// le domaine, déclaré par la machine, ne fait que restreindre la règle. Les anciens `cidrs` sont
-// présentés comme des règles sans domaine et réécrits en `rules` à l'enregistrement.
+// Product decision of 2026-09-23: rules mixing network and domain. Each rule requires a CIDR;
+// the domain, declared by the machine, only narrows the rule. The old `cidrs` are
+// presented as rules with no domain and rewritten into `rules` on save.
 function ApprovalRules({ enrollment, change }: Readonly<{ enrollment: ShadowConfig['enrollment']; change: (next: ShadowConfig['enrollment']) => void }>) {
   const t = useText();
   const rules = [...(enrollment.cidrs ?? []).map(cidr => ({ cidr, domain: '' })), ...(enrollment.rules ?? [])];
@@ -61,12 +61,12 @@ export function ProtectionPanel({ config, update }: SettingsPanelProps) {
   return <><ConfigBlock section="protection" title={t("attachments")}><Toggle label={t("blockFileUploads")} checked={value.block_uploads} change={block_uploads => update('protection', { ...value, block_uploads })} help={t("interceptionDependsOnTheBrowserAnd")} /></ConfigBlock><ConfigBlock section="protection" title={t("protectedWordsAndPhrases")} description={t("detectionsAreAppliedLocallyAccordingTo")}><Lines label={t("protectedPhrases")} values={value.keywords} change={keywords => update('protection', { ...value, keywords })} help={t("onePhrasePerLineDoNot")} /><div className="config-inline"><Mode label={t("exactMatch")} value={value.exact} change={exact => update('protection', { ...value, exact: exact as typeof value.exact })} /><Mode label={t("unicodeVariants")} value={value.unicode} change={unicode => update('protection', { ...value, unicode: unicode as typeof value.unicode })} /><Mode label={t("approximateMatch")} value={value.fuzzy} off change={fuzzy => update('protection', { ...value, fuzzy: fuzzy as typeof value.fuzzy })} /></div><Lines label={t("exceptions")} values={value.exceptions} change={exceptions => update('protection', { ...value, exceptions })} help={t("oneExceptionPerLineExceptionsReduce")} /><label>{t("messageShownWhenBlocked")}<textarea rows={3} maxLength={1000} value={value.message} onChange={e => update('protection', { ...value, message: e.target.value })} /></label></ConfigBlock></>;
 }
 
-// Décision produit du 2026-09-16 : un libellé que sa propre expression capture est refusé.
-// Le libellé devient le marqueur inséré dans le texte masqué (`[LIBELLE]`, `[LIBELLE1]`…) ; si
-// l'expression le reconnaît, le marqueur serait masqué à son tour à chaque passage, sans fin.
-// Même essai que le serveur : le libellé seul, avec la casse de la règle — pas le numéro du
-// marqueur, sans quoi toute règle numérique (« NUMERO », `[0-9]+`) serait refusée alors que
-// `[NUMERO1]` est précisément la forme voulue.
+// Product decision of 2026-09-16: a label that its own expression matches is refused.
+// The label becomes the placeholder inserted into the masked text (`[LABEL]`, `[LABEL1]`...); if
+// the expression recognises it, the placeholder would itself be masked again on every pass, endlessly.
+// Same test as the server: the label alone, with the rule's case sensitivity -- not the placeholder's
+// number, without which any numeric rule ("NUMERO", `[0-9]+`) would be refused when
+// `[NUMERO1]` is exactly the intended form.
 export function labelMatchesPattern(rule: { label: string; pattern: string; case_insensitive: boolean }): boolean {
   if (!rule.label || !rule.pattern) return false;
   try { return new RegExp(rule.pattern, rule.case_insensitive ? 'i' : '').test(rule.label); } catch { return false; }
