@@ -31,7 +31,7 @@ services:
       timeout: 3s
       retries: 30
   mail:
-    image: axllent/mailpit:v1.20.3@sha256:762dd66a062738309e43ad8efce733e8db4a73bf6a38e369aeb547aecb897d27
+    image: axllent/mailpit:v1.31.2@sha256:74d609a42ec279aa63c6b4622a6fa9b5408d1ad5b1d76a1c4be40a265ce0863d
     security_opt: [no-new-privileges:true]
     ports:
       - "127.0.0.1:${MILVAGO_MAIL_PORT:-4081}:8025"
