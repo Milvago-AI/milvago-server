@@ -400,7 +400,8 @@ describe('Shadow AI workflows', () => {
   it('saves a real service redirect using the current revision', async () => {
     const fetchMock = serve((url, init) => url === '/api/shadow/settings' ? init?.method === 'PUT' ? reply({ ...settings, revision: 6, config: JSON.parse(String(init.body)).config }) : reply(settings) : undefined); show(<ShadowAdministration />); const user = userEvent.setup();
     await screen.findByText('Administration Shadow AI'); await screen.findByRole('checkbox', { name: 'Activer la collecte' });
-    await user.click(screen.getByRole('button', { name: /02 Services/ })); await user.selectOptions(screen.getByRole('combobox', { name: 'Comportement' }), 'redirect'); await user.type(screen.getByRole('textbox', { name: 'Destination de redirection' }), 'https://ai.example.org'); await user.click(screen.getByRole('button', { name: 'Enregistrer les changements' }));
+    // The step number is decorative (aria-hidden): the section is announced by its name alone.
+    await user.click(screen.getByRole('button', { name: 'Services' })); await user.selectOptions(screen.getByRole('combobox', { name: 'Comportement' }), 'redirect'); await user.type(screen.getByRole('textbox', { name: 'Destination de redirection' }), 'https://ai.example.org'); await user.click(screen.getByRole('button', { name: 'Enregistrer les changements' }));
     expect(await screen.findByRole('status')).toHaveTextContent('Configuration enregistrée.'); const call = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT')!; expect(JSON.parse(String(call[1]!.body))).toMatchObject({ revision: 5, config: { services: [{ id: 'chatgpt', mode: 'redirect', redirect_url: 'https://ai.example.org' }] } });
   });
 

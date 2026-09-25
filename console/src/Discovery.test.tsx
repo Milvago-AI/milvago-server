@@ -205,6 +205,9 @@ describe('Coverage banner', () => {
     await screen.findByRole('heading', { level: 1, name: 'Vue d’ensemble' });
     expect(screen.queryByText('Ces chiffres sont peut-être incomplets')).not.toBeInTheDocument();
     unmount();
+    // Since Vitest 4, spying on an already spied `fetch` returns the same spy with its calls:
+    // restore it so the assertion below only sees the second render.
+    vi.restoreAllMocks();
     // /api/detection/health demands policy.manage, so a reader without it must not even
     // reach for it: a banner that always 403s is worse than no banner.
     const fetcher = serve({ ...base, permissions: ['overview.read', 'events.read', 'devices.read'] }, { '/api/settings': settings, '/api/detection/health': degraded, ...overview });

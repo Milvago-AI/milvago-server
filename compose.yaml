@@ -13,7 +13,7 @@ x-hardened: &hardened
 
 services:
   database:
-    image: postgres:18.3@sha256:7e32e9833a6fb1c92c32552794cb6ed569d51b445a54907d35fc112ef39684db
+    image: postgres:18.4@sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636
     security_opt: [no-new-privileges:true]
     environment:
       POSTGRES_PASSWORD: ${DB_ADMIN_PASSWORD:?Run node scripts/local-init.mjs}
@@ -31,7 +31,7 @@ services:
       timeout: 3s
       retries: 30
   mail:
-    image: axllent/mailpit:v1.20.3@sha256:762dd66a062738309e43ad8efce733e8db4a73bf6a38e369aeb547aecb897d27
+    image: axllent/mailpit:v1.31.2@sha256:74d609a42ec279aa63c6b4622a6fa9b5408d1ad5b1d76a1c4be40a265ce0863d
     security_opt: [no-new-privileges:true]
     ports:
       - "127.0.0.1:${MILVAGO_MAIL_PORT:-4081}:8025"

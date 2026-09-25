@@ -2512,7 +2512,7 @@ function SettingsPanel() {
               className={`vnav-item${current === item ? " active" : ""}`}
               onClick={() => setArea(item)}
             >
-              <span className="n">0{index + 1}</span>
+              <span className="n" aria-hidden="true">0{index + 1}</span>
               <span>{names[item]}</span>
             </button>
           ))}
