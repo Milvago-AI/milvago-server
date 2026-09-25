@@ -359,22 +359,30 @@ func (a *App) directory(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Se
 	return nil
 }
 
-func (a *App) putDirectory(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
-	if err := requireDirectoryOperator(r.Context(), tx, s); err != nil {
-		return err
+func (a *App) readDirectoryAdminBody(w http.ResponseWriter, r *http.Request, tx pgx.Tx, session *Session) (directoryBody, error) {
+	if err := requireDirectoryOperator(r.Context(), tx, session); err != nil {
+		return directoryBody{}, err
 	}
 	var body directoryBody
 	if err := decode(w, r, &body); err != nil {
-		return err
+		return directoryBody{}, err
 	}
 	if err := body.validate(); err != nil {
-		return err
+		return directoryBody{}, err
 	}
 	if hasControl(body.BindCredential) || len(body.BindCredential) > 512 {
-		return bad("Bind password is too long or malformed.")
+		return directoryBody{}, bad("Bind password is too long or malformed.")
 	}
-	// A stored bind credential requires a fresh second factor and a session.
-	if err := a.requireFreshMFA(r, tx, s); err != nil {
+	// Both operations can use a stored bind credential.
+	if err := a.requireFreshMFA(r, tx, session); err != nil {
+		return directoryBody{}, err
+	}
+	return body, nil
+}
+
+func (a *App) putDirectory(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
+	body, err := a.readDirectoryAdminBody(w, r, tx, s)
+	if err != nil {
 		return err
 	}
 	admin, err := a.identityAdmin(r.Context())
@@ -545,21 +553,8 @@ func (a *App) deleteDirectory(w http.ResponseWriter, r *http.Request, tx pgx.Tx,
 }
 
 func (a *App) testDirectory(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
-	if err := requireDirectoryOperator(r.Context(), tx, s); err != nil {
-		return err
-	}
-	var body directoryBody
-	if err := decode(w, r, &body); err != nil {
-		return err
-	}
-	if err := body.validate(); err != nil {
-		return err
-	}
-	if hasControl(body.BindCredential) || len(body.BindCredential) > 512 {
-		return bad("Bind password is too long or malformed.")
-	}
-	// The test can spend the stored credential, so it requires a fresh second factor.
-	if err := a.requireFreshMFA(r, tx, s); err != nil {
+	body, err := a.readDirectoryAdminBody(w, r, tx, s)
+	if err != nil {
 		return err
 	}
 	credential, component, err := directoryTestCredential(r.Context(), tx, s.OrganizationID, body)
