@@ -260,6 +260,8 @@ export function can(session: Session, permission: string) { return session.permi
 // permission would take away.
 export function readOnly(session: Session) { return session.demo_read_only === true; }
 export function canManage(session: Session) { return can(session, 'members.manage'); }
+/** Approving, revoking and deleting devices: the server gates them on devices.manage. */
+export function canManageDevices(session: Session) { return can(session, 'devices.manage'); }
 export function canAnalyze(session: Session) { return !session.privacy?.aggregate_only && can(session, 'events.read'); }
 export function RefreshButton({ onClick }: Readonly<{ onClick: () => void }>) { const t = useText(); return <button className="button secondary" onClick={onClick}><Icon name="refresh" />{t("refresh")}</button>; }
 

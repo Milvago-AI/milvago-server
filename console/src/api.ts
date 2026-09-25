@@ -105,6 +105,7 @@ export type Audit = {
   actor: string;
   action: string;
   target: string;
+  details?: { reason?: unknown } | null;
 };
 export type Settings = {
   name: string;

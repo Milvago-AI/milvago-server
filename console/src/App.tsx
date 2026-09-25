@@ -50,6 +50,7 @@ import {
   Status,
   can,
   canManage,
+  canManageDevices,
   canAnalyze,
   idFromHash,
   useBoundedPage,
@@ -679,7 +680,7 @@ function OverviewPage() {
           const pending = data.pending_devices;
           return (
             <>
-              {pending > 0 && canManage(session) && (
+              {pending > 0 && canManageDevices(session) && (
                 <section className="todo" aria-label={t("toDo")}>
                   <div className="todo-row">
                     <Icon name="alert" />
@@ -1368,7 +1369,7 @@ function DevicesPage() {
                         {t("backToDevices")}
                       </a>
                       <RefreshButton onClick={resource.reload} />
-                      {canManage(session) && (
+                      {canManageDevices(session) && (
                         <button
                           className="button small danger"
                           disabled={mutation.pending}
@@ -1381,7 +1382,7 @@ function DevicesPage() {
                           {t("delete")}
                         </button>
                       )}
-                      {canManage(session) && device.status === "pending" && (
+                      {canManageDevices(session) && device.status === "pending" && (
                         <button
                           className="button small primary"
                           disabled={mutation.pending}
@@ -1390,7 +1391,7 @@ function DevicesPage() {
                           {t("approve")}
                         </button>
                       )}
-                      {canManage(session) && device.status !== "revoked" && (
+                      {canManageDevices(session) && device.status !== "revoked" && (
                         <button
                           className="button small danger"
                           disabled={mutation.pending}
@@ -1565,7 +1566,7 @@ function DevicesPage() {
                   <div className="row-actions">
 					<PageSize value={size} label={t("perPage")} change={value => { setSize(value); setPage(1); }} />
                     <span className="count-badge">{total}</span>
-                    {canManage(session) && selectedDevices.length > 0 && (
+                    {canManageDevices(session) && selectedDevices.length > 0 && (
                       <Button
                         variant="danger"
                         icon="trash"
@@ -1588,7 +1589,7 @@ function DevicesPage() {
                     <table>
                       <thead>
                         <tr>
-                          {canManage(session) && (
+                          {canManageDevices(session) && (
                             <th className="select-cell">
                               <input
                                 type="checkbox"
@@ -1620,7 +1621,7 @@ function DevicesPage() {
                       <tbody>
                         {data.items.map((device) => (
                           <tr key={device.id}>
-                            {canManage(session) && (
+                            {canManageDevices(session) && (
                               <td className="select-cell">
                                 <input
                                   type="checkbox"
@@ -1666,7 +1667,7 @@ function DevicesPage() {
                             </td>
                             <td>
                               <div className="row-actions">
-                                {canManage(session) &&
+                                {canManageDevices(session) &&
                                   device.status === "pending" && (
                                     <button
                                       className="button small primary"
@@ -1678,7 +1679,7 @@ function DevicesPage() {
                                       {t("approve")}
                                     </button>
                                   )}
-                                {canManage(session) &&
+                                {canManageDevices(session) &&
                                   device.status !== "revoked" && (
                                     <button
                                       className="button small danger"
@@ -1691,7 +1692,7 @@ function DevicesPage() {
                                       {t("revoke")}
                                     </button>
                                   )}
-                                {(!canManage(session) ||
+                                {(!canManageDevices(session) ||
                                   device.status === "revoked") && (
                                   <span className="muted">—</span>
                                 )}
@@ -2369,6 +2370,7 @@ function AuditPanel() {
                       t("actor"),
                       t("action"),
                       t("target"),
+                      t("reason"),
                     ].map((label) => (
                       <th key={label}>{label}</th>
                     ))}
@@ -2383,6 +2385,8 @@ function AuditPanel() {
                       <td>{item.actor}</td>
                       <td>{item.action}</td>
                       <td className="mono">{item.target}</td>
+                      {/* Only privacy changes and identity reveals carry a written reason. */}
+                      <td>{typeof item.details?.reason === "string" ? item.details.reason : ""}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -2612,7 +2616,7 @@ function SettingsEditor({ initial }: Readonly<{ initial: Settings }>) {
             type="number"
             required
             min={1}
-            max={3650}
+            max={365}
             value={settings.event_retention_days}
             onChange={(e) => {
               setSaved(false);

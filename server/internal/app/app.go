@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -909,15 +910,43 @@ func (a *App) static(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	clean := filepath.Clean(filepath.FromSlash(r.URL.Path))
-	full := filepath.Join(a.config.StaticDir, clean)
-	if info, e := os.Stat(full); e == nil && !info.IsDir() {
-		http.ServeFile(w, r, full)
+	name := strings.TrimPrefix(r.URL.Path, "/")
+	if name != "" && (strings.Contains(name, "\\") || !fs.ValidPath(name) || !filepath.IsLocal(filepath.FromSlash(name))) {
+		http.NotFound(w, r)
 		return
+	}
+	root, err := os.OpenRoot(a.config.StaticDir)
+	if err != nil {
+		http.Error(w, "Static files unavailable", http.StatusInternalServerError)
+		return
+	}
+	defer root.Close()
+	if name != "" {
+		file, openErr := root.Open(name)
+		if openErr == nil {
+			info, statErr := file.Stat()
+			if statErr == nil && !info.IsDir() {
+				defer file.Close()
+				http.ServeContent(w, r, name, info.ModTime(), file)
+				return
+			}
+			_ = file.Close()
+		}
 	}
 	// The application shell names the current hashed bundle, so it must never be
 	// served from a browser's heuristic cache: without an explicit directive a
 	// stale index.html keeps loading a retired bundle after a redeployment.
 	w.Header().Set("Cache-Control", "no-store")
-	http.ServeFile(w, r, filepath.Join(a.config.StaticDir, "index.html"))
+	index, err := root.Open("index.html")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer index.Close()
+	info, err := index.Stat()
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	http.ServeContent(w, r, "index.html", info.ModTime(), index)
 }

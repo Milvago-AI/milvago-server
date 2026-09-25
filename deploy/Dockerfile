@@ -1,7 +1,7 @@
 FROM node:26.9.0-bookworm-slim@sha256:582460f614631b59b824ac6020533b9bf339c7fdf3a6d7db31abb6b4065f0212 AS ui
 WORKDIR /build/console
 COPY console/package*.json ./
-RUN npm ci
+RUN npm ci --ignore-scripts
 COPY console/ ./
 RUN npm test && npm run build
 FROM golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS api

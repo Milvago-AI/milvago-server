@@ -97,12 +97,24 @@ func seedBuiltinRoles(ctx context.Context, tx pgx.Tx, org string) error {
 }
 
 func validPermissions(perms []string) bool {
-	for _, p := range perms {
-		if !hasPermission(permissionCatalog, p) {
-			return false
+	return allHeld(permissionCatalog, perms)
+}
+
+// customRolePermissions is what a custom role may carry. Managing roles is
+// reserved to the built-in owner role (the handlers check the role name), so a
+// custom role holding roles.manage would only open a page whose actions refuse.
+var customRolePermissions = func() []string {
+	out := []string{}
+	for _, p := range permissionCatalog {
+		if p != permRolesManage {
+			out = append(out, p)
 		}
 	}
-	return true
+	return out
+}()
+
+func validCustomRolePermissions(perms []string) bool {
+	return allHeld(customRolePermissions, perms)
 }
 
 func (a *App) roles(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
@@ -127,7 +139,7 @@ func (a *App) roles(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Sessio
 	if e := rows.Err(); e != nil {
 		return e
 	}
-	reply(w, 200, map[string]any{"items": items, "catalog": permissionCatalog})
+	reply(w, 200, map[string]any{"items": items, "catalog": customRolePermissions})
 	return nil
 }
 
@@ -197,7 +209,7 @@ func (a *App) createRole(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *S
 	if _, reserved := builtinRolePermissions[body.Name]; reserved {
 		return bad("This role name is reserved.")
 	}
-	if !validPermissions(body.Permissions) {
+	if !validCustomRolePermissions(body.Permissions) {
 		return bad("Unknown permission.")
 	}
 	// A key must not define a role carrying more than the key itself holds:
@@ -234,7 +246,7 @@ func (a *App) updateRole(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *S
 	if e := decode(w, r, &body); e != nil {
 		return e
 	}
-	if !validPermissions(body.Permissions) {
+	if !validCustomRolePermissions(body.Permissions) {
 		return bad("Unknown permission.")
 	}
 	if !s.mayGrant(body.Permissions) {

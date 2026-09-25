@@ -23,7 +23,7 @@ func FuzzValidateV2(f *testing.F) {
 		`{"id":"not-a-uuid"}`,
 		`{"labels":null}`,
 		`{"prompt":"hello","kind":"prompt"}`,
-		`{"files":["a.txt","b‮.exe"]}`,
+		`{"files":["a.txt","b\u202e.exe"]}`,
 		`{"detector":"presence","source":"browser","platform_id":"gemini"}`,
 		`{"decision_reason":"model_denied","action":"blocked","kind":"prompt","platform_id":"x"}`,
 	}

@@ -217,7 +217,7 @@ d /etc/claude-code/managed-settings.d 0755 root root -
 d /etc/codex 0755 root root -
 `, 0644),
 		rpmText("/usr/lib/systemd/system/milvago-commercial.service", `[Unit]
-Description=Milvago Agent Logger
+Description=Milvago Agent Logger Enterprise
 After=network-online.target milvago-collector.service
 Wants=network-online.target milvago-collector.service
 [Service]

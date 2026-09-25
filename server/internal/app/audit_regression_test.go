@@ -150,7 +150,7 @@ func TestCSVSafeSegments(t *testing.T) {
 func TestIdentityText(t *testing.T) {
 	for in, want := range map[string]string{
 		"Synthetic Person":     "Synthetic Person",
-		"invoice‮fdp":          "invoicefdp",
+		"invoice\u202efdp":     "invoicefdp",
 		"a b\u0085c\x07d":      "abcd",
 		"person‍@example.test": "person‍@example.test",
 		"‏שלום":                "שלום",
@@ -214,7 +214,7 @@ func TestPlainAddressRefusesControls(t *testing.T) {
 	if got, ok := plainAddress(" Owner@Example.test "); !ok || got != "owner@example.test" {
 		t.Fatalf("a plain address was refused: %q %v", got, ok)
 	}
-	for _, raw := range []string{"owner‎@example.test", "owner‮@example.test", "owner\u0085@example.test", "Owner <owner@example.test>"} {
+	for _, raw := range []string{"owner‎@example.test", "owner\u202e@example.test", "owner\u0085@example.test", "Owner <owner@example.test>"} {
 		if _, ok := plainAddress(raw); ok {
 			t.Fatalf("accepted %q", raw)
 		}

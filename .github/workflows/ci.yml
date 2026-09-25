@@ -43,7 +43,7 @@ jobs:
           node-version: '26.9.0'
           cache: npm
           cache-dependency-path: console/package-lock.json
-      - run: npm ci
+      - run: npm ci --ignore-scripts
         working-directory: console
       - run: npm test
         working-directory: console

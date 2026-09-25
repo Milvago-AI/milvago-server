@@ -3,6 +3,7 @@
 .npm-cache
 **/node_modules
 **/target
+**/target-*
 **/dist
 **/.cache
 **/*.log

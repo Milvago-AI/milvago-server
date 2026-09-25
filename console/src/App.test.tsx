@@ -89,6 +89,22 @@ describe('Console workflows', () => {
     await user.click(windows);
     await waitFor(() => expect(screen.queryByText('Version téléchargée : 0.5.10')).not.toBeInTheDocument());
   });
+  it('shows the written reason of an audited privacy change, and nothing for other actions', async () => {
+    window.location.hash = '#audit';
+    const auditor = { ...session, permissions: [...adminPermissions, 'audit.read'] };
+    serve({ '/api/settings': confirmedSettings }, url => {
+      if (url === '/api/session') return reply(auditor);
+      if (url === '/api/audit') return reply({ items: [
+        { id: 'a1', occurred_at: '2026-09-20T10:00:00Z', actor: 'user-1', action: 'privacy.update', target: 'org-1', details: { reason: 'Quarterly privacy review' } },
+        { id: 'a2', occurred_at: '2026-09-19T10:00:00Z', actor: 'user-1', action: 'member.role', target: 'member-2', details: null },
+      ] });
+    });
+    render(<App />);
+    expect(await screen.findByRole('columnheader', { name: 'Raison' })).toBeInTheDocument();
+    const rows = screen.getAllByRole('row');
+    expect(within(rows[1]).getByText('Quarterly privacy review')).toBeInTheDocument();
+    expect(within(rows[2]).getAllByRole('cell').at(-1)).toHaveTextContent('');
+  });
   it('updates a member role and reloads the actual membership after server success', async () => {
     window.location.hash = '#members';
     let member = { id: 'member-2', email: 'member@example.org', display_name: 'Membre de test', role: 'viewer', organization_id: 'org-1', organization_name: 'Organisation de test' };
@@ -329,6 +345,20 @@ describe('Console workflows', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/revoke'))).toBe(false);
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirmer la révocation' }));
     expect(await screen.findByRole('status')).toHaveTextContent('Le poste a été révoqué.');
+  });
+  it('offers device actions on devices.manage, the permission the server checks, not members.manage', async () => {
+    window.location.hash = '#devices';
+    const approved = { id: 'device-1', hostname: 'Poste de test', platform: 'windows', version: '0.1.0', status: 'approved', last_seen: null, os_user: 'utilisateur-test' };
+    const withoutDevices = { ...session, permissions: adminPermissions.filter(p => p !== 'devices.manage') };
+    serve({ '/api/devices': devices([approved]) }, url => url === '/api/session' ? reply(withoutDevices) : undefined);
+    const first = render(<App />);
+    expect(await screen.findByText('Poste de test')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Révoquer' })).not.toBeInTheDocument();
+    first.unmount(); vi.restoreAllMocks();
+    const devicesOnly = { ...session, permissions: ['overview.read', 'events.read', 'devices.read', 'devices.manage'] };
+    serve({ '/api/devices': devices([approved]) }, url => url === '/api/session' ? reply(devicesOnly) : undefined);
+    render(<App />);
+    expect(await screen.findByRole('button', { name: 'Révoquer' })).toBeInTheDocument();
   });
   it('tells an empty fleet apart from a filter that matches nothing', async () => {
     // `fleet` counts the whole fleet whatever the filter, `total` the filtered rows: a

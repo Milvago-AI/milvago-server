@@ -37,6 +37,9 @@ const permissionLabels: Record<string, TranslationKey> = {
   "audit.read": "permAuditRead",
   "organizations.manage": "permOrganizationsManage",
   "directory.manage": "permDirectoryManage",
+  "reports.aggregate": "permReportsAggregate",
+  "identity.reveal": "permIdentityReveal",
+  "identity.erase": "permIdentityErase",
 };
 
 /** Shared with the API keys panel so the two never disagree on a wording. */
@@ -130,7 +133,7 @@ function RolesEditor({
                   inside one. Spanish and Portuguese labels are long enough to be
                   shredded mid-word at 390px where the French ones fit. */}
               <td className="keep-words">
-                {role.permissions.length === data.catalog.length
+                {data.catalog.every((p) => role.permissions.includes(p))
                   ? t("all")
                   : role.permissions.map((p) => permLabel(t, p)).join(", ")}
               </td>
@@ -393,7 +396,11 @@ function RoleDialog({
   const t = useText();
   const mutation = useMutation();
   const [name, setName] = useState(existing?.name ?? "");
-  const [permissions, setPermissions] = useState<string[]>(existing?.permissions ?? []);
+  // A role saved before roles.manage left the catalog may still carry it: keep
+  // only what the server accepts, or saving the role would be refused.
+  const [permissions, setPermissions] = useState<string[]>(
+    () => existing?.permissions.filter((p) => catalog.includes(p)) ?? [],
+  );
   const isNew = !existing;
 
   function toggle(permission: string, on: boolean) {

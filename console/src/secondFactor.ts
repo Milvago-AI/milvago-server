@@ -43,7 +43,7 @@ export const browser = { navigate: (url: string) => { const target = sameOriginT
 // sessionStorage outlives an abandoned verification and session restore can write it to
 // disk, so a body carrying a secret (LDAP bind password, export token) is never held: the
 // person re-enters it after verifying, as in private browsing.
-const secretField = /password|passphrase|secret|credential|token|authorization|header|(^|_)(key|pin|otp)$/i;
+const secretField = /(?:password|passphrase|secret|credential|token|authorization|header|(?:^|_)(?:key|pin|otp)$)/i;
 const carriesSecret = (value: unknown): boolean =>
   typeof value === 'object' && value !== null &&
   Object.entries(value).some(([name, inner]) => (secretField.test(name) && inner !== '' && inner != null) || carriesSecret(inner));

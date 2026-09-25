@@ -592,7 +592,9 @@ func testAPIKeySubsystem(t *testing.T, a *App, admin *pgxpool.Pool, ownerCookie 
 	t.Run("a human cannot grant authority it does not hold", func(t *testing.T) {
 		guardMembership(t)
 		want(t, owner("POST", "/api/roles", map[string]any{"name": "high authority", "permissions": []string{"organizations.manage"}}), 201)
-		want(t, owner("POST", "/api/roles", map[string]any{"name": "role operator", "permissions": []string{"members.manage", "roles.manage", "overview.read", "events.read", "devices.read", "reports.aggregate"}}), 201)
+		// Managing roles stays with the built-in owner role: a custom role cannot carry it.
+		want(t, owner("POST", "/api/roles", map[string]any{"name": "role manager", "permissions": []string{"roles.manage"}}), 400)
+		want(t, owner("POST", "/api/roles", map[string]any{"name": "role operator", "permissions": []string{"members.manage", "overview.read", "events.read", "devices.read", "reports.aggregate"}}), 201)
 		var second string
 		if e := admin.QueryRow(ctx, "INSERT INTO users(subject,email,display_name) VALUES($1,$2,$3) RETURNING id", "synthetic-rbac", "synthetic-rbac@example.test", "Synthetic RBAC member").Scan(&second); e != nil {
 			t.Fatal(e)
