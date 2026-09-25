@@ -287,9 +287,11 @@ export function App() {
   // changed from the profile form, and the sidebar offers no shortcut for it
   // (product decision, 2026-09-11).
   const chooseLanguage = (next: Language) => {
-    explicitLanguage.current = next;
-    persist("milvago.language", next);
-    setLanguage(next);
+    const selected = languages.find(option => option.code === next);
+    if (!selected) return;
+    explicitLanguage.current = selected.code;
+    persist("milvago.language", selected.code);
+    setLanguage(selected.code);
   };
   // Dark is the brand's default rendering (charte graphique v2.0): the system
   // setting is not consulted, only an explicit choice by this reader.
