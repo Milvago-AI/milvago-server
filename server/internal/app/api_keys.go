@@ -248,7 +248,7 @@ func (a *App) revokeWithdrawnIdentities(ctx context.Context) {
 		if _, known := verdicts[h.subject]; known {
 			continue
 		}
-		u, e := admin.user(h.subject)
+		u, e := admin.user(ctx, h.subject)
 		if e != nil {
 			// Unreachable or refused: no verdict, so this account is left alone.
 			continue
@@ -261,7 +261,7 @@ func (a *App) revokeWithdrawnIdentities(ctx context.Context) {
 		// endpoint, and abandon the sweep rather than guess.
 		if u == nil {
 			if !probed {
-				probed, answering = true, admin.answering()
+				probed, answering = true, admin.answering(ctx)
 			}
 			if !answering {
 				a.log.Error("identity administration answered 404 for a key holder but is not listing users; withdrawn-identity sweep abandoned")

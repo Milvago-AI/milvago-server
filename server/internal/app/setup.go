@@ -455,9 +455,9 @@ func (a *App) setupComplete(w http.ResponseWriter, r *http.Request) {
 	reply(w, 200, map[string]string{"login": login})
 }
 
-func prepareSetupIdentity(admin *identityAdmin, body setupRequest) error {
+func prepareSetupIdentity(ctx context.Context, admin *identityAdmin, body setupRequest) error {
 	// Never take over an account that already exists in the realm.
-	status, _, raw, e := admin.call("GET", "/users?email="+url.QueryEscape(body.Admin.Email)+"&exact=true", nil)
+	status, _, raw, e := admin.call(ctx, "GET", "/users?email="+url.QueryEscape(body.Admin.Email)+"&exact=true", nil)
 	if e != nil {
 		return e
 	}
@@ -469,7 +469,7 @@ func prepareSetupIdentity(admin *identityAdmin, body setupRequest) error {
 		return apiError{409, "identity_exists", "An account with this e-mail address already exists."}
 	}
 	if body.SMTP != nil {
-		if status, _, _, e = admin.call("PUT", "", map[string]any{"smtpServer": body.SMTP.keycloak()}); e != nil {
+		if status, _, _, e = admin.call(ctx, "PUT", "", map[string]any{"smtpServer": body.SMTP.keycloak()}); e != nil {
 			return e
 		}
 		if status != 204 {
@@ -484,14 +484,14 @@ func (a *App) createSetupIdentity(ctx context.Context, body setupRequest) (strin
 	if e != nil {
 		return "", e
 	}
-	if e := prepareSetupIdentity(admin, body); e != nil {
+	if e := prepareSetupIdentity(ctx, admin, body); e != nil {
 		return "", e
 	}
 	actions := []string{}
 	if body.AdminTOTP {
 		actions = append(actions, "CONFIGURE_TOTP")
 	}
-	status, header, raw, e := admin.call("POST", "/users", map[string]any{
+	status, header, raw, e := admin.call(ctx, "POST", "/users", map[string]any{
 		"username": body.Admin.Email, "email": body.Admin.Email, "firstName": body.Admin.FirstName, "lastName": body.Admin.LastName,
 		"enabled": true, "emailVerified": true, "requiredActions": actions,
 		"credentials": []map[string]any{{"type": "password", "value": body.Admin.Password, "temporary": false}},
@@ -570,7 +570,7 @@ func (a *App) cleanupSetupIdentity(ctx context.Context, subject, email string, p
 	cleanup, e := a.identityAdmin(cleanupCtx)
 	status := 0
 	if e == nil {
-		status, _, _, e = cleanup.call("DELETE", "/users/"+url.PathEscape(subject), nil)
+		status, _, _, e = cleanup.call(cleanupCtx, "DELETE", "/users/"+url.PathEscape(subject), nil)
 	}
 	if e != nil || status != 204 {
 		return fmt.Errorf("%w (and the created identity account could not be removed)", prior)

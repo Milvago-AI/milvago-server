@@ -59,10 +59,10 @@ func (a *App) profile(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Sess
 	// when identity administration is unavailable rather than guessing.
 	var mfaConfigured any
 	if admin, e := a.identityAdmin(r.Context()); e == nil {
-		if u, e := admin.user(s.Subject); e == nil && u != nil {
+		if u, e := admin.user(r.Context(), s.Subject); e == nil && u != nil {
 			first, last = strings.TrimSpace(u.FirstName), strings.TrimSpace(u.LastName)
 		}
-		if status, _, raw, e := admin.call("GET", "/users/"+url.PathEscape(s.Subject)+"/credentials", nil); e == nil && status == 200 {
+		if status, _, raw, e := admin.call(r.Context(), "GET", "/users/"+url.PathEscape(s.Subject)+"/credentials", nil); e == nil && status == 200 {
 			var credentials []struct {
 				Type string `json:"type"`
 			}
@@ -138,13 +138,13 @@ func (a *App) updateProfileName(r *http.Request, tx pgx.Tx, s *Session, first, l
 	}
 	// The name the provider already holds is not a change: no write, no audit line
 	// (compared field by field there, not with the local joined copy).
-	current, e := admin.user(s.Subject)
+	current, e := admin.user(r.Context(), s.Subject)
 	if e != nil {
 		return false, e
 	}
 	if current == nil || strings.TrimSpace(current.FirstName) != first || strings.TrimSpace(current.LastName) != last {
 		changed = true
-		status, _, _, e := admin.call("PUT", "/users/"+url.PathEscape(s.Subject), map[string]any{"firstName": first, "lastName": last})
+		status, _, _, e := admin.call(r.Context(), "PUT", "/users/"+url.PathEscape(s.Subject), map[string]any{"firstName": first, "lastName": last})
 		if e != nil {
 			return false, e
 		}

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -47,8 +48,8 @@ func validateInviteRequest(r *http.Request, tx pgx.Tx, s *Session, body *inviteR
 	return nil
 }
 
-func lookupInviteSubject(admin *identityAdmin, email string) (string, error) {
-	status, _, raw, e := admin.call("GET", "/users?email="+url.QueryEscape(email)+"&exact=true", nil)
+func lookupInviteSubject(ctx context.Context, admin *identityAdmin, email string) (string, error) {
+	status, _, raw, e := admin.call(ctx, "GET", "/users?email="+url.QueryEscape(email)+"&exact=true", nil)
 	if e != nil || status != 200 {
 		return "", apiError{502, "identity_unavailable", "Could not query identity users."}
 	}
@@ -65,18 +66,18 @@ func lookupInviteSubject(admin *identityAdmin, email string) (string, error) {
 }
 
 func resolveInviteIdentity(r *http.Request, tx pgx.Tx, s *Session, admin *identityAdmin, email string) (string, string, string, error) {
-	subject, e := lookupInviteSubject(admin, email)
+	subject, e := lookupInviteSubject(r.Context(), admin, email)
 	if e != nil {
 		return "", "", "", e
 	}
 	kind, name := "local", ""
 	if subject == "" {
 		// The activation link carries required actions, allowing later SSO linking.
-		status, _, _, e := admin.call("POST", "/users", map[string]any{"username": email, "email": email, "enabled": true, "emailVerified": false})
+		status, _, _, e := admin.call(r.Context(), "POST", "/users", map[string]any{"username": email, "email": email, "enabled": true, "emailVerified": false})
 		if e != nil || (status != 201 && status != 409) {
 			return "", "", "", apiError{502, "identity_unavailable", "Could not create the identity account."}
 		}
-		subject, e = lookupInviteSubject(admin, email)
+		subject, e = lookupInviteSubject(r.Context(), admin, email)
 		if e != nil {
 			return "", "", "", e
 		}
@@ -85,14 +86,14 @@ func resolveInviteIdentity(r *http.Request, tx pgx.Tx, s *Session, admin *identi
 		}
 		return subject, kind, name, nil
 	}
-	u, e := admin.user(subject)
+	u, e := admin.user(r.Context(), subject)
 	if e != nil {
 		return "", "", "", e
 	}
 	if u == nil {
 		return "", "", "", apiError{502, "identity_unavailable", "The identity account could not be read."}
 	}
-	kind, e = admin.identityType(u)
+	kind, e = admin.identityType(r.Context(), u)
 	if e != nil {
 		return "", "", "", e
 	}
@@ -159,7 +160,7 @@ func (a *App) invite(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Sessi
 		return e
 	}
 	if kind == "local" {
-		status, _, _, e := admin.call("PUT", "/users/"+url.PathEscape(subject)+"/execute-actions-email?lifespan=86400", []string{"VERIFY_EMAIL", "UPDATE_PASSWORD"})
+		status, _, _, e := admin.call(r.Context(), "PUT", "/users/"+url.PathEscape(subject)+"/execute-actions-email?lifespan=86400", []string{"VERIFY_EMAIL", "UPDATE_PASSWORD"})
 		if e != nil || status != 204 {
 			return apiError{502, "invitation_email_failed", "The identity provider could not send the invitation. Check its SMTP configuration."}
 		}

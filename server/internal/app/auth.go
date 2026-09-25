@@ -231,7 +231,7 @@ func (a *App) loginIdentityKind(ctx context.Context, subject string) string {
 	if e != nil {
 		return ""
 	}
-	u, e := admin.user(subject)
+	u, e := admin.user(ctx, subject)
 	if e != nil {
 		a.log.Warn("identity account lookup failed", "error", e)
 		return ""
@@ -239,7 +239,7 @@ func (a *App) loginIdentityKind(ctx context.Context, subject string) string {
 	if u == nil {
 		return ""
 	}
-	kind, e := admin.identityType(u)
+	kind, e := admin.identityType(ctx, u)
 	if e != nil {
 		a.log.Warn("identity type lookup failed", "error", e)
 		return ""

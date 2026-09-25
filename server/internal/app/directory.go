@@ -275,8 +275,8 @@ func keycloakMessage(raw []byte) string {
 // alignNameMapper points Keycloak's default "first name" LDAP mapper at
 // givenName. For non-AD vendors Keycloak defaults it to cn, which repeats the
 // surname in every display name. Best effort: only display quality depends on it.
-func alignNameMapper(admin *identityAdmin, component string) {
-	status, _, raw, e := admin.call("GET", "/components?parent="+url.QueryEscape(component)+"&type=org.keycloak.storage.ldap.mappers.LDAPStorageMapper", nil)
+func alignNameMapper(ctx context.Context, admin *identityAdmin, component string) {
+	status, _, raw, e := admin.call(ctx, "GET", "/components?parent="+url.QueryEscape(component)+"&type=org.keycloak.storage.ldap.mappers.LDAPStorageMapper", nil)
 	if e != nil || status != 200 {
 		return
 	}
@@ -290,7 +290,7 @@ func alignNameMapper(admin *identityAdmin, component string) {
 		id, _ := m["id"].(string)
 		if len(model) == 1 && model[0] == "firstName" && id != "" {
 			config["ldap.attribute"] = []string{"givenName"}
-			_, _, _, _ = admin.call("PUT", ldapComponentPath+url.PathEscape(id), m)
+			_, _, _, _ = admin.call(ctx, "PUT", ldapComponentPath+url.PathEscape(id), m)
 		}
 	}
 }
@@ -394,15 +394,15 @@ func (a *App) putDirectory(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s 
 	if err != nil {
 		return err
 	}
-	current, create, err := readDirectoryComponent(admin, component, create, credential)
+	current, create, err := readDirectoryComponent(r.Context(), admin, component, create, credential)
 	if err != nil {
 		return err
 	}
-	component, err = writeDirectoryComponent(admin, body, credential, component, create, current)
+	component, err = writeDirectoryComponent(r.Context(), admin, body, credential, component, create, current)
 	if err != nil {
 		return err
 	}
-	alignNameMapper(admin, component)
+	alignNameMapper(r.Context(), admin, component)
 	view, err := persistDirectoryUpdate(r.Context(), tx, s, admin, component, body, create)
 	if err != nil {
 		return err
@@ -428,11 +428,11 @@ func directoryBindCredential(body directoryBody, stored directoryView, create bo
 	return credential, nil
 }
 
-func readDirectoryComponent(admin *identityAdmin, component string, create bool, credential string) (map[string]any, bool, error) {
+func readDirectoryComponent(ctx context.Context, admin *identityAdmin, component string, create bool, credential string) (map[string]any, bool, error) {
 	if create {
 		return nil, true, nil
 	}
-	status, _, raw, err := admin.call("GET", ldapComponentPath+url.PathEscape(component), nil)
+	status, _, raw, err := admin.call(ctx, "GET", ldapComponentPath+url.PathEscape(component), nil)
 	if err != nil {
 		return nil, false, err
 	}
@@ -454,10 +454,10 @@ func readDirectoryComponent(admin *identityAdmin, component string, create bool,
 	return current, false, nil
 }
 
-func writeDirectoryComponent(admin *identityAdmin, body directoryBody, credential, component string, create bool, current map[string]any) (string, error) {
+func writeDirectoryComponent(ctx context.Context, admin *identityAdmin, body directoryBody, credential, component string, create bool, current map[string]any) (string, error) {
 	config := body.componentConfig(credential)
 	if create {
-		status, header, _, err := admin.call("POST", "/components", map[string]any{"name": body.Name, "providerId": "ldap", "providerType": "org.keycloak.storage.UserStorageProvider", "config": config})
+		status, header, _, err := admin.call(ctx, "POST", "/components", map[string]any{"name": body.Name, "providerId": "ldap", "providerType": "org.keycloak.storage.UserStorageProvider", "config": config})
 		if err != nil {
 			return "", err
 		}
@@ -472,7 +472,7 @@ func writeDirectoryComponent(admin *identityAdmin, body directoryBody, credentia
 	}
 	current["name"] = body.Name
 	current["config"] = config
-	status, _, _, err := admin.call("PUT", ldapComponentPath+url.PathEscape(component), current)
+	status, _, _, err := admin.call(ctx, "PUT", ldapComponentPath+url.PathEscape(component), current)
 	if err != nil {
 		return "", err
 	}
@@ -486,7 +486,7 @@ func persistDirectoryUpdate(ctx context.Context, tx pgx.Tx, s *Session, admin *i
 	if err := saveDirectory(ctx, tx, s.OrganizationID, component, body.directoryConfig); err != nil {
 		if create {
 			// Best effort: do not leave an unreferenced provider behind.
-			_, _, _, _ = admin.call("DELETE", ldapComponentPath+url.PathEscape(component), nil)
+			_, _, _, _ = admin.call(ctx, "DELETE", ldapComponentPath+url.PathEscape(component), nil)
 		}
 		return directoryView{}, err
 	}
@@ -524,7 +524,7 @@ func (a *App) deleteDirectory(w http.ResponseWriter, r *http.Request, tx pgx.Tx,
 	if e != nil {
 		return e
 	}
-	status, _, _, e := admin.call("DELETE", ldapComponentPath+url.PathEscape(component), nil)
+	status, _, _, e := admin.call(r.Context(), "DELETE", ldapComponentPath+url.PathEscape(component), nil)
 	if e != nil {
 		return e
 	}
@@ -579,7 +579,7 @@ func (a *App) testDirectory(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s
 		if step == "authentication" {
 			action = "testAuthentication"
 		}
-		ok, message, err := runDirectoryConnectionTest(admin, body, credential, component, action)
+		ok, message, err := runDirectoryConnectionTest(r.Context(), admin, body, credential, component, action)
 		if err != nil {
 			return err
 		}
@@ -613,8 +613,8 @@ func directoryTestCredential(ctx context.Context, tx pgx.Tx, org string, body di
 	return credential, component, nil
 }
 
-func runDirectoryConnectionTest(admin *identityAdmin, body directoryBody, credential, component, action string) (bool, string, error) {
-	status, _, raw, err := admin.call("POST", "/testLDAPConnection", map[string]string{"action": action, "connectionUrl": body.ConnectionURL, "bindDn": body.BindDN, "bindCredential": credential, "useTruststoreSpi": body.UseTruststore, "connectionTimeout": strconv.Itoa(body.ConnectionTimeout), "startTls": strconv.FormatBool(body.StartTLS), "authType": body.AuthType, "componentId": component})
+func runDirectoryConnectionTest(ctx context.Context, admin *identityAdmin, body directoryBody, credential, component, action string) (bool, string, error) {
+	status, _, raw, err := admin.call(ctx, "POST", "/testLDAPConnection", map[string]string{"action": action, "connectionUrl": body.ConnectionURL, "bindDn": body.BindDN, "bindCredential": credential, "useTruststoreSpi": body.UseTruststore, "connectionTimeout": strconv.Itoa(body.ConnectionTimeout), "startTls": strconv.FormatBool(body.StartTLS), "authType": body.AuthType, "componentId": component})
 	if err != nil {
 		return false, "", err
 	}
@@ -655,7 +655,7 @@ func (a *App) searchDirectory(w http.ResponseWriter, r *http.Request, tx pgx.Tx,
 	// provided by this organization's own directory are kept.
 	// Filter each page of realm accounts, not just its first twenty users.
 	// An incomplete search is explicit rather than an empty success.
-	found, err := searchDirectoryUsers(admin, query, component)
+	found, err := searchDirectoryUsers(r.Context(), admin, query, component)
 	if err != nil {
 		return err
 	}
@@ -668,12 +668,12 @@ func (a *App) searchDirectory(w http.ResponseWriter, r *http.Request, tx pgx.Tx,
 	return nil
 }
 
-func searchDirectoryUsers(admin *identityAdmin, query, component string) ([]identityUser, error) {
+func searchDirectoryUsers(ctx context.Context, admin *identityAdmin, query, component string) ([]identityUser, error) {
 	// Keycloak searches every provider, so filter each page by this organization's component.
 	found := []identityUser{}
 	const pageSize, searchLimit = 100, 1000
 	for first := 0; ; first += pageSize {
-		status, _, raw, err := admin.call("GET", "/users?search="+url.QueryEscape(query)+"&first="+strconv.Itoa(first)+"&max="+strconv.Itoa(pageSize), nil)
+		status, _, raw, err := admin.call(ctx, "GET", "/users?search="+url.QueryEscape(query)+"&first="+strconv.Itoa(first)+"&max="+strconv.Itoa(pageSize), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -782,7 +782,7 @@ func (a *App) importDirectoryMember(w http.ResponseWriter, r *http.Request, tx p
 	if e != nil {
 		return e
 	}
-	u, e := admin.user(body.Subject)
+	u, e := admin.user(r.Context(), body.Subject)
 	if e != nil {
 		return e
 	}

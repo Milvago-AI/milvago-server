@@ -19,7 +19,6 @@ type identityAdmin struct {
 	// (restart, key rotation), so the next call asks for a fresh one.
 	reset  func()
 	client *http.Client
-	ctx    context.Context
 	token  string
 	base   string // scheme://host/admin/realms/{realm}
 }
@@ -75,7 +74,7 @@ func (a *App) identityAdmin(ctx context.Context) (*identityAdmin, error) {
 	if a.adminToken.key == cacheKey && time.Now().Before(a.adminToken.until) {
 		cached := a.adminToken.value
 		a.adminToken.Unlock()
-		return &identityAdmin{reset: a.forgetAdminToken, client: a.oidcClient, ctx: ctx, token: cached, base: base}, nil
+		return &identityAdmin{reset: a.forgetAdminToken, client: a.oidcClient, token: cached, base: base}, nil
 	}
 	a.adminToken.Unlock()
 	form := url.Values{"grant_type": {"client_credentials"}, "client_id": {a.config.AdminClientID}, "client_secret": {a.config.AdminClientSecret}}
@@ -103,7 +102,7 @@ func (a *App) identityAdmin(ctx context.Context) (*identityAdmin, error) {
 		a.adminToken.key, a.adminToken.value, a.adminToken.until = cacheKey, token.AccessToken, time.Now().Add(life)
 		a.adminToken.Unlock()
 	}
-	return &identityAdmin{reset: a.forgetAdminToken, client: a.oidcClient, ctx: ctx, token: token.AccessToken, base: base}, nil
+	return &identityAdmin{reset: a.forgetAdminToken, client: a.oidcClient, token: token.AccessToken, base: base}, nil
 }
 
 func (a *App) forgetAdminToken() {
@@ -115,7 +114,7 @@ func (a *App) forgetAdminToken() {
 // call performs one admin request. path is relative to the realm admin root
 // (for example "/users?email=..."). A transport failure is reported as a 502
 // apiError; HTTP status codes are returned to the caller for interpretation.
-func (c *identityAdmin) call(method, path string, body any) (int, http.Header, []byte, error) {
+func (c *identityAdmin) call(ctx context.Context, method, path string, body any) (int, http.Header, []byte, error) {
 	var raw []byte
 	if body != nil {
 		var e error
@@ -123,7 +122,7 @@ func (c *identityAdmin) call(method, path string, body any) (int, http.Header, [
 			return 0, nil, nil, e
 		}
 	}
-	request, e := http.NewRequestWithContext(c.ctx, method, c.base+path, bytes.NewReader(raw))
+	request, e := http.NewRequestWithContext(ctx, method, c.base+path, bytes.NewReader(raw))
 	if e != nil {
 		return 0, nil, nil, e
 	}
@@ -147,8 +146,8 @@ func (c *identityAdmin) call(method, path string, body any) (int, http.Header, [
 }
 
 // user fetches one Keycloak account by ID; (nil, nil) when it does not exist.
-func (c *identityAdmin) user(subject string) (*identityUser, error) {
-	status, _, raw, e := c.call("GET", "/users/"+url.PathEscape(subject), nil)
+func (c *identityAdmin) user(ctx context.Context, subject string) (*identityUser, error) {
+	status, _, raw, e := c.call(ctx, "GET", "/users/"+url.PathEscape(subject), nil)
 	if e != nil {
 		return nil, e
 	}
@@ -173,18 +172,18 @@ func (c *identityAdmin) user(subject string) (*identityUser, error) {
 // verdict -- revokeWithdrawnIdentities does -- must corroborate it here first,
 // because the collection endpoint answers 200 for a realm that exists and fails
 // for one that does not.
-func (c *identityAdmin) answering() bool {
-	status, _, _, e := c.call("GET", "/users?max=1", nil)
+func (c *identityAdmin) answering(ctx context.Context) bool {
+	status, _, _, e := c.call(ctx, "GET", "/users?max=1", nil)
 	return e == nil && status == 200
 }
 
 // identityType classifies an account: "ldap" when provided by a user-storage
 // federation, "sso" when linked to a brokered identity provider, else "local".
-func (c *identityAdmin) identityType(u *identityUser) (string, error) {
+func (c *identityAdmin) identityType(ctx context.Context, u *identityUser) (string, error) {
 	if u.FederationLink != "" {
 		return "ldap", nil
 	}
-	status, _, raw, e := c.call("GET", "/users/"+url.PathEscape(u.ID)+"/federated-identity", nil)
+	status, _, raw, e := c.call(ctx, "GET", "/users/"+url.PathEscape(u.ID)+"/federated-identity", nil)
 	if e != nil {
 		return "", e
 	}
