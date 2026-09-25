@@ -377,7 +377,7 @@ func buildInstallerRPM(directory, source string, provision InstallerProvision) (
 	if err := validateInstallerPayload(payload, Edition); err != nil {
 		return "", err
 	}
-	raw, err := os.ReadFile(filepath.Join(directory, fileProvisionJSON))
+	raw, err := readConfined(filepath.Join(directory, fileProvisionJSON))
 	if err != nil {
 		return "", err
 	}
@@ -419,7 +419,7 @@ func buildInstallerRPM(directory, source string, provision InstallerProvision) (
 		if err != nil || !info.Mode().IsRegular() {
 			return fmt.Errorf("invalid installer payload file")
 		}
-		body, err := os.ReadFile(file)
+		body, err := readConfined(file)
 		if err != nil {
 			return err
 		}
@@ -456,7 +456,7 @@ func buildInstallerRPM(directory, source string, provision InstallerProvision) (
 	rpm.AddPreun(plan.preun)
 	rpm.AddPostun(plan.postun)
 	result := filepath.Join(directory, "milvago.rpm")
-	output, err := os.OpenFile(result, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	output, err := createConfined(result, 0600)
 	if err != nil {
 		return "", err
 	}

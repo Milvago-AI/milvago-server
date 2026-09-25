@@ -119,11 +119,40 @@ func firefoxXPIInfo(payload []byte) (string, string, error) {
 	return metadata.Version, metadata.BrowserSpecificSettings.Gecko.ID, nil
 }
 
-// extAsset resolves a file inside the baked StaticDir/ext directory. The name is
-// a fixed literal at every call site (no user input), so there is no traversal
-// surface; filepath.Join with a constant keeps it explicit.
-func (a *App) extAsset(name string) string {
-	return filepath.Join(a.config.StaticDir, "ext", name)
+// The baked StaticDir/ext files are reached only through an os.Root on that directory.
+// Every call site passes a fixed name; the root also refuses `..`, absolute names and
+// links leading out of the directory, so the confinement holds even if a name ever
+// stopped being a literal.
+func (a *App) extRoot() (*os.Root, error) {
+	return os.OpenRoot(filepath.Join(a.config.StaticDir, "ext"))
+}
+
+func (a *App) extReadFile(name string) ([]byte, error) {
+	root, e := a.extRoot()
+	if e != nil {
+		return nil, e
+	}
+	defer root.Close()
+	return root.ReadFile(name)
+}
+
+// The returned file stays valid after the root is closed.
+func (a *App) extOpen(name string) (*os.File, error) {
+	root, e := a.extRoot()
+	if e != nil {
+		return nil, e
+	}
+	defer root.Close()
+	return root.Open(name)
+}
+
+func (a *App) extLstat(name string) (os.FileInfo, error) {
+	root, e := a.extRoot()
+	if e != nil {
+		return nil, e
+	}
+	defer root.Close()
+	return root.Lstat(name)
 }
 
 // extUpdate serves the Omaha (gupdate) manifest used by Chrome/Edge
@@ -133,11 +162,11 @@ func (a *App) extAsset(name string) string {
 // encoding/xml, which escapes them, so a crafted public_url cannot break out of
 // the XML. Returns 503 until a signed CRX has been baked into the image.
 func (a *App) extUpdate(w http.ResponseWriter, r *http.Request) {
-	if _, e := os.Stat(a.extAsset(fileMilvagoCRX)); e != nil {
+	if _, e := a.extLstat(fileMilvagoCRX); e != nil {
 		reply(w, 503, map[string]string{"error": "extension_unconfigured", "message": msgExtensionHostingUnconfigured})
 		return
 	}
-	raw, e := os.ReadFile(a.extAsset("version.txt"))
+	raw, e := a.extReadFile("version.txt")
 	if e != nil {
 		reply(w, 503, map[string]string{"error": "extension_unconfigured", "message": msgExtensionHostingUnconfigured})
 		return
@@ -149,7 +178,7 @@ func (a *App) extUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	// No default identity: the packages are edition-specific, so falling back to a
 	// hard-coded ID would let one edition advertise the other's extension.
-	idRaw, e := os.ReadFile(a.extAsset("extension-id.txt"))
+	idRaw, e := a.extReadFile("extension-id.txt")
 	appID := strings.TrimSpace(string(idRaw))
 	if e != nil || !extIDPattern.MatchString(appID) {
 		reply(w, 503, map[string]string{"error": "extension_unconfigured", "message": "No packaged extension identity is available."})
@@ -205,7 +234,7 @@ func updateManifestXML(origin, version, appID string) ([]byte, error) {
 // extCRX serves the signed, baked CRX3 package with an explicit content type.
 // Fixed filename, no user-controlled path. 404 when no CRX is present.
 func (a *App) extCRX(w http.ResponseWriter, r *http.Request) {
-	file, e := os.Open(a.extAsset(fileMilvagoCRX))
+	file, e := a.extOpen(fileMilvagoCRX)
 	if e != nil {
 		http.NotFound(w, r)
 		return
@@ -251,7 +280,7 @@ func (a *App) extFirefoxUpdate(w http.ResponseWriter, r *http.Request) {
 	unconfigured := func() {
 		reply(w, 503, map[string]string{"error": "extension_unconfigured", "message": "Firefox extension hosting is not configured on this instance."})
 	}
-	info, e := os.Lstat(a.extAsset(fileMilvagoXPI))
+	info, e := a.extLstat(fileMilvagoXPI)
 	if e != nil || !info.Mode().IsRegular() {
 		unconfigured()
 		return
@@ -260,7 +289,7 @@ func (a *App) extFirefoxUpdate(w http.ResponseWriter, r *http.Request) {
 	cached := a.extFirefox
 	a.extFirefoxMu.Unlock()
 	if !cached.ok || cached.size != info.Size() || !cached.mtime.Equal(info.ModTime()) {
-		payload, e := os.ReadFile(a.extAsset(fileMilvagoXPI))
+		payload, e := a.extReadFile(fileMilvagoXPI)
 		if e != nil {
 			unconfigured()
 			return
@@ -276,7 +305,7 @@ func (a *App) extFirefoxUpdate(w http.ResponseWriter, r *http.Request) {
 		a.extFirefox = cached
 		a.extFirefoxMu.Unlock()
 	}
-	rawID, e := os.ReadFile(a.extAsset("extension-firefox-id.txt"))
+	rawID, e := a.extReadFile("extension-firefox-id.txt")
 	if e != nil {
 		unconfigured()
 		return
@@ -300,7 +329,7 @@ func (a *App) extFirefoxUpdate(w http.ResponseWriter, r *http.Request) {
 // extXPI serves the signed, baked Firefox package. Fixed filename, no user-controlled
 // path. 404 when none is present.
 func (a *App) extXPI(w http.ResponseWriter, r *http.Request) {
-	file, e := os.Open(a.extAsset(fileMilvagoXPI))
+	file, e := a.extOpen(fileMilvagoXPI)
 	if e != nil {
 		http.NotFound(w, r)
 		return

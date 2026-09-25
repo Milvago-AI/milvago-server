@@ -133,7 +133,7 @@ func (a *App) downloadInstaller(w http.ResponseWriter, r *http.Request, tx pgx.T
 	if err != nil {
 		return apiError{503, "installer_build_failed", "The installer could not be prepared. Verify the server package builder configuration."}
 	}
-	file, err := os.Open(result)
+	file, err := openConfined(result)
 	if err != nil {
 		return err
 	}
@@ -164,18 +164,48 @@ func (a *App) downloadInstaller(w http.ResponseWriter, r *http.Request, tx pgx.T
 	http.ServeContent(w, r, name, info.ModTime(), file)
 	return nil
 }
+// The installer files live in the release directory or in this request's own temporary
+// directory. They are opened through an os.Root on their parent, so the last component
+// can never resolve through a link out of it.
+func openConfined(path string) (*os.File, error) {
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return root.Open(filepath.Base(path))
+}
+
+func createConfined(path string, mode os.FileMode) (*os.File, error) {
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return root.OpenFile(filepath.Base(path), os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
+}
+
+func readConfined(path string) ([]byte, error) {
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return root.ReadFile(filepath.Base(path))
+}
+
 func copyInstallerFile(source, target string) error {
 	_, _, err := copyInstallerFileAndHash(source, target, installerBundleLimit)
 	return err
 }
 
 func copyInstallerFileAndHash(source, target string, limit int64) (int64, string, error) {
-	input, err := os.Open(source)
+	input, err := openConfined(source)
 	if err != nil {
 		return 0, "", err
 	}
 	defer input.Close()
-	output, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	output, err := createConfined(target, 0600)
 	if err != nil {
 		return 0, "", err
 	}
@@ -195,11 +225,18 @@ func copyInstallerFileAndHash(source, target string, limit int64) (int64, string
 	return n, hex.EncodeToString(digest.Sum(nil)), nil
 }
 func extractInstallerPayload(source, target string) error {
-	file, err := os.Open(source)
+	file, err := openConfined(source)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
+	// Everything is written through an os.Root on the target: on top of the name checks
+	// below, no entry can land outside it.
+	destination, err := os.OpenRoot(target)
+	if err != nil {
+		return err
+	}
+	defer destination.Close()
 	reader, err := gzip.NewReader(file)
 	if err != nil {
 		return err
@@ -225,10 +262,9 @@ func extractInstallerPayload(source, target string) error {
 		if count > 1000 || name == "" || strings.HasPrefix(name, "/") || filepath.IsAbs(name) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || strings.ContainsAny(name, "\\:\x00") {
 			return fmt.Errorf("unsafe installer payload")
 		}
-		path := filepath.Join(target, clean)
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err = os.MkdirAll(path, 0700); err != nil {
+			if err = destination.MkdirAll(clean, 0700); err != nil {
 				return err
 			}
 		case tar.TypeReg:
@@ -236,14 +272,14 @@ func extractInstallerPayload(source, target string) error {
 			if header.Size < 0 || total > installerBundleLimit {
 				return fmt.Errorf("installer payload exceeds limit")
 			}
-			if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			if err = destination.MkdirAll(filepath.Dir(clean), 0700); err != nil {
 				return err
 			}
 			mode := os.FileMode(0644)
 			if header.Mode&0111 != 0 {
 				mode = 0755
 			}
-			output, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
+			output, err := destination.OpenFile(clean, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
 			if err != nil {
 				return err
 			}
@@ -275,7 +311,7 @@ func validateInstallerPayload(payload, edition string) error {
 		if err != nil || !info.Mode().IsRegular() || info.Mode()&0111 == 0 {
 			return fmt.Errorf("invalid installer executable: %s", name)
 		}
-		file, err := os.Open(path)
+		file, err := openConfined(path)
 		if err != nil {
 			return err
 		}
@@ -307,7 +343,7 @@ func validateInstallerPayload(payload, edition string) error {
 	if err != nil || !info.Mode().IsRegular() {
 		return fmt.Errorf("invalid installer extension identity")
 	}
-	id, err := os.ReadFile(extensionID)
+	id, err := readConfined(extensionID)
 	if err != nil || len(strings.TrimSpace(string(id))) != 32 {
 		return fmt.Errorf("invalid installer extension identity")
 	}

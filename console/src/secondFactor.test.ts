@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { ApiError } from './api';
-import { browser, resumeSecondFactor, verifySecondFactor } from './secondFactor';
+import { browser, resumeSecondFactor, sameOriginTarget, verifySecondFactor } from './secondFactor';
 
 const KEY = 'milvago.second-factor-retry';
 const refused = new ApiError(403, 'fresh_mfa_required', 'Authenticate again.');
@@ -30,6 +30,15 @@ it('never holds a body that carries a secret, but still goes to the verification
 });
 
 const scope = { org: '11111111-1111-4111-8111-111111111111', user: '22222222-2222-4222-8222-222222222222' };
+
+// Leaving the page is the one place a crafted destination could send the person elsewhere.
+it('follows only a same-origin path', () => {
+  const target = sameOriginTarget('/auth/login?mfa=1&lang=fr#top');
+  expect(target && target.pathname + target.search + target.hash).toBe('/auth/login?mfa=1&lang=fr#top');
+  for (const hostile of ['https://evil.example/x', '//evil.example/x', 'javascript:alert(1)', 'java\nscript:alert(1)', 'data:text/html,x', '']) {
+    expect(sameOriginTarget(hostile)).toBeNull();
+  }
+});
 
 // The verification signs in again and can land in another organization: a purge asked
 // in a child organization must not run in the root one, nor for another person.

@@ -11,13 +11,13 @@ Direct modules: the `require` entries in `server/go.mod` without `// indirect`.
 
 | Module | Version | License |
 |---|---|---|
-| github.com/coreos/go-oidc/v3 | v3.14.1 | Apache-2.0 |
+| github.com/coreos/go-oidc/v3 | v3.15.0 | Apache-2.0 |
 | github.com/go-jose/go-jose/v4 | v4.1.4 | Apache-2.0 |
 | github.com/google/rpmpack | v0.7.1 | Apache-2.0 |
 | github.com/jackc/pgx/v5 | v5.9.2 | MIT |
 | github.com/prometheus/client_golang | v1.23.2 | Apache-2.0 |
 | github.com/prometheus/client_model | v0.6.2 | Apache-2.0 |
-| golang.org/x/crypto | v0.55.0 | BSD-3-Clause |
+| golang.org/x/crypto | v0.56.0 | BSD-3-Clause |
 | golang.org/x/oauth2 | v0.30.0 | BSD-3-Clause |
 
 ## Console (`console/`)

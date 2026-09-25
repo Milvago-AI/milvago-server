@@ -92,12 +92,19 @@ func installerBundleDigest(platform string, cache *App) (InstallerBundle, string
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return unavailable()
 	}
-	manifest := filepath.Join(directory, Edition+"-"+platform+".json")
-	info, err = os.Lstat(manifest)
+	// Every read below goes through an os.Root on the release directory: no name, `..`
+	// or link can resolve outside it.
+	root, err := os.OpenRoot(directory)
+	if err != nil {
+		return unavailable()
+	}
+	defer root.Close()
+	manifest := Edition + "-" + platform + ".json"
+	info, err = root.Lstat(manifest)
 	if err != nil || !info.Mode().IsRegular() || info.Size() > 65536 {
 		return unavailable()
 	}
-	file, err := os.Open(manifest)
+	file, err := root.Open(manifest)
 	if err != nil {
 		return unavailable()
 	}
@@ -119,11 +126,11 @@ func installerBundleDigest(platform string, cache *App) (InstallerBundle, string
 		return unavailable()
 	}
 	path := filepath.Join(directory, bundle.Artifact)
-	before, err := os.Lstat(path)
+	before, err := root.Lstat(bundle.Artifact)
 	if err != nil || !before.Mode().IsRegular() || before.Size() != bundle.Size {
 		return unavailable()
 	}
-	artifact, err := os.Open(path)
+	artifact, err := root.Open(bundle.Artifact)
 	if err != nil {
 		return unavailable()
 	}
@@ -143,7 +150,7 @@ func installerBundleDigest(platform string, cache *App) (InstallerBundle, string
 			return unavailable()
 		}
 	}
-	after, err := os.Lstat(path)
+	after, err := root.Lstat(bundle.Artifact)
 	if err != nil || !after.Mode().IsRegular() || !os.SameFile(before, after) || after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) {
 		return unavailable()
 	}

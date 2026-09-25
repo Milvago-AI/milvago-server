@@ -35,7 +35,7 @@ type cfbFile struct {
 }
 
 func setMSIBinaryStream(source, target, binaryName string, data []byte) error {
-	raw, err := os.ReadFile(source)
+	raw, err := readConfined(source)
 	if err != nil {
 		return err
 	}

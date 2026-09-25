@@ -58,6 +58,16 @@ func (a *App) updatesAvailable() bool {
 	info, e := os.Stat(directory)
 	return e == nil && info.IsDir()
 }
+
+// installerRoot confines every read of the release files to MILVAGO_INSTALLER_DIRECTORY:
+// the os.Root refuses `..`, absolute names and links that would leave it.
+func installerRoot() (*os.Root, error) {
+	directory := os.Getenv("MILVAGO_INSTALLER_DIRECTORY")
+	if directory == "" {
+		return nil, os.ErrNotExist
+	}
+	return os.OpenRoot(directory)
+}
 func versionNewer(v, current string) bool {
 	if !versionPattern.MatchString(current) {
 		return true
@@ -81,15 +91,20 @@ func (a *App) readUpdateManifest(edition, platform string) (signedEnvelope, Upda
 	if !slices.Contains([]string{"community", "commercial"}, edition) || !slices.Contains([]string{"windows", "linux"}, platform) {
 		return env, m, os.ErrNotExist
 	}
-	path := filepath.Join(os.Getenv("MILVAGO_INSTALLER_DIRECTORY"), edition+"-"+platform+"-update.json")
-	info, e := os.Lstat(path)
+	root, e := installerRoot()
+	if e != nil {
+		return env, m, e
+	}
+	defer root.Close()
+	name := edition + "-" + platform + "-update.json"
+	info, e := root.Lstat(name)
 	if e != nil {
 		return env, m, e
 	}
 	if !info.Mode().IsRegular() || info.Size() > 65536 {
 		return env, m, errors.New("invalid release manifest file")
 	}
-	raw, e := os.ReadFile(path)
+	raw, e := root.ReadFile(name)
 	if e != nil {
 		return env, m, e
 	}
@@ -222,7 +237,13 @@ func (a *App) updateAnchor(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(204)
 		return
 	}
-	raw, err := os.ReadFile(filepath.Join(os.Getenv("MILVAGO_INSTALLER_DIRECTORY"), "anchor.json"))
+	root, err := installerRoot()
+	if err != nil {
+		w.WriteHeader(204)
+		return
+	}
+	raw, err := root.ReadFile("anchor.json")
+	root.Close()
 	if err != nil || len(raw) > 8192 {
 		w.WriteHeader(204)
 		return
@@ -311,7 +332,7 @@ func (a *App) updateArtifact(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, apiError{503, "artifact_invalid", msgReleaseArtifactUnverified})
 		return
 	}
-	verified, e := os.Open(snapshot)
+	verified, e := openConfined(snapshot)
 	if e != nil {
 		a.fail(w, apiError{503, "artifact_invalid", msgReleaseArtifactUnverified})
 		return
