@@ -272,7 +272,7 @@ func (a *App) bootstrapLoginAccount(ctx context.Context, tx pgx.Tx, org, user, k
 	return user, nil
 }
 
-func (a *App) establishLoginAccount(ctx context.Context, tx pgx.Tx, id *oidc.IDToken, claims loginClaims, kind string) (string, string, error) {
+func (a *App) loadLoginUser(ctx context.Context, tx pgx.Tx, id *oidc.IDToken, claims loginClaims, kind string) (string, string, error) {
 	var org, bootstrapEmail string
 	var consumed bool
 	if e := tx.QueryRow(ctx, "SELECT organization_id,bootstrap_email,bootstrap_consumed FROM app_config WHERE singleton FOR UPDATE").Scan(&org, &bootstrapEmail, &consumed); e != nil {
@@ -296,6 +296,14 @@ func (a *App) establishLoginAccount(ctx context.Context, tx pgx.Tx, id *oidc.IDT
 	}
 	if user == "" {
 		return "", "", apiError{403, "membership_required", "Your account has no organization membership."}
+	}
+	return user, org, nil
+}
+
+func (a *App) establishLoginAccount(ctx context.Context, tx pgx.Tx, id *oidc.IDToken, claims loginClaims, kind string) (string, string, error) {
+	user, org, e := a.loadLoginUser(ctx, tx, id, claims, kind)
+	if e != nil {
+		return "", "", e
 	}
 	var identityType string
 	if e := tx.QueryRow(ctx, "UPDATE users SET email=$1,display_name=$2,identity_type=COALESCE(NULLIF($3,''),identity_type) WHERE id=$4 RETURNING identity_type", claims.Email, claims.Name, kind, user).Scan(&identityType); e != nil {

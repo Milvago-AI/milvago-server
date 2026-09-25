@@ -171,7 +171,7 @@ func (r cfbReader) read(start uint32) ([]byte, error) {
 	return out, nil
 }
 
-func (r cfbReader) readFAT() ([]uint32, error) {
+func (r cfbReader) readFATSectors() ([]uint32, error) {
 	le := binary.LittleEndian
 	perSector := r.size / 4
 	var fatSectors []uint32
@@ -194,6 +194,16 @@ func (r cfbReader) readFAT() ([]uint32, error) {
 			}
 		}
 		next = le.Uint32(sector[r.size-4:])
+	}
+	return fatSectors, nil
+}
+
+func (r cfbReader) readFAT() ([]uint32, error) {
+	le := binary.LittleEndian
+	perSector := r.size / 4
+	fatSectors, e := r.readFATSectors()
+	if e != nil {
+		return nil, e
 	}
 	if uint32(len(fatSectors)) != le.Uint32(r.raw[44:]) {
 		return nil, fmt.Errorf("FAT sector count mismatch")
@@ -337,6 +347,34 @@ type cfbWriter struct {
 	out                                     []byte
 }
 
+func (b *cfbWriter) prepareEntryStream(i int) {
+	le := binary.LittleEndian
+	data, ok := b.file.streams[i]
+	switch {
+	case !ok:
+	case len(data) == 0:
+		le.PutUint32(b.entries[i][116:], cfbEndOfChain)
+	case len(data) < cfbMiniCutoff:
+		first := len(b.mini) / cfbMiniSize
+		n := cfbCeil(len(data), cfbMiniSize)
+		for j := 0; j < n; j++ {
+			next := uint32(first + j + 1)
+			if j == n-1 {
+				next = cfbEndOfChain
+			}
+			b.miniFAT = append(b.miniFAT, next)
+		}
+		b.mini = append(b.mini, data...)
+		b.mini = append(b.mini, make([]byte, n*cfbMiniSize-len(data))...)
+		le.PutUint32(b.entries[i][116:], uint32(first))
+	default:
+		b.large = append(b.large, i)
+	}
+	if ok {
+		le.PutUint64(b.entries[i][120:], uint64(len(data)))
+	}
+}
+
 func (b *cfbWriter) prepareEntries() {
 	le := binary.LittleEndian
 	b.entries = make([][]byte, len(b.file.entries))
@@ -350,32 +388,8 @@ func (b *cfbWriter) prepareEntries() {
 		}
 		b.entries = append(b.entries, empty)
 	}
-	// Small streams share the mini stream; large streams have dedicated sectors.
 	for i := range b.entries {
-		data, ok := b.file.streams[i]
-		switch {
-		case !ok:
-		case len(data) == 0:
-			le.PutUint32(b.entries[i][116:], cfbEndOfChain)
-		case len(data) < cfbMiniCutoff:
-			first := len(b.mini) / cfbMiniSize
-			n := cfbCeil(len(data), cfbMiniSize)
-			for j := 0; j < n; j++ {
-				next := uint32(first + j + 1)
-				if j == n-1 {
-					next = cfbEndOfChain
-				}
-				b.miniFAT = append(b.miniFAT, next)
-			}
-			b.mini = append(b.mini, data...)
-			b.mini = append(b.mini, make([]byte, n*cfbMiniSize-len(data))...)
-			le.PutUint32(b.entries[i][116:], uint32(first))
-		default:
-			b.large = append(b.large, i)
-		}
-		if ok {
-			le.PutUint64(b.entries[i][120:], uint64(len(data)))
-		}
+		b.prepareEntryStream(i)
 	}
 }
 

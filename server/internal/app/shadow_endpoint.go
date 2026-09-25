@@ -281,6 +281,16 @@ func validateEventContent(v *V2Event) error {
 	if !validEventBodyKind(v) {
 		return bad("Content does not match the event kind or exceeds 32 KiB.")
 	}
+	if e := validateEventFiles(v); e != nil {
+		return e
+	}
+	if v.User != "" && !validOSUser(v.User) {
+		return bad("Invalid collected profile.")
+	}
+	return nil
+}
+
+func validateEventFiles(v *V2Event) error {
 	if len(v.Files) > 20 || (len(v.Files) > 0 && v.Kind != "prompt") {
 		return bad("File names are limited to 20 entries on a request.")
 	}
@@ -288,9 +298,6 @@ func validateEventContent(v *V2Event) error {
 		if !validEventFileName(name) {
 			return bad("Invalid file name.")
 		}
-	}
-	if v.User != "" && !validOSUser(v.User) {
-		return bad("Invalid collected profile.")
 	}
 	return nil
 }
