@@ -1,0 +1,180 @@
+/* Shadow AI module — Journal, filters, event drawer, administration.
+   Uses the shared tokens from styles.css (--surface, --border, --text, --radius-s/m…). */
+
+/* ---------- Filters (Journal) ---------- */
+.shadow-filter-panel{display:flex;flex-direction:column;gap:14px}
+.shadow-filter-top{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.shadow-filter-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;border-top:1px solid var(--border);padding-top:16px;margin-top:4px}
+.shadow-filter-submit{display:flex;gap:10px;align-items:flex-end;justify-content:flex-end;grid-column:1/-1}
+
+/* ---------- Saved filters ---------- */
+.saved-filter-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px;padding-top:16px;border-top:1px solid var(--border)}
+.saved-filter-row label{min-width:220px}
+.saved-filter-manage{margin-top:16px}
+.saved-filter-manage>div{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:12px 0;border-top:1px solid var(--border);font-size:13px}
+
+/* ---------- Export control ---------- */
+.export-control{display:flex;gap:8px;align-items:center;position:relative}
+.export-control select{width:96px}
+.export-control>.notice{position:absolute;right:0;top:44px;min-width:280px;z-index:5;box-shadow:var(--shadow)}
+
+/* ---------- Event drawer content ---------- */
+.event-content h3{font-size:14px;font-weight:600;margin-bottom:10px}
+.event-content pre{white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--mono);font-size:12px;line-height:1.7;max-height:340px;overflow:auto;padding:12px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-s)}
+.event-content section+section{margin-top:16px}
+.shadow-spaced{margin-top:16px;margin-bottom:16px}
+
+/* ---------- Administration shell ---------- */
+/* The page title is a PageBar, like every other page, so .shadow-admin has no heading
+   of its own to space out any more. */
+.shadow-admin .notice .button{flex-shrink:0}
+
+/* ---------- AI platforms (05) ---------- */
+.platform-admin{display:flex;flex-direction:column;gap:16px}
+.platform-discovery{display:flex;flex-direction:column;gap:12px;padding-bottom:16px;border-bottom:1px solid var(--border)}
+.platform-discovery textarea{font:inherit;font-size:13px;line-height:1.6;resize:vertical;min-height:64px;width:100%;border:1px solid var(--border-strong);background:var(--surface);color:var(--text);border-radius:var(--radius-s);padding:10px 12px}
+.platform-toolbar{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.platform-search{flex:1;min-width:220px;max-width:360px}
+.platform-toolbar>.muted{font-size:12px;color:var(--text-2);margin:0}
+.platform-group+.platform-group{margin-top:20px}
+.platform-group>h3{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:var(--text-2);margin:0 0 10px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+.platform-count{font-family:var(--mono);font-size:11px;font-weight:500;color:var(--text-3)}
+.platform-group>ul{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 24px}
+.platform-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 8px;border-radius:var(--radius-s);min-width:0}
+.platform-row:hover{background:var(--surface-2)}
+.platform-row>.checkbox-label{align-items:flex-start;min-width:0}
+.platform-row strong{display:block;font-size:13px;font-weight:500}
+.platform-row small{display:block;font-size:11px;color:var(--text-3);overflow-wrap:anywhere}
+/* Hidden platforms stay listed and stay legible: this screen is where they are found
+   again, so they are dimmed, never removed. */
+.platform-row.muted-platform strong,.platform-row.muted-platform small{color:var(--text-3)}
+@media (max-width:900px){.platform-group>ul{grid-template-columns:minmax(0,1fr)}}
+
+/* ---------- Configuration form ---------- */
+.shadow-settings-layout{display:grid;grid-template-columns:200px minmax(0,1fr);gap:24px;align-items:start}
+.shadow-config fieldset{display:flex;flex-direction:column}
+.config-block{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.6fr);gap:24px;border-top:1px solid var(--border);padding:24px 0}
+.config-block:first-child{border-top:0;padding-top:0}
+.config-block>div>h3{font-size:15px;font-weight:600;margin-bottom:8px}
+.config-block>div>p{font-size:13px;color:var(--text-2);line-height:1.6;max-width:360px;margin-bottom:0}
+.config-block-fields{display:flex;flex-direction:column;gap:20px;min-width:0}
+.config-block-fields>p{font-size:13px;margin-bottom:0}
+.config-block-fields:disabled{opacity:.55}
+.config-block-fields textarea,.shadow-config textarea{font:inherit;font-size:13px;line-height:1.6;resize:vertical;min-height:80px;max-height:400px;width:100%;border:1px solid var(--border-strong);background:var(--surface);color:var(--text);border-radius:var(--radius-s);padding:10px 12px}
+.config-block-fields input[type=number]{max-width:160px}
+.config-toggle>.field-help{margin:6px 0 0 26px;max-width:560px}
+.config-inline{display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap}
+.config-inline>label{flex:1;min-width:120px}
+.config-inline>.config-toggle{padding-bottom:10px}
+.config-inline>.button{margin-left:auto}
+.category-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.capability-note{font-size:12px;padding:10px 12px;border:1px dashed var(--border-strong);border-radius:var(--radius-s);background:var(--surface-2);color:var(--text-2);margin:0}
+
+/* ---------- Services ---------- */
+.service-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.service-card{border:1px solid var(--border);border-radius:var(--radius-m);padding:16px;display:flex;flex-direction:column;gap:16px}
+.service-card-heading{display:flex;flex-direction:column;gap:8px}
+.service-card-heading .checkbox-label{font-weight:600;font-size:13px}
+.service-card-heading>.mono{font-size:12px;line-height:1.6;color:var(--text-2);overflow-wrap:anywhere}
+.service-card label{font-size:13px}
+.service-card input,.service-card select{font-size:13px}
+
+/* ---------- Custom masking rules ---------- */
+.custom-rule-list{display:flex;flex-direction:column;gap:16px}
+.custom-rule{border:1px solid var(--border);border-radius:var(--radius-m);padding:16px;display:flex;flex-direction:column;gap:16px}
+
+/* ---------- Model access control ---------- */
+.model-access-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.model-access-card{border:1px solid var(--border);border-radius:var(--radius-m);padding:16px;display:flex;flex-direction:column;gap:14px}
+.model-access-card h4{font-size:14px;font-weight:600;margin:0 0 2px}
+.model-access-card>div>p{font-size:12px;color:var(--text-2);margin:0}
+.model-warning{font-size:12px;color:var(--warning)}
+.model-status{border-top:1px solid var(--border);padding-top:20px;margin-top:20px}
+.model-status h3{font-size:15px;font-weight:600;margin-bottom:4px}
+.model-status>p{font-size:13px;color:var(--text-2);margin:0 0 16px}
+
+/* ---------- Inheritance / save bar / operations ---------- */
+.inheritance-controls{display:flex;gap:20px;flex-wrap:wrap;border:1px solid var(--border);border-radius:var(--radius-s);padding:14px 16px;margin-bottom:16px;background:var(--surface-2)}
+.inheritance-controls small{display:block;font-size:12px;color:var(--text-2);margin-top:4px}
+.config-save-bar{position:sticky;bottom:12px;display:flex;align-items:center;justify-content:flex-end;gap:12px;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--surface);padding:12px 16px;margin-top:8px;box-shadow:var(--shadow);z-index:2}
+.config-save-bar p{font-size:12px;color:var(--text-2);margin:0 auto 0 0;max-width:320px}
+.content-purge{margin-top:20px}
+.content-purge h3{font-size:16px;margin-bottom:8px}
+.content-purge>p{font-size:13px;color:var(--text-2);max-width:650px}
+
+/* ---------- Responsive ---------- */
+@media(max-width:900px){
+  .shadow-settings-layout{grid-template-columns:1fr}
+}
+@media(max-width:1100px){
+  .shadow-filter-fields{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .config-block{grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:20px}
+  .service-list,.model-access-list{grid-template-columns:1fr}
+  .config-save-bar{flex-wrap:wrap}
+  .config-save-bar p{flex-basis:100%;max-width:none}
+}
+@media(max-width:580px){
+  .shadow-filter-top{gap:8px}
+  .shadow-filter-top>.button{flex:1}
+  .shadow-filter-fields{grid-template-columns:1fr;gap:12px}
+  .shadow-filter-submit{justify-content:stretch}
+  .shadow-filter-submit>.button{flex:1}
+  .saved-filter-row{flex-wrap:wrap}
+  .saved-filter-row label{min-width:0;flex:1}
+  .saved-filter-manage>div{flex-wrap:wrap}
+  .saved-filter-manage>div>span{flex-basis:100%}
+  .export-control{flex-wrap:wrap}
+  .export-control>.notice{min-width:0;right:0}
+  .config-block{grid-template-columns:1fr;gap:16px}
+  .config-block>div>p{max-width:none}
+  .service-list,.model-access-list{grid-template-columns:1fr}
+  .config-save-bar{flex-direction:column;align-items:stretch}
+  .config-save-bar>.button{width:100%}
+  .inheritance-controls{flex-direction:column}
+  .content-purge>.button{width:100%}
+}
+/* Conversation thread. The full screen dialog owns the scrolling: the summary
+   stays put and only the messages move, so a long exchange never pushes the
+   person and the device it belongs to off the screen. */
+/* A list of conversations opens on a row click. The cell button keeps a real
+   focus target and a real accessible name; the row handler only serves the mouse. */
+.conversation-row{cursor:pointer}
+.conversation-row:hover{background:var(--surface-2)}
+.row-open{background:none;border:0;padding:0;margin:0;font:inherit;color:inherit;text-align:left;cursor:pointer}
+.thread-shell{display:flex;flex-direction:column;min-height:0;flex:1 1 auto;overflow:hidden}
+.thread-summary{flex:0 0 auto;padding:16px 20px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:12px}
+.thread-summary .dl{margin:0}
+.thread-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:12px}
+/* The shared .dialog-actions carries margin:20px -20px -20px, which assumes a body
+   with 20px padding around it. The thread shell has none, so that negative margin
+   pushed the bar outside the dialog and overflow:hidden clipped the close button. */
+.thread-shell>.dialog-actions{margin:0;flex:0 0 auto}
+.thread-earlier{display:flex;justify-content:center}
+.thread-nav{margin:0;text-align:center}
+.thread-nav button{background:none;border:0;padding:4px 8px;font:inherit;font-size:12px;color:var(--text-3);cursor:pointer}
+.thread-nav button:hover{color:var(--text-2)}
+.thread-row{display:flex}
+.thread-row.prompt{justify-content:flex-end}
+.thread-row.response{justify-content:flex-start}
+.bubble{max-width:min(680px,85%);border:1px solid var(--border);border-radius:var(--radius-m);padding:10px 12px;background:var(--surface-2);display:flex;flex-direction:column;gap:6px}
+.thread-row.prompt .bubble{background:var(--accent-bg);border-color:var(--accent)}
+.bubble.blocked{border-color:var(--danger)}
+.bubble pre{margin:0;font:inherit;white-space:pre-wrap;overflow-wrap:anywhere}
+.bubble-refusal{margin:0;font-size:12px;color:var(--danger)}
+/* Les fichiers joints, sous le message qu'ils accompagnent. Le nom doit rester lisible
+   en entier tant qu'il tient, et se couper par la fin sinon : un nom tronqué au milieu
+   d'une bulle étroite ne désigne plus rien. */
+.bubble-files{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px}
+.bubble-file{display:flex;align-items:center;gap:6px;min-width:0;padding:4px 8px;border:1px solid var(--border-strong);border-radius:var(--radius-s);background:var(--surface);font-size:12px;color:var(--text-2)}
+.bubble-file svg{flex:0 0 auto;color:var(--text-3)}
+.bubble-file span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* A tag, not a bubble: there is no text to show, and the reason is part of the
+   label so the reader is never left guessing which of the three refusals it is. */
+.bubble-tag{align-self:flex-start;background:none;border:1px dashed var(--border-strong);border-radius:var(--radius-s);padding:4px 8px;font:inherit;font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--text-3);cursor:pointer;text-align:left}
+.bubble-tag:hover{color:var(--text-2);border-color:var(--text-3)}
+.bubble-meta{margin:0;display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px;color:var(--text-3)}
+.bubble-meta .icon-button{margin-left:auto}
+@media (max-width:600px){
+  .bubble{max-width:92%}
+  .thread-summary,.thread-scroll{padding:12px 16px}
+}

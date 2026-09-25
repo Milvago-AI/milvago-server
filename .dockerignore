@@ -1,0 +1,16 @@
+.local
+.env
+.npm-cache
+**/node_modules
+**/target
+**/dist
+**/.cache
+**/*.log
+**/*.key
+**/*.pem
+**/*.exe
+**/*.msi
+**/*.deb
+**/*.rpm
+
+jwtfirefox.md

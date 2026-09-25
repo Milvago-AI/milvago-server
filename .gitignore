@@ -1,0 +1,20 @@
+# Configuration locale et secrets : écrits par scripts/local-init.mjs, jamais versionnés.
+.local/
+.env
+
+# Dépendances et sorties de construction.
+node_modules/
+dist/
+.cache/
+coverage/
+
+# Rien de tout cela n'a sa place dans un dépôt public.
+*.log
+*.pem
+*.key
+*.exe
+*.msi
+*.deb
+*.rpm
+
+.DS_Store

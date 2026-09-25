@@ -1,0 +1,14 @@
+Milvago Community — server
+Copyright (c) 2026 Milvago AI, LLC
+
+Milvago AI, LLC is the copyright holder and licensor of this repository.
+
+- Backend server (single organization) and console frontend: AGPL-3.0-or-later.
+  Full text: LICENSE. See LICENSING.md.
+
+"Milvago" and the Milvago logo are trademarks of Milvago AI, LLC.
+
+The endpoint agent and its browser extension (Apache-2.0) are distributed in their own
+repository. The Enterprise modules are proprietary and are not part of this repository.
+
+Third-party dependencies retain their own licenses; see THIRD-PARTY.md.

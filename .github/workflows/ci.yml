@@ -1,0 +1,64 @@
+# Ce fichier est la preuve permanente que l'arbre publié se construit seul : il ne
+# connaît que ce dépôt, sans monorepo, sans registre interne et sans secret.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # Décision du 2026-09-22 : toute image livrée est distroless. La dernière étape de chaque
+  # Dockerfile — celle qui sort — part d'une base gcr.io/distroless épinglée par condensé,
+  # ou de scratch ; les étapes de construction et de vérification restent libres.
+  distroless:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: |
+          bad=0
+          for f in $(git ls-files 'Dockerfile' '*/Dockerfile' '*.Dockerfile'); do
+            last=$(grep -iE '^[[:space:]]*FROM[[:space:]]' "$f" | tail -n 1)
+            case "$last" in
+              *distroless/*@sha256:*|*[Ff][Rr][Oo][Mm]\ scratch*) ;;
+              *) echo "::error file=$f::image livree non distroless : $last"; bad=1;;
+            esac
+          done
+          exit $bad
+
+  console:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22.23.2'
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+      - run: npm ci
+        working-directory: console
+      - run: npm test
+        working-directory: console
+      - run: npm run build
+        working-directory: console
+
+  server:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      # Sans tag de compilation : c'est l'édition Community qui est construite et testée.
+      - run: go test ./...
+        working-directory: server
+      # Décision du 2026-09-24 : Trivy ne voit que l'image finale ; govulncheck lit les chemins
+      # d'appel réels du code source. Un code de sortie non nul bloque le job.
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+        working-directory: server
+      - run: go build -trimpath ./cmd/milvago
+        working-directory: server

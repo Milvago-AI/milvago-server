@@ -1,0 +1,155 @@
+/* Cartography — ribbons (SVG) and logo tiles (HTML) share one pixel coordinate system
+   inside .fd-canvas, framed by two collapsible facet rails. Tokens only, brand colours
+   excepted (they are inherently hard-coded per vendor). --accent never paints text. */
+.fd-layout{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start}
+.fd-main{min-width:0;display:flex;flex-direction:column}
+.fd-main>.empty{margin:20px}
+.fd-visual{display:flex;flex-direction:column;gap:12px;padding:16px 20px 20px}
+.fd-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.fd-toolbar p{margin:0;font-size:12px;color:var(--text-2)}
+/* flow.css is bundled BEFORE styles.css (App is imported ahead of the stylesheet in
+   main.tsx), so any rule that must beat a `.button` / `input` rule needs a higher
+   specificity, not a later position. */
+button.fd-rails-toggle{display:none}
+
+/* ---------- Canvas ---------- */
+.fd-scroll{position:relative;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;border-radius:var(--radius-m)}
+.fd-scroll.fd-hidden{display:none}
+fieldset.fd-canvas{margin:0;padding:0;min-inline-size:0;position:relative;border:1px solid var(--border);border-radius:var(--radius-m);background-color:var(--bg);background-image:radial-gradient(circle at 1px 1px,var(--border) 1px,transparent 1px);background-size:24px 24px;overflow:hidden}
+.fd-canvas>svg{position:absolute;inset:0;display:block}
+.fd-ribbons{transition:opacity .5s}
+.fd-ribbon{opacity:.35;transition:opacity .2s;cursor:pointer}
+.fd-ribbon.fade{opacity:.07}
+.fd-ribbon.match{opacity:.6}
+.fd-ribbon.dim{opacity:.05}
+.fd-ribbon.hot{opacity:.85}
+.fd-highlight{opacity:.95;transition:opacity .2s}
+.fd-highlight.dim{opacity:.15}
+.fd-hatch{opacity:.7;transition:opacity .2s}
+.fd-hatch.fade,.fd-hatch.dim{opacity:.08}
+
+.fd-head{position:absolute;top:0;height:40px;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 2px;font-size:11px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:var(--text-3);line-height:1.2}
+.fd-head-count{font-weight:600;letter-spacing:0;text-transform:none;color:var(--text-2);flex-shrink:0}
+
+/* ---------- Tiles ---------- */
+.fd-tiles{position:absolute;inset:0;pointer-events:none}
+.fd-tile{font:inherit;text-align:left;position:absolute;display:flex;align-items:center;gap:8px;padding:6px 8px 8px;border:1px solid var(--border);border-radius:var(--radius-m);background:color-mix(in srgb,var(--surface) 78%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);color:var(--text);cursor:pointer;overflow:hidden;pointer-events:auto;transition:border-color .15s,opacity .2s,box-shadow .15s,transform .35s}
+.fd-tile.compact{padding:4px 8px;gap:6px}
+.fd-tile:hover,.fd-tile.hot{border-color:var(--border-strong)}
+.fd-tile.dim{opacity:.35}
+.fd-tile:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.fd-tile.selected{border-color:var(--accent-border);box-shadow:var(--glow)}
+.fd-tile.unknown{border-style:dashed;background:color-mix(in srgb,var(--surface-2) 60%,transparent)}
+.fd-tile.unknown .fd-name{color:var(--text-2)}
+
+.fd-logo{width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0;letter-spacing:-.3px;object-fit:contain}
+.fd-logo.soft{background:var(--surface-2);color:var(--text-2);border:1px solid var(--border)}
+img.fd-logo{background:var(--surface-2)}
+.fd-tile.compact .fd-logo{font-size:10px;border-radius:4px}
+.fd-text{display:flex;flex-direction:column;min-width:0;line-height:1.25;flex:1}
+.fd-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Badges wrap under the count when the tile is tall enough; a short tile clips them
+   cleanly (overflow hidden on the tile) instead of showing half a glyph. */
+.fd-sub{display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;font-size:11px;color:var(--text-3)}
+.fd-count{white-space:nowrap}
+.fd-blocked{display:inline-flex;align-items:center;gap:3px;padding:0 5px;border:1px solid var(--danger);border-radius:var(--radius-s);color:var(--danger);font-size:10px;line-height:14px;font-weight:600}
+.fd-sensitive{color:var(--warning);display:inline-flex;align-items:center;gap:2px}
+.fd-sensitive svg{width:12px;height:12px}
+.fd-share{position:absolute;left:0;right:0;bottom:0;height:2px;background:var(--border)}
+.fd-share i{display:block;height:100%;opacity:.9}
+
+/* ---------- Tooltip (floating: the one place a shadow is allowed) ---------- */
+.fd-tooltip{position:absolute;left:0;top:0;width:260px;padding:10px 12px;border:1px solid var(--border-strong);border-radius:var(--radius-m);background:var(--elevated);box-shadow:var(--shadow);pointer-events:none;opacity:0;transition:opacity .12s;z-index:3;font-size:12px;color:var(--text)}
+.fd-tooltip.visible{opacity:1}
+/* Title and values clamp to two lines: a 300-character label must not grow the tooltip past the canvas. */
+.fd-tooltip-title{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;font-size:13px;font-weight:600;margin-bottom:6px;overflow-wrap:anywhere}
+.fd-tooltip dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 12px;margin:0}
+.fd-tooltip dt{color:var(--text-3);white-space:nowrap}
+.fd-tooltip dd{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;margin:0;text-align:right;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+
+/* ---------- Vendor legend ---------- */
+.fd-vendors{display:flex;flex-wrap:wrap;gap:6px 16px;margin:0;padding:0;list-style:none;font-size:12px;color:var(--text-2)}
+.fd-vendors li{display:inline-flex;align-items:center;gap:6px;overflow-wrap:anywhere}
+.fd-vendors i{width:10px;height:10px;border-radius:2px;display:inline-block;flex-shrink:0}
+
+/* ---------- Table fallback ---------- */
+.fd-table{display:none}
+.fd-table.fd-visible{display:block}
+.fd-select{border:0;background:transparent;color:var(--text);font:inherit;text-align:left;padding:6px 8px;border-radius:var(--radius-s);margin-left:-8px;max-width:220px;overflow-wrap:anywhere}
+.fd-select[aria-pressed=true]{background:var(--primary);color:var(--on-primary)}
+
+/* ---------- Card head legend and footer ---------- */
+.fd-legend{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--text-2);white-space:nowrap}
+.fd-legend span{display:inline-flex;align-items:center;gap:6px}
+.fd-legend i{width:18px;height:10px;display:inline-block;border-radius:2px;flex-shrink:0}
+.fd-legend i.fd-sensitive-swatch{border:1px solid var(--warning);background:repeating-linear-gradient(135deg,transparent 0 3px,var(--warning) 3px 4px)}
+.fd-legend i.fd-unknown-swatch{border:1px dashed var(--border-strong)}
+.fd-selection{display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:1;min-width:0}
+.fd-chips{display:flex;gap:6px;flex-wrap:wrap;min-width:0}
+/* A chip never exceeds the footer: its label truncates with an ellipsis (full text in the title). */
+.fd-chip{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:var(--radius-s);font-size:12px;font-weight:500;background:var(--surface-2);color:var(--text-2);border:1px solid var(--border);min-width:0;max-width:100%}
+.fd-chip>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fd-chip svg{width:12px;height:12px;flex-shrink:0}
+.fd-hide-people{white-space:nowrap}
+
+/* ---------- Facet rails ---------- */
+.fd-rail{position:relative;width:176px;padding:14px 12px;display:flex;flex-direction:column;gap:10px;border-right:1px solid var(--border);align-self:stretch}
+.fd-rail.right{border-right:0;border-left:1px solid var(--border)}
+.fd-rail.collapsed{width:36px;padding:12px 0;align-items:center}
+.fd-rail-toggle{align-self:flex-end}
+.fd-rail.right .fd-rail-toggle{align-self:flex-start}
+.fd-rail.collapsed .fd-rail-toggle{align-self:center}
+.fd-rail-toggle svg{transition:transform .2s}
+.fd-rail.left .fd-rail-toggle svg{transform:rotate(180deg)}
+.fd-rail.left.collapsed .fd-rail-toggle svg{transform:none}
+.fd-rail.right.collapsed .fd-rail-toggle svg{transform:rotate(180deg)}
+.fd-rail-icons{display:none;flex-direction:column;gap:14px;color:var(--text-3);padding-top:6px}
+.fd-rail.collapsed .fd-rail-icons{display:flex}
+.fd-rail-body{display:flex;flex-direction:column;gap:20px;min-width:0}
+.fd-rail.collapsed .fd-rail-body{display:none}
+
+.fd-facet{display:flex;flex-direction:column;gap:8px;min-width:0}
+.fd-facet legend{display:flex;justify-content:space-between;align-items:baseline;gap:8px;width:100%;padding:0;margin-bottom:8px;font-size:11px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:var(--text-3);line-height:1.3}
+.fd-facet-count{font-weight:600;letter-spacing:0;text-transform:none;color:var(--text-2);flex-shrink:0}
+.fd-facet-tools{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.fd-facet-tools input[type=search][aria-label]{height:30px;font-size:12px;flex:1 1 100%}
+.fd-facet-tools .button.small.small{height:24px;min-height:24px;padding:0 6px;font-size:11px}
+.fd-facet-list{position:relative;list-style:none;margin:0;padding:0;max-height:320px;overflow:auto;scrollbar-width:thin;display:flex;flex-direction:column;gap:2px}
+.fd-picker-list{max-height:min(50vh,420px)}
+.fd-option{display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;gap:8px;padding:4px;border-radius:var(--radius-s);font-size:12px;font-weight:500;cursor:pointer;min-width:0}
+.fd-option:hover{background:var(--surface-2)}
+.fd-option input{flex-shrink:0;margin:0}
+.fd-option-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fd-option-count{color:var(--text-3);flex-shrink:0}
+.fd-option-tag{flex-shrink:0;padding:1px 5px;border:1px solid var(--border);border-radius:var(--radius-s);font-size:9px;font-weight:600;letter-spacing:.3px;text-transform:uppercase;color:var(--text-3)}
+.fd-waiting{flex:0 0 100%;padding-left:36px;font-size:10px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:var(--text-3)}
+li.waiting .fd-option{opacity:.55}
+.fd-dot{width:14px;height:14px;border-radius:3px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff;font-style:normal}
+.fd-dot.soft{background:var(--surface-2);border:1px solid var(--border);color:var(--text-2)}
+.fd-facet-empty{margin:0}
+
+/* ---------- Responsive ---------- */
+@media(max-width:1100px){
+  /* align-items:stretch is required: the grid's start alignment would otherwise let
+     .fd-main shrink-wrap its table and overflow the card instead of scrolling. */
+  .fd-layout{display:flex;flex-direction:column;align-items:stretch}
+  .fd-layout .fd-rail,.fd-layout .fd-rail.collapsed{display:none;width:auto;padding:16px 20px;border:0;border-bottom:1px solid var(--border);order:1;align-items:stretch}
+  .fd-layout.rails-open .fd-rail{display:block}
+  .fd-layout.rails-open .fd-rail .fd-rail-body{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+  .fd-rail .fd-rail-toggle,.fd-rail.collapsed .fd-rail-icons{display:none}
+  .fd-main{order:2}
+  button.fd-rails-toggle{display:inline-flex;align-self:flex-start;margin:16px 20px 0}
+}
+@media(max-width:800px){
+  .fd-scroll{display:none!important}
+  .fd-vendors{display:none}
+  .fd-table{display:block!important}
+  .fd-toolbar>button{display:none}
+  /* Below 800px the table is always visible and already scrolls horizontally (.table-scroll);
+     the desktop-only wrap-inside-220px rule for .fd-select would otherwise break domain
+     names mid-word (e.g. "chatgpt.com" -> "chatg/pt.co/m") instead of letting the row scroll. */
+  .fd-select{white-space:nowrap;max-width:none;overflow-wrap:normal}
+}
+@media(max-width:580px){
+  .fd-layout.rails-open .fd-rail .fd-rail-body{grid-template-columns:1fr}
+}

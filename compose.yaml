@@ -1,0 +1,99 @@
+name: ${COMPOSE_PROJECT_NAME:-milvago-community}
+
+# Containers we build: read-only root filesystem, no Linux capability, no privilege
+# gain through setuid binaries. /tmp is a bounded tmpfs, the only place the server
+# writes (installer personalization, update snapshots). Third-party images only get
+# no-new-privileges: their entrypoints need capabilities (chown, setuid) to start.
+x-hardened: &hardened
+  read_only: true
+  tmpfs:
+    - /tmp:size=256m
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+
+services:
+  database:
+    image: postgres:18.3@sha256:7e32e9833a6fb1c92c32552794cb6ed569d51b445a54907d35fc112ef39684db
+    security_opt: [no-new-privileges:true]
+    environment:
+      POSTGRES_PASSWORD: ${DB_ADMIN_PASSWORD:?Run node scripts/local-init.mjs}
+      RUNTIME_PASSWORD: ${DB_RUNTIME_PASSWORD}
+      MIGRATION_PASSWORD: ${DB_MIGRATION_PASSWORD}
+      IDENTITY_DB_PASSWORD: ${IDENTITY_DB_PASSWORD}
+    ports:
+      - "127.0.0.1:${MILVAGO_DATABASE_PORT:-55432}:5432"
+    volumes:
+      - database:/var/lib/postgresql
+      - ./deploy/postgres-init.sh:/docker-entrypoint-initdb.d/10-milvago.sh:ro
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U postgres]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  mail:
+    image: axllent/mailpit:v1.20.3@sha256:762dd66a062738309e43ad8efce733e8db4a73bf6a38e369aeb547aecb897d27
+    security_opt: [no-new-privileges:true]
+    ports:
+      - "127.0.0.1:${MILVAGO_MAIL_PORT:-4081}:8025"
+  identity:
+    image: quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c
+    command: [start-dev, --import-realm]
+    security_opt: [no-new-privileges:true]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://database:5432/milvago_identity
+      KC_DB_USERNAME: milvago_identity
+      KC_DB_PASSWORD: ${IDENTITY_DB_PASSWORD}
+      KC_BOOTSTRAP_ADMIN_USERNAME: bootstrap-admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${IDENTITY_ADMIN_PASSWORD}
+      KC_HOSTNAME: http://localhost:${MILVAGO_IDENTITY_PORT:-4080}
+      KC_HEALTH_ENABLED: "true"
+      # A self-registered MCP client could turn these grants on and obtain tokens with no
+      # redirect URI to check (device-code phishing); Milvago uses none of them.
+      KC_FEATURES_DISABLED: device-flow,ciba,token-exchange-standard
+    ports:
+      - "127.0.0.1:${MILVAGO_IDENTITY_PORT:-4080}:8080"
+    volumes:
+      - ${MILVAGO_REALM_FILE:-./.local/generated/realm.json}:/opt/keycloak/data/import/milvago.json:ro
+      - ./deploy/theme/milvago:/opt/keycloak/themes/milvago:ro
+    depends_on:
+      database:
+        condition: service_healthy
+  application:
+    <<: *hardened
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    ports:
+      - "127.0.0.1:${MILVAGO_APP_PORT:-4020}:4020"
+    environment:
+      MILVAGO_METRICS_TOKEN: ${MILVAGO_METRICS_TOKEN:-}
+      # Shadow AI 24-hour counters are served by default; set to 0/false/off/no to close the route.
+      MILVAGO_SHADOW_METRICS: ${MILVAGO_SHADOW_METRICS:-}
+      APP_URL: http://localhost:${MILVAGO_APP_PORT:-4020}
+      PUBLIC_URL: ${MILVAGO_PUBLIC_URL:-}
+      DATABASE_URL: postgresql://milvago_runtime:${DB_RUNTIME_PASSWORD}@database:5432/milvago
+      MIGRATION_DATABASE_URL: postgresql://milvago_migration:${DB_MIGRATION_PASSWORD}@database:5432/milvago
+      DB_RUNTIME_ROLE: milvago_runtime
+      OIDC_ISSUER: http://localhost:${MILVAGO_IDENTITY_PORT:-4080}/realms/milvago
+      OIDC_INTERNAL_URL: http://identity:8080
+      OIDC_CLIENT_ID: milvago-console
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
+      OIDC_ADMIN_CLIENT_ID: milvago-management
+      OIDC_ADMIN_CLIENT_SECRET: ${OIDC_ADMIN_CLIENT_SECRET}
+      SESSION_KEY: ${SESSION_KEY}
+      CONTENT_KEYS: ${CONTENT_KEYS}
+      POLICY_SIGNING_KEY: ${POLICY_SIGNING_KEY}
+      BOOTSTRAP_EMAIL: ${MILVAGO_BOOTSTRAP_EMAIL:-}
+      MILVAGO_SETUP_TOKEN: ${MILVAGO_SETUP_TOKEN:-}
+      COMMUNITY_ORG_NAME: ${MILVAGO_ORG_NAME:-Milvago}
+      EDITION: community
+    depends_on:
+      database:
+        condition: service_healthy
+      identity:
+        condition: service_started
+volumes:
+  database:
+

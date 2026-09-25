@@ -1,0 +1,586 @@
+/* Milvago console — design system, charte graphique v2.1 (19 septembre 2026).
+   Values mirror brand/tokens/milvago-tokens.css; the console keeps its own token
+   names, which map one to one onto the brand's.
+
+   Dark is the brand's default rendering: it lives on :root and ignores the system
+   setting. Light is the explicit exception, under [data-theme=light].
+
+   --accent is DECORATIVE ONLY (2.75:1 on --surface): rules, borders, glows, the
+   middle stop of --metal. It must never appear in a `color`
+   property — blue text uses --accent-text, blue fills under white text use
+   --accent-solid. --metal is a rule or a bar, never a surface, never behind text
+   and never on the logo. Radii 4/6/10 px, 1 px borders, no shadow on ordinary
+   surfaces. State colours belong to the interface only: red means blocked. */
+:root{
+  --bg:#111722;--surface:#1B2432;--surface-2:#222D3D;--elevated:#2B3749;--border:#344154;--border-strong:#4B5A70;
+  --text:#F4F6FA;--text-2:#B6C0CE;--text-3:#98A7B9;
+  --accent:#2B50FF;--accent-hi:#8FB2FF;--accent-deep:#16249E;--accent-text:#6E8BFF;--accent-solid:#2B50FF;
+  --accent-hover:#4A6AFF;--accent-ink:#FFFFFF;--accent-bg:rgba(43,80,255,.16);--accent-border:rgba(43,80,255,.45);--accent-glow:rgba(43,80,255,.34);
+  --metal:linear-gradient(135deg,var(--accent-hi),var(--accent) 45%,var(--accent-deep));
+  --primary:var(--accent-solid);--on-primary:var(--accent-ink);--focus:var(--accent-hi);--control-border:var(--text-3);--primary-hover:var(--accent-solid);
+  --success:#3DD68C;--success-bg:rgba(16,84,54,.38);--warning:#FFB224;--warning-bg:rgba(120,60,6,.40);--danger:#FF6B6B;--danger-bg:rgba(127,29,29,.40);
+  --chart:#8A8A93;--hatch:#4A4A52;
+  --radius-s:4px;--radius-m:6px;--radius-l:10px;--shadow:0 18px 50px rgba(0,0,0,.65);
+  --glow:0 0 0 1px var(--accent-border),0 12px 40px -12px var(--accent-glow);
+  --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:20px;--space-6:24px;--space-7:32px;--space-8:40px;
+  --font:'Inter Variable',Inter,system-ui,-apple-system,'Segoe UI',sans-serif;--mono:ui-monospace,'Cascadia Mono',Consolas,'Courier New',monospace;
+  --sidebar:232px;
+  /* legacy aliases still referenced by shadow.css */
+  --panel:var(--surface);--ink:var(--text);--muted:var(--text-2);--line:var(--border);--subtle:var(--surface-2);--inverse:var(--on-primary);
+  color-scheme:dark;font-family:var(--font);color:var(--text);background:var(--bg);font-synthesis:none;text-rendering:optimizeLegibility;-webkit-font-smoothing:antialiased;
+  font-feature-settings:"cv11","ss01";
+}
+/* Not `:root[data-theme=light]`: custom properties inherit, so an element carrying
+   the attribute lights up its own subtree. The printable report uses that to render
+   light whatever the reader's theme, without a second copy of the token block and
+   without a `beforeprint` hook — which `page.pdf()` would never fire anyway.
+   Specificity is unchanged (0,1,0) and this block still comes after `:root`. */
+[data-theme=light]{
+  --focus:var(--accent-text);--primary-hover:var(--accent-hover);
+  --bg:#F3F6FA;--surface:#FFFFFF;--surface-2:#E9EEF5;--elevated:#FFFFFF;--border:#DCE4EE;--border-strong:#BFCCDC;
+  --text:#172033;--text-2:#4D596B;--text-3:#647083;
+  --accent-hi:#6E8BFF;--accent-deep:#101B7A;--accent-text:#1F3FE6;--accent-hover:#1B3FD6;
+  --accent-bg:#EAEFFF;--accent-border:rgba(43,80,255,.38);--accent-glow:rgba(43,80,255,.20);
+  --success:#15803D;--success-bg:#DCFCE7;--warning:#B45309;--warning-bg:#FEF3C7;--danger:#B91C1C;--danger-bg:#FEE2E2;
+  --chart:#71717A;--hatch:#A1A1AA;--shadow:0 12px 32px rgba(0,0,0,.10);color-scheme:light;
+}
+/* The light tertiary text is 4.30:1 on surface-2; use secondary text there. */
+[data-theme=light] :is(.tag-empty,.bubble,.fd-tile,.vnav-item.active,.vnav-item[aria-pressed=true],.shadow-area-nav button:hover,.shadow-area-nav button.selected,.shadow-area-nav button[aria-pressed=true],.user:hover,.user[aria-current],.org-tree-item:hover,.org-tree-item:focus-visible,.platform-row:hover,tbody tr:hover td,.catalog-row.is-selected){--text-3:var(--text-2)}
+*{box-sizing:border-box}
+html{overflow-x:hidden}
+body{margin:0;min-width:320px;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
+button,input,select,textarea{font:inherit;color:inherit}
+button,a,input,select{-webkit-tap-highlight-color:transparent}
+button{cursor:pointer}button:disabled{cursor:not-allowed;opacity:.5}
+a{color:inherit;text-decoration:none}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+h1,h2,h3,p{margin-top:0}h1,h2,h3{font-weight:600;letter-spacing:-.2px}
+h2{font-size:16px;line-height:20px;margin-bottom:0}h3{font-size:14px;line-height:20px}
+p{line-height:1.55}
+svg{flex-shrink:0}
+code,.mono{font-family:var(--mono);font-size:12px;overflow-wrap:anywhere}
+.muted{color:var(--text-2);font-size:12px}.faint{color:var(--text-3)}.nowrap{white-space:nowrap}
+/* Cells default to overflow-wrap:anywhere, which shreds a long word mid-letter.
+   `.nowrap` suits a single value; this suits a list that should still wrap
+   between its items but never inside one. */
+.keep-words{overflow-wrap:normal;word-break:normal}.num{font-variant-numeric:tabular-nums}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.skip-link{position:fixed;left:16px;top:-100px;background:var(--primary);color:var(--on-primary);padding:10px 14px;z-index:100;border-radius:var(--radius-s);font-size:13px;font-weight:500}.skip-link:focus{top:12px}
+fieldset{border:0;padding:0;margin:0;min-width:0}
+
+/* ---------- Form controls ---------- */
+label{display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:500}
+input:not([type=checkbox]):not([type=radio]),select,textarea{width:100%;height:36px;border:1px solid var(--control-border);background:var(--surface-2);color:var(--text);border-radius:var(--radius-s);padding:0 10px;font-size:13px;min-width:0}
+:is(.platform-discovery,.config-block-fields,.shadow-config) textarea{border-color:var(--control-border);background:var(--surface-2)}
+textarea{height:auto;min-height:88px;padding:8px 10px;line-height:1.6;resize:vertical}
+input::placeholder,textarea::placeholder{color:var(--text-2);opacity:1}
+select{padding-right:28px;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2398A7B9' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 8px center;background-size:14px}
+[data-theme=light] select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23647083' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")}
+input:not([type=checkbox]):focus,select:focus,textarea:focus{border-color:var(--focus);box-shadow:0 0 0 3px var(--accent-bg);outline:2px solid var(--focus);outline-offset:2px}
+input:disabled,select:disabled,textarea:disabled{opacity:.6}
+input[type=checkbox]{width:16px;height:16px;accent-color:var(--primary);margin:0;flex-shrink:0}
+.checkbox-label{flex-direction:row;align-items:center;gap:10px;font-size:13px;font-weight:400}
+.field-help,.help{font-size:12px;font-weight:400;color:var(--text-2);line-height:1.5}
+.field{display:flex;flex-direction:column;gap:6px;min-width:0}.field>.label{font-size:13px;font-weight:500}
+
+/* ---------- Buttons ---------- */
+.button{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;min-height:36px;padding:0 12px;border:1px solid transparent;border-radius:var(--radius-s);font-size:13px;font-weight:500;line-height:1;white-space:nowrap;background:var(--surface);color:var(--text);border-color:var(--border-strong)}
+.button.primary{background:var(--primary);color:var(--on-primary);border-color:var(--primary)}
+.button.primary:hover:not(:disabled){background:var(--primary-hover);border-color:var(--primary-hover)}
+/* Secondary is transparent with a strong border; hover takes the accent on the
+   border and the text, never as a fill. */
+.button.secondary{background:transparent;color:var(--text);border-color:var(--border-strong)}
+.button.secondary:hover:not(:disabled){border-color:var(--accent);color:var(--accent-text)}
+.button.ghost{background:transparent;border-color:transparent;color:var(--text-2)}
+.button.ghost:hover:not(:disabled){background:var(--surface-2);color:var(--text)}
+.button.danger{background:var(--surface);color:var(--danger);border-color:var(--border-strong)}
+.button.danger:hover:not(:disabled){background:var(--danger-bg)}
+.button.small{height:32px;min-height:32px;padding:0 10px;font-size:12px}
+.button svg{width:16px;height:16px}
+.icon-button{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;color:var(--text-2);border-radius:var(--radius-s);font-size:12px;font-weight:600;padding:0}
+.icon-button:hover:not(:disabled){background:var(--surface-2);color:var(--text)}
+.icon-button svg{width:16px;height:16px}
+.text-link{font-size:13px;font-weight:500;display:inline-flex;align-items:center;gap:6px;color:var(--text)}.text-link:hover{text-decoration:underline;text-underline-offset:3px}
+.text-link svg{width:14px;height:14px}
+/* Un lien qui agit sans naviguer reste un bouton pour le clavier et les technologies
+   d'assistance ; seule son apparence de champ disparaît. Même motif que `button.tag`. */
+button.text-link{background:none;border:0;padding:0;text-align:left}
+
+/* ---------- Shell ---------- */
+.shell{display:grid;grid-template-columns:var(--sidebar) minmax(0,1fr);min-height:100vh;background:var(--bg)}
+/* The panel itself never scrolls: the brand and the user block stay put and only
+   the menu moves, so a short window shows a scrollbar inside the navigation rather
+   than sliding the whole sidebar. */
+.sidebar{background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:16px 12px;gap:16px;position:sticky;top:0;height:100vh;overflow:hidden;z-index:30}
+.brand{display:flex;align-items:center;gap:10px;padding:4px 8px;min-width:0}
+.brand img{width:28px;height:28px;border-radius:var(--radius-s);flex-shrink:0}
+.brand-name{font-size:15px;font-weight:600;letter-spacing:-.2px;flex:1;min-width:0}
+.edition{font-size:11px;font-weight:500;color:var(--text-2);border:1px solid var(--border);border-radius:var(--radius-s);padding:2px 6px;line-height:16px;white-space:nowrap}
+.org{display:flex;flex-direction:column;gap:6px;padding:0 8px}
+/* Label cran (surtitre): 700 11/14, 1.4 px, uppercase, in accent-text, preceded
+   by a 22 x 2 px metal rule. The only place where the accent is systematic. */
+.org-label,.nav-label{font:700 11px/14px var(--font);letter-spacing:1.4px;text-transform:uppercase;color:var(--accent-text);display:flex;align-items:center;gap:8px}
+.org-label::before,.nav-label::before{content:'';width:22px;height:2px;flex:none;border-radius:1px;background:var(--metal)}
+.org-button{display:flex;align-items:center;gap:8px;width:100%;height:36px;padding:0 10px;font-size:13px;font-weight:500;text-align:left;color:var(--text);background:var(--surface-2);border:1px solid transparent;border-radius:var(--radius-s);min-width:0}
+.org-button:hover:not(:disabled),.org-button[aria-expanded=true]{border-color:var(--border-strong)}
+.org-button svg{width:16px;height:16px;flex-shrink:0;color:var(--text-2)}
+.org-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.org-tree ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.org-tree-group{margin:2px 0 0 17px;padding-left:6px;border-left:1px solid var(--border)}
+.org-tree-item{display:flex;align-items:center;gap:8px;width:100%;height:36px;padding:0 10px;font-size:13px;font-weight:500;text-align:left;color:var(--text-2);background:transparent;border:0;border-radius:var(--radius-s);min-width:0}
+.org-tree-item:hover,.org-tree-item:focus-visible{background:var(--surface-2);color:var(--text)}
+.org-tree-item[aria-current=true]{color:var(--text);font-weight:600}
+.org-tree-item svg{width:16px;height:16px;flex-shrink:0;color:var(--text-2)}
+.org-tree-item .org-role{font-size:11px;font-weight:400;color:var(--text-3)}
+.nav{display:flex;flex-direction:column;gap:14px;flex:1 1 auto;min-height:0;overflow-y:auto;scrollbar-width:thin}
+.nav-group{display:flex;flex-direction:column;gap:2px}
+.nav-label{padding:0 8px 6px}
+/* A navigation label wraps rather than overflowing. It used to be `nowrap` at a
+   fixed 36px, so a label wider than the 207px content box pushed the sidebar out:
+   `overflow-y:auto` makes the other axis `auto` too, and French showed a one pixel
+   horizontal scrollbar on « Documentation réglementaire » (220px measured). Wrapping
+   fixes every language and any label added later, where shortening one string would
+   not. Single line items keep their 36px rhythm through min-height. */
+.nav-item{display:flex;align-items:center;gap:10px;min-height:36px;padding:6px 10px;border-radius:var(--radius-s);color:var(--text-2);font-size:13px;font-weight:500;position:relative;line-height:1.25;overflow-wrap:anywhere}
+.nav-item svg{width:16px;height:16px}
+.nav-item:hover{background:var(--surface-2);color:var(--text)}
+.nav-item[aria-current=page]{background:var(--surface-2);color:var(--text)}
+/* The active entry carries a 2 px metal underline (charte v2.1, ch. 06). */
+.nav-item[aria-current=page]::before{content:'';position:absolute;left:10px;right:10px;bottom:0;height:2px;border-radius:1px;background:var(--metal)}
+.sidebar-footer{border-top:1px solid var(--border);padding-top:12px;display:flex;flex-direction:column;gap:10px}
+.user{display:flex;align-items:center;gap:10px;padding:0 8px;min-width:0;text-decoration:none;color:inherit;border-radius:var(--radius-s)}
+.user:hover,.user[aria-current]{background:var(--surface-2)}
+.avatar{width:28px;height:28px;border-radius:var(--radius-s);background:var(--surface-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:var(--text-2);flex-shrink:0}
+.user-meta{display:flex;flex-direction:column;min-width:0;flex:1}
+.user-name{font-size:13px;font-weight:500;line-height:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.user-role{font-size:11px;color:var(--text-3);line-height:14px}
+.sidebar-tools{display:flex;align-items:center;gap:4px;padding:0 4px}
+.sidebar-tools .spacer{flex:1}
+.mobile-bar{display:none}
+.overlay{display:none}
+.main-column{display:flex;flex-direction:column;min-width:0}
+.main{display:flex;flex-direction:column;gap:16px;min-width:0;outline:none;padding:0 24px 24px;flex:1}
+.main>*:not(.pagebar){max-width:1440px;width:100%}
+.page{display:contents}
+.brand-row{display:flex;align-items:center;gap:8px}
+.brand-row .brand{flex:1}
+.brand-close{display:none}
+/* Folded sidebar (desktop only): a 64 px icon rail. Texts stay in the accessibility
+   tree, clipped rather than removed, so links and buttons keep their names; the nav
+   links also get a `title` tooltip. Below 900 px the drawer ignores this state. */
+@media(min-width:901px){
+  .shell{transition:grid-template-columns .2s}
+  .shell.collapsed{--sidebar:64px}
+  .collapsed .sidebar{padding:16px 10px}
+  .collapsed .brand-row{justify-content:center}
+  .collapsed .brand{padding:4px 0;flex:none}
+  .collapsed :is(.brand-name,.edition,.org-label,.org-button>svg:last-child){display:none}
+  .collapsed :is(.nav-item>span,.user-meta,.org-button .org-name){position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  .collapsed .org{padding:0}
+  .collapsed .org-button{position:relative;justify-content:center;padding:0}
+  .collapsed .nav-label{font-size:0;letter-spacing:0;gap:0;justify-content:center;padding:0 0 6px}
+  .collapsed .nav-item{justify-content:center;padding:6px}
+  .collapsed .nav-item[aria-current=page]::before{left:6px;right:6px}
+  .collapsed .user{position:relative;justify-content:center;padding:4px 0}
+  .collapsed .sidebar-tools{flex-direction:column;padding:0}
+  .collapsed .sidebar-tools .spacer{display:none}
+}
+@media(max-width:900px){.sidebar-toggle{display:none}}
+.pagebar{min-height:52px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:8px 24px;margin:0 -24px 4px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:20;flex-wrap:wrap}
+.page-title{font-size:20px;font-weight:600;letter-spacing:-.3px;line-height:24px;margin:0}
+.actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.info-line{display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--text-2);line-height:1.5}
+.info-line svg{width:16px;height:16px;margin-top:1px;color:var(--text-3)}
+.info-line a,.info-line button{color:var(--text);font-weight:500;text-decoration:underline;text-underline-offset:3px;background:none;border:0;padding:0;font-size:12px}
+
+/* ---------- Cards / panels ---------- */
+.card,.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-m);display:flex;flex-direction:column;min-width:0}
+.card:hover,.panel:hover{border-color:var(--border-strong)}
+.panel{padding:20px}
+.card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:16px 20px;border-bottom:1px solid var(--border)}
+.card-title{font-size:16px;font-weight:600;letter-spacing:-.2px;line-height:20px;margin:0}
+.card-desc{font-size:12px;color:var(--text-2);margin:2px 0 0}
+.card-body{padding:20px;flex:1}
+.card-foot{padding:12px 20px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px}
+.section-heading{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:16px}
+.section-heading h2{font-size:16px;line-height:20px}
+.section-heading p{font-size:12px;color:var(--text-2);margin:2px 0 0}
+.section-heading>.muted{font-size:12px;padding-top:2px}
+/* Row count and page size, kept together on the right of a table heading. Wraps under
+   the title on a narrow viewport rather than squeezing the segmented control. */
+.heading-controls{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:12px}
+.heading-controls>.muted{font-size:12px}
+.table-panel{padding:0}
+.table-panel>.section-heading{padding:16px 20px;margin:0;border-bottom:1px solid var(--border)}
+.table-panel>.notice,.table-panel>.empty,.table-panel>.fine-print{margin:16px 20px}
+
+/* ---------- KPI ---------- */
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-m);padding:16px 20px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.kpi-label{font-size:12px;font-weight:500;color:var(--text-2);display:flex;align-items:center;justify-content:space-between;gap:8px}
+.kpi-label svg{width:16px;height:16px;color:var(--text-3)}
+/* The KPI figure carries the accent by default; a state tone still wins. */
+.kpi-value{font-size:28px;font-weight:600;letter-spacing:-.8px;line-height:32px;font-variant-numeric:tabular-nums;color:var(--accent-text)}
+.kpi-value small{font-size:16px;font-weight:500;color:var(--text-3);letter-spacing:0}
+.kpi-hint{font-size:12px;color:var(--text-3)}
+.tone-danger{color:var(--danger)}.tone-warning{color:var(--warning)}.tone-success{color:var(--success)}
+
+/* ---------- Badges / status ---------- */
+.badge,.status,.count-badge,.role-badge{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:var(--radius-s);font-size:12px;font-weight:500;line-height:1;white-space:nowrap;border:1px solid transparent;background:var(--surface-2);color:var(--text-2);border-color:var(--border)}
+.badge-dot::before,.status>span{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor}
+.status>span{border:0}
+.badge-success,.status-approved,.status-active,.status-applied{background:var(--success-bg);color:var(--success);border-color:transparent}
+.badge-warning,.status-pending,.status-needs_update{background:var(--warning-bg);color:var(--warning);border-color:transparent}
+.badge-danger,.status-blocked,.status-revoked,.status-block,.status-unavailable{background:var(--danger-bg);color:var(--danger);border-color:transparent}
+.badge-neutral,.status-observed,.status-observe{background:var(--surface-2);color:var(--text-2);border-color:var(--border)}
+.count-badge,.role-badge{gap:0}
+.role-badge{text-transform:lowercase}
+
+/* ---------- Tags (a choice made by clicking a label, not a dropdown) ---------- */
+.tags{display:inline-flex;flex-wrap:wrap;align-items:center;gap:var(--space-2)}
+.tags:is(fieldset){border:0;padding:0;margin:0;min-width:0}
+.tag{display:inline-flex;align-items:center;height:24px;padding:0 10px;border-radius:var(--radius-s);font-size:12px;font-weight:500;line-height:1;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;background:var(--surface-2);color:var(--text-2);border:1px solid var(--border)}
+button.tag:hover:not(:disabled),a.tag:hover{border-color:var(--border-strong);color:var(--text)}
+.tag-on{background:var(--accent-bg);color:var(--accent-text);border-color:var(--accent-border)}
+.tag-empty{color:var(--text-3);border-style:dashed}
+.tag-link{font-size:12px;color:var(--accent-text)}
+.tag-link:hover{text-decoration:underline}
+
+/* ---------- Tables ---------- */
+/* position: the scroll box also contains absolutely positioned descendants
+   (.sr-only inside a wide table would otherwise widen the page). */
+/* `overflow-y:hidden` n'est pas décoratif : dès que `overflow-x` vaut `auto`, la
+   spécification CSS remplace un `overflow-y:visible` par `auto`. Un tableau dépassant
+   d'un pixel — une bordure, une hauteur de ligne arrondie — suffit alors à faire
+   apparaître un ascenseur vertical parasite sur ce seul bloc. Rien n'est masqué au
+   passage : ces conteneurs n'ont aucune contrainte de hauteur, ils s'étendent toujours
+   à la hauteur de leur contenu. */
+.table-scroll{overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;min-width:0;position:relative}
+table{border-collapse:collapse;width:100%;text-align:left;font-size:13px}
+th{text-align:left;font:700 11px/14px var(--font);letter-spacing:1.4px;text-transform:uppercase;color:var(--text-2);background:var(--surface-2);padding:0 16px;height:40px;border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:10px 16px;min-height:44px;border-bottom:1px solid var(--border);vertical-align:middle;line-height:1.45;overflow-wrap:anywhere}
+th:first-child,td:first-child{padding-left:20px}th:last-child,td:last-child{padding-right:20px}
+tr:last-child td{border-bottom:0}
+tbody tr:hover td{background:var(--surface-2)}
+td strong{font-weight:500}
+.cell-detail{display:block;color:var(--text-3);font-size:12px;margin-top:2px;line-height:14px}
+.row-actions{display:flex;align-items:center;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.readonly-cell{display:inline-flex;align-items:center;gap:6px;color:var(--text-3);font-size:12px}
+.select-cell{width:36px;text-align:center}
+.confirm-list{margin:0 0 16px;padding-left:20px;font-size:13px;display:flex;flex-direction:column;gap:2px}
+.select-cell input{cursor:pointer}
+th.right,td.right{text-align:right}
+/* Numbered pages. Wraps rather than scrolls: a long list is read at the bottom of a
+   table that already scrolls horizontally, and a second scroller there is a trap. */
+.pager{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:4px;padding:12px 0}
+.pager-page{min-width:32px;height:32px;padding:0 8px;border:1px solid var(--border);border-radius:var(--radius-s);background:var(--surface);color:var(--text-2);font-size:13px;font-weight:500;font-variant-numeric:tabular-nums}
+.pager-page:hover{border-color:var(--border-strong);color:var(--text)}
+.pager-page.active{background:var(--primary);border-color:var(--primary);color:var(--on-primary)}
+.pager-gap{padding:0 4px;color:var(--text-3)}
+.fine-print{font-size:12px;color:var(--text-2);margin:0;max-width:960px}
+
+/* ---------- Tabs / segments / vertical nav ---------- */
+/* Même raison que `.table-scroll` : une barre d'onglets ne défile qu'horizontalement,
+   et la bordure basse suffit à déclencher l'ascenseur vertical que `overflow-x:auto`
+   autorise implicitement. Le correctif était déjà appliqué localement à
+   `.catalog-toolbar .tabs` ; il vaut pour toutes les barres. */
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}
+.tabs:is(fieldset){border-top:0;border-right:0;border-left:0;padding:0;margin:0;min-width:0}
+.tab{height:40px;display:flex;align-items:center;padding:0 12px;font-size:13px;font-weight:500;color:var(--text-2);background:transparent;border:0;border-bottom:2px solid transparent;border-radius:0;margin-bottom:-1px;white-space:nowrap}
+.tab.active,.tab[aria-pressed=true]{color:var(--text);border-bottom-color:var(--primary)}
+.segment{display:inline-flex;border:1px solid var(--border-strong);border-radius:var(--radius-s);overflow:hidden;height:36px}
+.segment:is(fieldset){padding:0;margin:0;min-width:0}
+.segment>button,.segment>span{display:flex;align-items:center;padding:0 12px;font-size:13px;font-weight:500;color:var(--text-2);border:0;border-right:1px solid var(--border-strong);background:var(--surface);border-radius:0}
+.segment>*:last-child{border-right:0}
+.segment>.on,.segment>[aria-pressed=true]{background:var(--primary);color:var(--on-primary)}
+.vnav{display:flex;flex-direction:column;gap:2px;width:200px;flex-shrink:0}
+.vnav-item{display:flex;align-items:center;gap:10px;height:36px;padding:0 10px;border-radius:var(--radius-s);font-size:13px;font-weight:500;color:var(--text-2);background:transparent;border:0;text-align:left;white-space:nowrap}
+.vnav-item .n{font-family:var(--mono);font-size:11px;color:var(--text-3);width:18px}
+.vnav-item.active,.vnav-item[aria-pressed=true]{background:var(--surface-2);color:var(--text)}
+
+/* ---------- Notices / states ---------- */
+.notice{display:flex;align-items:center;gap:12px;padding:12px 16px;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--surface);font-size:13px;margin-bottom:16px;overflow-wrap:anywhere}
+/* <output> carries no default margin the way <p> does; a `role="status"` notice built on
+   <output> (S6819) restores the top margin a `<p class="notice">` used to get for free. */
+output.notice{margin-top:1em}
+.notice p{margin:2px 0 0;font-size:13px}
+.notice strong{font-weight:600}
+.notice>svg{width:16px;height:16px;flex-shrink:0}
+.notice .spacer{flex:1}
+.notice.error,.notice-danger{border-color:var(--danger);background:var(--danger-bg)}.notice.error>svg,.notice-danger>svg{color:var(--danger)}
+.notice.success,.notice-success{border-color:var(--success);background:var(--success-bg)}.notice.success>svg,.notice-success>svg{color:var(--success)}
+.notice.warning,.notice-warning{border-color:var(--warning);background:var(--warning-bg)}.notice.warning>svg,.notice-warning>svg{color:var(--warning)}
+.notice>div{flex:1;min-width:0}
+.empty{padding:32px 16px;text-align:center;min-height:200px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px}
+.empty-symbol{color:var(--text-3);width:40px;height:40px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:var(--radius-s);background:var(--surface-2);margin-bottom:6px}
+.empty h3{margin:0;font-weight:600;font-size:14px}
+.empty p{color:var(--text-2);font-size:12px;max-width:360px;margin:0}
+.empty .button{margin-top:8px}
+.loading{display:flex;align-items:center;justify-content:center;gap:12px;min-height:200px;font-size:13px;color:var(--text-2)}
+.spinner{width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--text);border-radius:50%;animation:spin .75s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ---------- Dialogs / drawers ---------- */
+.dialog{background:var(--surface);color:var(--text);padding:0;width:min(560px,calc(100% - 32px));max-height:calc(100% - 40px);border:1px solid var(--border);border-radius:var(--radius-m);box-shadow:var(--shadow)}
+.dialog::backdrop{background:rgba(0,0,0,.45)}
+.dialog-heading{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border)}
+.dialog-heading h2{font-size:16px;letter-spacing:-.2px;margin:0}
+.dialog-body{padding:20px;display:flex;flex-direction:column;gap:16px}
+.dialog p{font-size:13px;color:var(--text-2)}
+.dialog-actions{display:flex;justify-content:flex-end;gap:8px;padding:12px 20px;border-top:1px solid var(--border);margin:20px -20px -20px}
+.dialog form,.dialog>div:not(.dialog-heading){padding:20px}
+.dialog form>.notice{margin-top:16px}
+.dialog>.dialog-actions{margin:0}
+.dialog-body>p{margin:0;font-size:13px}
+.dialog .fine-print{font-size:12px}
+.dialog.drawer{position:fixed;inset:0 0 0 auto;margin:0;height:100%;max-height:100%;width:min(480px,100%);border-radius:0;border:0;border-left:1px solid var(--border)}
+.dialog.drawer .dialog-heading{position:sticky;top:0;background:var(--surface)}
+/* A wide dialog: four fifths of the viewport, centred, with the page behind it
+   blurred rather than merely dimmed. Capped so it does not become a field of
+   empty space on a very large screen, and it takes the whole viewport below the
+   sidebar breakpoint, where four fifths would leave a useless margin. */
+.dialog.wide{position:fixed;inset:0;margin:auto;width:min(80vw,1200px);max-width:min(80vw,1200px);height:80vh;max-height:80vh;border-radius:var(--radius-l);border:1px solid var(--border);box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden}
+.dialog.wide::backdrop{background:rgba(0,0,0,.55);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.dialog.wide .dialog-heading{flex:0 0 auto}
+.dialog.wide>div:not(.dialog-heading){flex:1 1 auto;min-height:0;display:flex;flex-direction:column;padding:0}
+@media (max-width:900px){
+  .dialog.wide{width:100vw;max-width:100vw;height:100vh;max-height:100vh;border-radius:0;border:0}
+}
+/* Une liste lue dans un dialogue — les postes derrière une plateforme ou un domaine.
+   Plus large qu'un formulaire, parce que `.privacy-table` réclame déjà 680 px et qu'à
+   560 px la table sortait du cadre. Hauteur bornée, et c'est la table seule qui défile :
+   la recherche, le compteur et la pagination restent sous les yeux au lieu de partir
+   avec le contenu. */
+.dialog.list{width:min(880px,calc(100% - 32px));max-height:min(80vh,calc(100% - 40px));display:flex;flex-direction:column;overflow:hidden}
+.dialog.list .dialog-heading{flex:0 0 auto}
+.dialog.list>div:not(.dialog-heading){flex:1 1 auto;min-height:0;overflow:hidden}
+.dialog.list .table-scroll{flex:1 1 auto;min-height:0;overflow:auto}
+.dialog.list thead th{position:sticky;top:0;z-index:1}
+.dialog.list .pager{flex:0 0 auto;padding-bottom:0}
+.dialog-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+@media (max-width:900px){
+  .dialog.list{width:calc(100% - 24px);max-height:calc(100% - 24px)}
+  .dialog-toolbar{gap:12px}
+}
+.dl{display:grid;grid-template-columns:140px minmax(0,1fr);gap:10px 16px;font-size:13px;margin:0}
+.dl dt{color:var(--text-2)}.dl dd{margin:0;overflow-wrap:anywhere}
+
+/* ---------- Overview ---------- */
+.todo{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-m);display:flex;flex-direction:column}
+.todo-row{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--border);font-size:13px}
+.todo-row:last-child{border-bottom:0}
+.todo-row>svg{width:16px;height:16px;color:var(--warning);flex-shrink:0}
+.todo-row .spacer{flex:1}
+.steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
+.step{padding:20px;border-right:1px solid var(--border);display:flex;flex-direction:column;gap:10px;align-items:flex-start}
+.step:last-child{border-right:0}
+.step-n{width:24px;height:24px;border-radius:var(--radius-s);background:var(--primary);color:var(--on-primary);font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:center}
+.step-n.done{background:var(--success-bg);color:var(--success)}
+.step-n.later{background:var(--surface-2);color:var(--text-2);border:1px solid var(--border)}
+.step-title{font-size:14px;font-weight:600;margin:0}
+.step-desc{font-size:12px;color:var(--text-2);margin:0;flex:1}
+.overview-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:16px}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--text-2);align-items:center;white-space:nowrap}
+.legend>span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:10px;height:10px;background:var(--text-3);border-radius:2px;display:inline-block}
+.legend .legend-blocked i{background:var(--danger)}
+.chart-svg{display:block;width:100%;height:auto;overflow:visible}
+.chart-svg .grid{stroke:var(--border)}
+.chart-svg .axis{fill:var(--text-3);font-size:11px;font-family:var(--mono)}
+/* Two series at most: the neutral total and the blocked events. The accent is
+   never a series (charte v2.1, ch. 03). */
+.chart-svg .bar{fill:var(--chart);opacity:.75}
+.chart-svg .bar-blocked{fill:var(--danger);opacity:1}
+.chart-svg .bar-group:hover .bar{opacity:1}
+.providers{display:flex;flex-direction:column}
+.provider{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)}
+.provider:last-child{border-bottom:0}
+.provider-name{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:500}
+.provider-name strong{font-weight:500;overflow-wrap:anywhere}
+.provider-track{height:4px;background:var(--surface-2);border:1px solid var(--border);border-radius:2px;overflow:hidden;display:flex}
+.provider-track span{display:block;height:100%;background:var(--text-3)}
+.provider-track .blocked{background:var(--danger)}
+.provider-count{text-align:right;font-variant-numeric:tabular-nums;font-size:13px;font-weight:600;min-width:64px}
+.provider-count small{display:block;font-size:12px;font-weight:400;color:var(--text-3)}
+
+/* ---------- Filters ---------- */
+.filter-bar{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-m);padding:16px 20px}
+.filter-bar label{flex:1;min-width:160px}
+.filter-bar .filter-search{flex:1.6;min-width:220px}
+.filter-bar>.button{height:36px}
+
+/* ---------- Settings / organizations / invitations ---------- */
+.settings-layout{display:grid;grid-template-columns:200px minmax(0,1fr);gap:24px;align-items:start}
+.settings-area{display:flex;flex-direction:column;gap:16px;min-width:0}
+/* Le panneau occupe sa colonne, comme les autres pages de configuration (Shadow AI,
+   Observabilité), au lieu d'être plafonné à 760 px : sur un écran large il paraissait
+   rétréci et sans rapport avec le reste de la console. Ce sont les CHAMPS qui gardent
+   une largeur de lecture — une zone de saisie de 1 500 px ne se lit pas — et non le
+   bloc qui les contient. */
+.settings-panel fieldset{display:flex;flex-direction:column;gap:20px}
+.settings-panel fieldset label{max-width:540px}
+.settings-panel input[type=number]{max-width:180px}
+.settings-actions{display:flex;justify-content:flex-end;border-top:1px solid var(--border);margin:20px -20px -20px;padding:12px 20px}
+.invitation-fields{display:flex;flex-direction:column;gap:16px;margin:16px 0}
+.inventory-section{display:contents}
+.profile-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-bottom:20px}
+.profile-fields label{display:flex;flex-direction:column;gap:6px;font-size:13px;min-width:0}
+.profile-rows{display:grid;grid-template-columns:180px minmax(0,1fr);gap:10px 16px;font-size:13px;margin:0}
+.profile-rows dt{color:var(--text-2)}.profile-rows dd{margin:0;overflow-wrap:anywhere}
+.directory-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+
+/* ---------- Entry page ---------- */
+.entry{min-height:100vh;display:grid;grid-template-columns:minmax(0,3fr) minmax(0,1fr);grid-template-rows:72px minmax(0,1fr) 64px;padding:0 72px;background:var(--bg)}
+.entry-header{grid-column:1/3;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)}
+.entry-header .brand{padding:0}
+.entry-header .brand img{width:32px;height:32px}
+.entry-header .brand-name{font-size:16px}
+.entry-header .preferences{display:flex;align-items:center;gap:8px}
+.entry-header .language-picker{width:auto}
+@media(max-width:360px){.entry-header .brand-name{display:none}}
+.entry-main{display:flex;flex-direction:column;justify-content:center;gap:28px;padding:40px 64px 40px 0;max-width:900px}
+/* Surtitre in the label cran, with the 22 x 2 px metal rule that signs v2.1. */
+.entry-main .eyebrow{display:flex;align-items:center;gap:10px;font:700 11px/14px var(--font);letter-spacing:1.4px;text-transform:uppercase;color:var(--accent-text);margin:0}
+.entry-main .eyebrow::before{content:'';width:22px;height:2px;flex:none;border-radius:1px;background:var(--metal)}
+.entry-main h1{font-size:clamp(44px,5.3vw,76px);font-weight:600;letter-spacing:-.04em;line-height:1.04;margin:0}
+.entry-main h1>span{color:var(--text-3)}
+/* First-run setup wizard: a form, not the hero of the entry page. */
+.entry-main.setup h1{font-size:clamp(30px,3.4vw,44px)}
+.entry-description{font-size:16px;line-height:1.65;color:var(--text-2);max-width:480px;margin:0}
+.entry-cta{display:flex;flex-direction:column;gap:16px;align-items:flex-start}
+.login-button{height:44px;padding:0 20px;font-size:14px;gap:14px}
+.entry-footnote{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--text-3)}
+.entry-footnote svg{width:14px;height:14px}
+.entry-aside{border-left:1px solid var(--border);display:flex;flex-direction:column;justify-content:center;gap:28px;padding:40px 0 40px 40px}
+.entry-value{display:flex;gap:12px;align-items:flex-start}
+.entry-value svg{width:20px;height:20px;color:var(--text-2);margin-top:1px}
+.entry-value>div{display:flex;flex-direction:column;gap:2px}
+.entry-value strong{font-size:14px;font-weight:600}
+.entry-value span{font-size:12px;color:var(--text-2);line-height:1.5}
+.entry-footer{grid-column:1/3;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);font-size:12px;color:var(--text-3)}
+.entry .notice{margin:0;max-width:520px}
+
+/* ---------- Responsive ---------- */
+@media(max-width:1100px){
+  .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .overview-grid{grid-template-columns:1fr}
+  .entry{padding:0 40px}
+  .entry-main{padding-right:40px}
+}
+@media(max-width:900px){
+  .shell{grid-template-columns:1fr}
+  .settings-layout{grid-template-columns:minmax(0,1fr)}
+  .vnav{flex-direction:row;width:auto;flex-shrink:1;overflow-x:auto;scrollbar-width:thin;gap:4px}
+  .vnav-item{flex-shrink:0}
+  .mobile-bar{display:flex;align-items:center;gap:12px;height:52px;padding:0 16px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:25}
+  .mobile-bar .brand{padding:0;flex:1}
+  .mobile-bar .brand img{width:24px;height:24px}
+  .sidebar{position:fixed;top:0;left:0;bottom:0;width:min(300px,86vw);transform:translateX(-100%);visibility:hidden;transition:transform .2s,visibility 0s linear .2s;box-shadow:none;z-index:40}
+  .sidebar.open{transform:none;visibility:visible;transition:transform .2s,visibility 0s linear 0s;box-shadow:var(--shadow)}
+  .overlay.open{display:block;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:35}
+  .sidebar .brand-close{display:inline-flex}
+  .main{padding:0 16px 16px;gap:12px}
+  .pagebar{position:static;padding:12px 16px;margin:0 -16px 0}
+  .steps{grid-template-columns:1fr}
+  .step{border-right:0;border-bottom:1px solid var(--border)}.step:last-child{border-bottom:0}
+  .entry{grid-template-columns:1fr;grid-template-rows:64px auto auto 56px;padding:0 20px}
+  .entry-header,.entry-footer{grid-column:1}
+  .entry-main{padding:40px 0 24px;gap:20px}
+  .entry-aside{border-left:0;border-top:1px solid var(--border);padding:24px 0 32px;gap:16px}
+  .dialog.drawer{width:100%}
+}
+@media(max-width:580px){
+  .kpis{grid-template-columns:1fr}
+  .pagebar{flex-direction:column;align-items:stretch}
+  .actions{justify-content:flex-start}
+  .filter-bar{padding:12px 16px}
+  .filter-bar label,.filter-bar .filter-search{flex-basis:100%}
+  .filter-bar>.button{width:100%}
+  th,td{padding-left:12px;padding-right:12px}
+  th:first-child,td:first-child{padding-left:16px}th:last-child,td:last-child{padding-right:16px}
+  .dialog-actions{flex-direction:column-reverse}.dialog-actions .button{width:100%}
+  .card-head{flex-direction:column;align-items:stretch}.card-head>.actions{justify-content:flex-start}
+  .settings-actions .button{width:100%}
+  .entry-main h1{letter-spacing:-.03em}
+}
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.001ms!important;transition-duration:.001ms!important;scroll-behavior:auto!important}}
+
+.observability-form{display:grid;gap:16px}.observability-form fieldset{display:grid;gap:16px;min-width:0}.observability-streams{display:flex;flex-wrap:wrap;gap:16px}
+.observability-form>.settings-actions{margin:0;padding:12px 0 0}
+
+/* Privacy and catalogue forms use the console spacing and scroll primitives. */
+.form-grid{display:grid;gap:16px}
+.privacy-setting{display:grid;gap:5px;min-width:0}
+.privacy-setting .checkbox-label+.field-help{padding-left:26px}
+.form-grid fieldset{display:grid;gap:16px}
+.form-grid legend{padding-bottom:8px;font-weight:600}
+.publisher-preview{display:grid;gap:16px;min-width:0;margin-top:24px;padding-top:24px;border-top:1px solid var(--border)}
+.catalog-preview{max-width:100%;max-height:420px;overflow:auto;white-space:pre}
+.report-week-heading{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.report-withheld-why{margin:0 0 12px;font-size:13px}
+.privacy-table{min-width:680px}
+.privacy-table td{overflow-wrap:normal;word-break:normal}
+
+/* Coverage catalogue: compact table and forms in the shared drawers. */
+.catalog-toolbar{display:flex;align-items:center;gap:20px;flex-wrap:wrap;padding:0 20px 16px}
+.catalog-toolbar .tabs{margin:0;flex-shrink:0;overflow-y:hidden}
+.catalog-toolbar .tab{display:flex;align-items:center;gap:8px}
+.catalog-search,.dialog-search{position:relative;flex:1;min-width:240px;margin:0}
+.catalog-search>svg,.dialog-search>svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--text-3)}
+.catalog-search input[type=search],.dialog-search input[type=search]{padding-left:36px}
+.catalog-selection{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 20px;background:var(--accent-bg);border-top:1px solid var(--border);border-bottom:1px solid var(--border);font-size:13px}
+.catalog-row{cursor:pointer}
+.catalog-row.is-selected{background:var(--accent-bg)}
+.catalog-name{background:none;border:0;padding:0;cursor:pointer;text-align:left;font:inherit}
+.catalog-identifier{display:block;font-size:11px;color:var(--text-3);margin-top:4px}
+.catalog-table .keep-words{min-width:160px}
+.catalog-table td:last-child{width:112px;min-width:112px}.catalog-table td:last-child .row-actions{flex-wrap:nowrap}
+.catalog-footer{padding:16px 20px;border-top:1px solid var(--border);display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.catalog-footer .fine-print{margin:0;flex:1;min-width:220px}
+.catalog-editor>fieldset{margin:0;border:0;padding:0 0 20px;border-bottom:1px solid var(--border);min-width:0}
+.catalog-editor fieldset fieldset{min-width:0;padding:16px;border:1px solid var(--border);border-radius:var(--radius-m)}
+.catalog-editor .dialog-actions{position:sticky;bottom:-20px;background:var(--surface);z-index:1}
+.catalog-panel .icon-button.danger{color:var(--danger)}
+.catalog-panel .icon-button:disabled{opacity:.4;cursor:not-allowed}
+@media(max-width:700px){
+  .catalog-panel>.section-heading{flex-direction:column}
+  .catalog-panel>.section-heading>.row-actions{justify-content:flex-start}
+  .catalog-toolbar{padding:0 16px 16px;gap:12px}
+  .catalog-toolbar .tabs,.catalog-search{width:100%;min-width:0}
+  .catalog-toolbar .tabs{overflow-x:auto}
+  .catalog-toolbar .tab{white-space:nowrap}
+  .catalog-selection,.catalog-footer{padding:12px 16px}
+  .catalog-selection>.row-actions{justify-content:flex-start}
+}
+
+/* ---------- Printable report (#report) ----------
+   The wrapper carries data-theme=light, so the document is light in both themes, on
+   screen and under page.pdf(). One .report-sheet is one printed page: break-before
+   plus a minimum height of the A4 content box. Chromium implements no @page margin
+   box, so the page counter is written into each sheet's footer instead — true only
+   while one sheet is one page, which the print check asserts rather than assumes. */
+.report{background:var(--bg);color:var(--text);min-height:100vh;padding:24px;display:flex;flex-direction:column;gap:24px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.report-controls,.report-sheet{width:100%;max-width:186mm;margin:0 auto}
+.report-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.report-sheet{display:flex;flex-direction:column;gap:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-m);padding:24px}
+.report-cover{display:flex;flex-direction:column;gap:16px}
+.report-cover h1{font-size:28px;font-weight:600;letter-spacing:-.6px;margin:0}
+.report-mark{width:40px;height:40px}
+.report-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 24px;margin:0;font-size:13px}
+.report-meta dt{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-2)}
+.report-meta dd{margin:0;overflow-wrap:anywhere}
+.report-filters{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:2px}
+.report-filters span{color:var(--text-2)}
+.report-foot{margin-top:auto;padding-top:12px;border-top:1px solid var(--border);display:flex;gap:12px;justify-content:space-between;font-size:11px;color:var(--text-3)}
+@media (max-width:640px){.report{padding:12px}.report-meta{grid-template-columns:1fr}}
+
+@page{size:A4;margin:14mm 12mm}
+@media print{
+  html,body{background:#fff}
+  .skip-link,.sidebar,.overlay,.mobile-bar,.pagebar,.report-controls{display:none!important}
+  .report{padding:0;gap:0;min-height:0}
+  .report-sheet{max-width:none;min-height:269mm;border:0;border-radius:0;padding:0;break-before:page;break-inside:avoid}
+  .report-sheet:first-of-type{break-before:auto}
+  .kpi,.chart-svg,.provider,tr{break-inside:avoid}
+  thead{display:table-header-group}
+}

@@ -1,0 +1,13 @@
+{
+  "case": "empty-providers",
+  "server": "reject",
+  "engine": "reject",
+  "content": {
+    "providers": [],
+    "native_tools": [],
+    "heuristics": {
+      "keys": [],
+      "mime_types": []
+    }
+  }
+}

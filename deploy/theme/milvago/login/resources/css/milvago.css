@@ -1,0 +1,114 @@
+/* Inter, self-hosted with the theme (OFL 1.1, fonts/LICENSE-Inter-OFL.txt).
+   No call to Google Fonts, on the login page as anywhere else. */
+@font-face{font-family:"Inter";font-weight:400;font-style:normal;font-display:swap;src:url("../fonts/Inter-Regular.woff2") format("woff2")}
+@font-face{font-family:"Inter";font-weight:500;font-style:normal;font-display:swap;src:url("../fonts/Inter-Medium.woff2") format("woff2")}
+@font-face{font-family:"Inter";font-weight:600;font-style:normal;font-display:swap;src:url("../fonts/Inter-SemiBold.woff2") format("woff2")}
+@font-face{font-family:"Inter";font-weight:700;font-style:normal;font-display:swap;src:url("../fonts/Inter-Bold.woff2") format("woff2")}
+
+/* Milvago Keycloak login theme — same tokens as the console (charte graphique
+   v2.1). Dark is the default rendering; light is the explicit choice, carried by
+   [data-appearance=light]. --mv-accent stays decorative: blue text uses
+   --mv-accent-text, blue fills use --mv-accent-solid. */
+:root{
+  color-scheme:dark;
+  --mv-focus:var(--mv-accent-hi);--mv-control-border:var(--mv-muted);--mv-primary-hover:var(--mv-accent-solid);
+  --mv-bg:#111722;--mv-panel:#1B2432;--mv-panel-2:#222D3D;
+  --mv-line:#344154;--mv-line-strong:#4B5A70;
+  --mv-text:#F4F6FA;--mv-text-2:#B6C0CE;--mv-muted:#98A7B9;
+  --mv-accent:#2B50FF;--mv-accent-hi:#8FB2FF;--mv-accent-deep:#16249E;
+  --mv-accent-text:#6E8BFF;--mv-accent-solid:#2B50FF;--mv-accent-hover:#4A6AFF;
+  --mv-accent-ink:#FFFFFF;--mv-accent-bg:rgba(43,80,255,.16);
+  --mv-metal:linear-gradient(135deg,var(--mv-accent-hi),var(--mv-accent) 45%,var(--mv-accent-deep));
+  --mv-danger:#FF6B6B;--mv-danger-bg:rgba(127,29,29,.40);
+  --mv-success:#3DD68C;--mv-success-bg:rgba(16,84,54,.38);
+  --mv-warning:#FFB224;--mv-warning-bg:rgba(120,60,6,.40);
+  font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif
+}
+:root[data-appearance=light]{
+  color-scheme:light;
+  --mv-focus:var(--mv-accent-text);--mv-primary-hover:var(--mv-accent-hover);
+  --mv-bg:#F3F6FA;--mv-panel:#FFFFFF;--mv-panel-2:#E9EEF5;
+  --mv-line:#DCE4EE;--mv-line-strong:#BFCCDC;
+  --mv-text:#172033;--mv-text-2:#4D596B;--mv-muted:#647083;
+  --mv-accent-hi:#6E8BFF;--mv-accent-deep:#101B7A;
+  --mv-accent-text:#1F3FE6;--mv-accent-hover:#1B3FD6;--mv-accent-bg:#EAEFFF;
+  --mv-danger:#B91C1C;--mv-danger-bg:#FEE2E2;
+  --mv-success:#15803D;--mv-success-bg:#DCFCE7;
+  --mv-warning:#B45309;--mv-warning-bg:#FEF3C7
+}
+
+html,body{min-height:100%;background:var(--mv-bg)!important;color:var(--mv-text)!important}
+body{font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif!important;font-feature-settings:"cv11","ss01"}
+
+/* ---------- Page shell ---------- */
+.pf-v5-c-login{background:var(--mv-bg)!important;min-height:100vh;display:flex!important;flex-direction:column;align-items:center;justify-content:center;padding:64px 24px}
+.pf-v5-c-login__container{display:flex!important;flex-direction:column!important;align-items:center;width:min(100%,420px)!important;max-width:420px!important;padding:0!important;gap:24px}
+
+/* ---------- Brand header (above the card) ---------- */
+.pf-v5-c-login__header{margin:0!important;width:100%!important;align-self:center}
+#kc-header-wrapper{display:flex!important;align-items:center;justify-content:center;gap:12px;font-size:18px!important;font-weight:600!important;letter-spacing:-.2px;line-height:1.2;text-transform:none!important;color:var(--mv-text)}
+/* The logo stays monochrome; the accent never enters it. */
+#kc-header-wrapper::before{content:"";width:32px;height:32px;flex-shrink:0;background:url('../img/milvago-symbol-mono-white.svg') center/contain no-repeat;display:inline-block}
+:root[data-appearance=light] #kc-header-wrapper::before{background-image:url('../img/milvago-symbol-mono-black.svg')}
+
+/* ---------- Card ---------- */
+.pf-v5-c-login__main{background:var(--mv-panel)!important;color:var(--mv-text)!important;border:1px solid var(--mv-line)!important;border-radius:6px!important;box-shadow:none!important;padding:32px!important;width:min(100%,420px)!important;margin:0}
+.pf-v5-c-login__main-header{display:flex!important;flex-direction:column!important;align-items:stretch;gap:20px;padding:0 0 20px!important}
+.pf-v5-c-login__main-header-desc{color:var(--mv-text-2)!important}
+#kc-page-title{font-size:20px!important;font-weight:600!important;letter-spacing:-.3px!important;line-height:1.3;width:100%!important;margin:0!important;overflow-wrap:normal!important}
+.pf-v5-c-login__main-body{padding:0!important}
+.pf-v5-c-login__main-footer,#kc-info{width:100%!important;margin-top:4px;padding:16px 0 0!important;font-size:12px!important;color:var(--mv-muted)!important;text-align:center}
+
+/* ---------- Form ---------- */
+.pf-v5-c-form__label{color:var(--mv-text)!important;font-size:13px!important;font-weight:500!important}
+
+.pf-v5-c-form-control{height:40px!important;min-height:0!important;border-radius:4px!important;background:var(--mv-panel-2)!important;border:1px solid var(--mv-control-border)!important;color:var(--mv-text)!important;box-shadow:none!important;font-size:14px}
+.pf-v5-c-form-control input{color:var(--mv-text)!important;height:38px!important;min-height:0!important;background:transparent!important}
+/* keycloak.v2 draws the form-control focus indicator via this ::after underline rather than a box-shadow glow;
+   overriding it directly (already validated in this file) is more robust than guessing PatternFly's
+   --pf-v5-c-form-control--* variable names, which aren't vendored in this repo to confirm. */
+.pf-v5-c-form-control::after{border-color:var(--mv-control-border)!important;border-radius:4px}
+.pf-v5-c-form-control:focus-within::after{border-color:var(--mv-focus)!important}
+.pf-v5-c-form-control:focus-within{outline:2px solid var(--mv-focus);outline-offset:2px;box-shadow:0 0 0 3px var(--mv-accent-bg)!important}
+.pf-v5-c-form-control input:focus{outline:none!important;box-shadow:none!important}
+.pf-v5-c-form-control button,.pf-v5-c-menu-toggle{color:var(--mv-text)!important;background:transparent!important;border-radius:4px!important}
+
+input[type=checkbox]{accent-color:var(--mv-accent-solid);width:16px;height:16px}
+.pf-v5-c-check__label{color:var(--mv-text)!important}
+input[type=checkbox]:focus-visible{outline:2px solid var(--mv-focus);outline-offset:2px}
+
+/* ---------- Buttons & links ---------- */
+.pf-v5-c-button.pf-m-primary,#kc-login{height:40px!important;min-height:0!important;background:var(--mv-accent-solid)!important;color:var(--mv-accent-ink)!important;border:0!important;border-radius:4px!important;font-size:14px!important;font-weight:600!important;box-shadow:none!important}
+.pf-v5-c-button.pf-m-primary:hover,#kc-login:hover{background:var(--mv-primary-hover)!important}
+.pf-v5-c-button.pf-m-link{color:var(--mv-text)!important;font-size:13px!important}
+a{color:var(--mv-text)!important;font-size:13px;text-decoration:underline;text-underline-offset:3px}
+.mv-appearance:focus-visible,a:focus-visible,button:focus-visible{outline:2px solid var(--mv-focus);outline-offset:4px}
+
+/* ---------- Top-right controls: appearance toggle + language toggle ---------- */
+.mv-controls{position:fixed;top:24px;right:24px;display:flex;align-items:center;gap:10px;z-index:10}
+.mv-appearance{height:32px;display:inline-flex;align-items:center;background:var(--mv-panel);color:var(--mv-text);border:1px solid var(--mv-line-strong);border-radius:6px;padding:0 14px;font:12px inherit;cursor:pointer;transition:border-color .12s}
+.mv-appearance:hover{border-color:var(--mv-accent);color:var(--mv-accent-text)}
+.mv-lang{display:inline-flex;align-items:center;background:var(--mv-panel);border:1px solid var(--mv-line-strong);border-radius:6px;overflow:hidden}
+.mv-lang-item{height:32px;min-width:38px;display:inline-flex;align-items:center;justify-content:center;padding:0 12px;font:12px inherit;font-weight:500;color:var(--mv-text-2)!important;text-decoration:none!important;letter-spacing:.02em;cursor:pointer;background:transparent;border:0;transition:background .12s,color .12s}
+.mv-lang-item+.mv-lang-item{border-left:1px solid var(--mv-line-strong)}
+.mv-lang a.mv-lang-item:hover{color:var(--mv-text)!important;background:var(--mv-panel-2)}
+.mv-lang-item[aria-current=true]{background:var(--mv-text);color:var(--mv-panel)!important;cursor:default}
+/* When the script builds the segmented control, hide Keycloak's native locale select. */
+.mv-enhanced .pf-v5-c-login__main-header-utilities{display:none!important}
+
+/* ---------- Alerts / feedback (must always stay visible) ---------- */
+.pf-v5-c-alert{border-radius:6px!important;border:1px solid var(--mv-line-strong)!important;background:var(--mv-panel-2)!important;padding:12px 14px!important;font-size:13px!important;color:var(--mv-text)!important}
+.pf-v5-c-alert.pf-m-danger{border-color:var(--mv-danger)!important;background:var(--mv-danger-bg)!important;color:var(--mv-danger)!important}
+.pf-v5-c-alert.pf-m-success{border-color:var(--mv-success)!important;background:var(--mv-success-bg)!important;color:var(--mv-success)!important}
+.pf-v5-c-alert.pf-m-warning{border-color:var(--mv-warning)!important;background:var(--mv-warning-bg)!important;color:var(--mv-warning)!important}
+.pf-v5-c-alert.pf-m-info{border-color:var(--mv-line-strong)!important;background:var(--mv-panel-2)!important;color:var(--mv-text)!important}
+.kc-feedback-text{font-size:13px!important;color:var(--mv-danger)!important}
+#input-error{font-size:13px!important;color:var(--mv-danger)!important;display:block!important}
+
+@media(max-width:600px){
+  .pf-v5-c-login{padding:80px 16px 24px}
+  .pf-v5-c-login__container{gap:18px}
+  .pf-v5-c-login__main{border-radius:6px;padding:24px!important}
+  .mv-controls{top:16px;right:16px;gap:8px}
+  .mv-appearance{padding:0 10px}
+}

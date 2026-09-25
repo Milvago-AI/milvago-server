@@ -1,0 +1,1460 @@
+{
+  "providers": [
+    {
+      "id": "chatgpt",
+      "label": "chatgpt",
+      "domains": [
+        "chatgpt.com",
+        "chat.openai.com"
+      ],
+      "aliases": [],
+      "conversation_path": "/c/*",
+      "conversation_segment": 1,
+      "dom": {
+        "editor": "#prompt-textarea,textarea[data-testid=\"prompt-textarea\"],#mobile-composer-prompt",
+        "send": "button[data-testid=\"send-button\"],form:has(#mobile-composer-prompt) button[type=\"submit\"]",
+        "response": "[data-message-author-role=\"assistant\"]"
+      },
+      "network": [
+        {
+          "method": "POST",
+          "host": "chatgpt.com",
+          "path": "/backend-api/f/conversation",
+          "text_path": "",
+          "text_paths": [
+            "messages[*].content.parts[*]"
+          ],
+          "model_path": "model",
+          "effort_path": "thinking_effort",
+          "conversation_path": "conversation_id"
+        },
+        {
+          "method": "POST",
+          "host": "chatgpt.com",
+          "path": "/unauth-mweb/conversation/updates",
+          "text_path": "prompt",
+          "text_paths": [],
+          "json_fields": [
+            "imageAttachments",
+            "conversationState"
+          ],
+          "files_path": "imageAttachments[*].name",
+          "model_path": "",
+          "effort_path": "",
+          "conversation_path": "conversationState.backendConversationId"
+        },
+        {
+          "method": "POST",
+          "host": "chatgpt.com",
+          "path": "/unauth-mweb/image-uploads",
+          "kind": "file"
+        },
+        {
+          "method": "PUT",
+          "host": "chatgpt.com",
+          "path": "/file-*",
+          "kind": "file"
+        },
+        {
+          "method": "POST",
+          "host": "chatgpt.com",
+          "path": "/unauth-mweb/image-uploads/process",
+          "kind": "file"
+        }
+      ],
+      "qualified_at": "2026-09-11T00:00:00Z"
+    },
+    {
+      "id": "claude",
+      "label": "claude",
+      "domains": [
+        "claude.ai"
+      ],
+      "aliases": [],
+      "conversation_path": "/chat/*",
+      "conversation_segment": 1,
+      "dom": {
+        "editor": "[contenteditable=\"true\"][role=\"textbox\"],.ProseMirror[contenteditable=\"true\"]",
+        "send": "button[data-testid=\"chat-input-send\"]",
+        "response": "[data-is-streaming],[data-testid=\"assistant-message\"]"
+      },
+      "network": [
+        {
+          "host": "claude.ai",
+          "conversation_path": "",
+          "conversation_url_segment": 4,
+          "path": "/api/organizations/*/chat_conversations/*/completion",
+          "method": "POST",
+          "text_path": "prompt",
+          "model_path": "model",
+          "effort_path": "effort"
+        },
+        {
+          "method": "POST",
+          "host": "claude.ai",
+          "path": "/api/organizations/*/conversations/*/wiggle/upload-file",
+          "kind": "file"
+        }
+      ],
+      "qualified_at": "2026-09-11T00:00:00Z"
+    },
+    {
+      "id": "lechat",
+      "label": "lechat",
+      "domains": [
+        "chat.mistral.ai"
+      ],
+      "aliases": [],
+      "conversation_path": "/chat/*",
+      "conversation_segment": 1,
+      "dom": {
+        "editor": "textarea,[contenteditable=\"true\"]",
+        "send": "button[type=\"submit\"][aria-busy]",
+        "response": "[data-message-role=\"assistant\"]"
+      },
+      "network": [],
+      "qualified_at": "2026-09-11T00:00:00Z"
+    },
+    {
+      "id": "copilot",
+      "label": "copilot",
+      "domains": [
+        "copilot.microsoft.com",
+        "copilot.cloud.microsoft"
+      ],
+      "aliases": [],
+      "conversation_path": "/chats/*",
+      "conversation_segment": 1,
+      "dom": {
+        "editor": "textarea,[contenteditable=\"true\"][role=\"textbox\"]",
+        "send": "button[data-testid=\"submit-button\"],button[aria-label=\"Submit message\"]",
+        "response": "[data-content=\"ai-message\"]"
+      },
+      "network": [],
+      "qualified_at": "2026-09-11T00:00:00Z"
+    },
+    {
+      "id": "gemini",
+      "label": "gemini",
+      "domains": [
+        "gemini.google.com"
+      ],
+      "aliases": [],
+      "conversation_path": "/app/*",
+      "conversation_segment": 1,
+      "dom": {
+        "editor": "rich-textarea [contenteditable=\"true\"],textarea",
+        "send": ".send-button button",
+        "response": "model-response"
+      },
+      "network": [],
+      "qualified_at": "2026-09-11T00:00:00Z"
+    },
+    {
+      "id": "notebooklm",
+      "label": "notebooklm",
+      "domains": [
+        "notebook.google.com",
+        "notebooklm.google.com"
+      ],
+      "aliases": [],
+      "conversation_path": "/notebook/*",
+      "conversation_segment": 1,
+      "dom": {
+        "editor": "textarea,[contenteditable=\"true\"][role=\"textbox\"]",
+        "send": "button[type=\"submit\"]",
+        "response": "[data-message-role=\"assistant\"],.to-user-message"
+      },
+      "network": [],
+      "qualified_at": "2026-09-11T00:00:00Z"
+    },
+    {
+      "id": "deepseek",
+      "label": "deepseek",
+      "domains": [
+        "chat.deepseek.com"
+      ],
+      "aliases": [],
+      "conversation_path": "/a/chat/s/*",
+      "conversation_segment": 3,
+      "dom": {
+        "editor": "textarea",
+        "send": "div[role=\"button\"].ds-button--primary.ds-button--circle",
+        "response": "[data-message-role=\"assistant\"]"
+      },
+      "network": [],
+      "qualified_at": "2026-09-11T00:00:00Z"
+    },
+    {
+      "id": "perplexity",
+      "label": "perplexity",
+      "domains": [
+        "www.perplexity.ai",
+        "perplexity.ai"
+      ],
+      "aliases": [],
+      "conversation_path": "/search/*",
+      "conversation_segment": 1,
+      "dom": {
+        "editor": "",
+        "send": "",
+        "response": ""
+      },
+      "network": [
+        {
+          "method": "POST",
+          "host": "www.perplexity.ai",
+          "path": "/rest/sse/perplexity_ask",
+          "text_path": "",
+          "text_paths": [
+            "query_str",
+            "params.dsl_query"
+          ],
+          "model_path": "params.model_preference",
+          "effort_path": "",
+          "conversation_path": ""
+        }
+      ],
+      "qualified_at": "2026-09-11T00:00:00Z"
+    },
+    {
+      "id": "grok",
+      "label": "grok",
+      "domains": [
+        "grok.com"
+      ],
+      "aliases": [],
+      "conversation_path": "/c/*",
+      "conversation_segment": 1,
+      "dom": {
+        "editor": "textarea,[contenteditable=\"true\"][role=\"textbox\"]",
+        "send": "button[data-testid=\"chat-submit\"]",
+        "response": "[data-message-role=\"assistant\"],[data-testid=\"assistant-message\"]"
+      },
+      "network": [],
+      "qualified_at": "2026-09-11T00:00:00Z"
+    }
+  ],
+  "native_tools": [],
+  "heuristics": {
+    "keys": [
+      "messages",
+      "prompt",
+      "model",
+      "input"
+    ],
+    "mime_types": [
+      "text/event-stream",
+      "application/json"
+    ]
+  },
+  "known_platforms": [
+    {
+      "id": "mammouth",
+      "label": "Mammouth AI",
+      "domains": [
+        "mammouth.ai"
+      ]
+    },
+    {
+      "id": "poe",
+      "label": "Poe",
+      "domains": [
+        "poe.com"
+      ]
+    },
+    {
+      "id": "openrouter",
+      "label": "OpenRouter",
+      "domains": [
+        "openrouter.ai"
+      ]
+    },
+    {
+      "id": "typingmind",
+      "label": "TypingMind",
+      "domains": [
+        "typingmind.com"
+      ]
+    },
+    {
+      "id": "chathub",
+      "label": "ChatHub",
+      "domains": [
+        "chathub.gg"
+      ]
+    },
+    {
+      "id": "sider",
+      "label": "Sider",
+      "domains": [
+        "sider.ai"
+      ]
+    },
+    {
+      "id": "merlin",
+      "label": "Merlin",
+      "domains": [
+        "getmerlin.in"
+      ]
+    },
+    {
+      "id": "harpa",
+      "label": "HARPA AI",
+      "domains": [
+        "harpa.ai"
+      ]
+    },
+    {
+      "id": "maxai",
+      "label": "MaxAI",
+      "domains": [
+        "maxai.me"
+      ]
+    },
+    {
+      "id": "monica",
+      "label": "Monica",
+      "domains": [
+        "monica.im"
+      ]
+    },
+    {
+      "id": "straico",
+      "label": "Straico",
+      "domains": [
+        "straico.com"
+      ]
+    },
+    {
+      "id": "t3chat",
+      "label": "T3 Chat",
+      "domains": [
+        "t3.chat"
+      ]
+    },
+    {
+      "id": "lmarena",
+      "label": "LMArena",
+      "domains": [
+        "lmarena.ai"
+      ]
+    },
+    {
+      "id": "flowgpt",
+      "label": "FlowGPT",
+      "domains": [
+        "flowgpt.com"
+      ]
+    },
+    {
+      "id": "glhf",
+      "label": "glhf.chat",
+      "domains": [
+        "glhf.chat"
+      ]
+    },
+    {
+      "id": "abacus",
+      "label": "Abacus ChatLLM",
+      "domains": [
+        "abacus.ai"
+      ]
+    },
+    {
+      "id": "youcom",
+      "label": "You.com",
+      "domains": [
+        "you.com"
+      ]
+    },
+    {
+      "id": "wiseone",
+      "label": "Wiseone",
+      "domains": [
+        "wiseone.io"
+      ]
+    },
+    {
+      "id": "gemini",
+      "label": "Google Gemini",
+      "domains": [
+        "gemini.google.com"
+      ]
+    },
+    {
+      "id": "copilot",
+      "label": "Microsoft Copilot",
+      "domains": [
+        "copilot.microsoft.com",
+        "copilot.cloud.microsoft"
+      ]
+    },
+    {
+      "id": "lechat",
+      "label": "Mistral Le Chat",
+      "domains": [
+        "chat.mistral.ai"
+      ]
+    },
+    {
+      "id": "deepseek",
+      "label": "DeepSeek",
+      "domains": [
+        "chat.deepseek.com"
+      ]
+    },
+    {
+      "id": "perplexity",
+      "label": "Perplexity",
+      "domains": [
+        "perplexity.ai"
+      ]
+    },
+    {
+      "id": "grok",
+      "label": "Grok",
+      "domains": [
+        "grok.com"
+      ]
+    },
+    {
+      "id": "notebooklm",
+      "label": "NotebookLM",
+      "domains": [
+        "notebooklm.google.com"
+      ]
+    },
+    {
+      "id": "aistudio",
+      "label": "Google AI Studio",
+      "domains": [
+        "aistudio.google.com"
+      ]
+    },
+    {
+      "id": "metaai",
+      "label": "Meta AI",
+      "domains": [
+        "meta.ai"
+      ]
+    },
+    {
+      "id": "pi",
+      "label": "Pi",
+      "domains": [
+        "pi.ai"
+      ]
+    },
+    {
+      "id": "character",
+      "label": "Character.AI",
+      "domains": [
+        "character.ai"
+      ]
+    },
+    {
+      "id": "qwen",
+      "label": "Alibaba Qwen",
+      "domains": [
+        "chat.qwen.ai",
+        "tongyi.aliyun.com"
+      ]
+    },
+    {
+      "id": "kimi",
+      "label": "Kimi",
+      "domains": [
+        "kimi.com"
+      ]
+    },
+    {
+      "id": "doubao",
+      "label": "Doubao",
+      "domains": [
+        "doubao.com"
+      ]
+    },
+    {
+      "id": "yuanbao",
+      "label": "Tencent Yuanbao",
+      "domains": [
+        "yuanbao.tencent.com"
+      ]
+    },
+    {
+      "id": "chatglm",
+      "label": "ChatGLM",
+      "domains": [
+        "chatglm.cn",
+        "z.ai"
+      ]
+    },
+    {
+      "id": "ernie",
+      "label": "Ernie Bot",
+      "domains": [
+        "yiyan.baidu.com"
+      ]
+    },
+    {
+      "id": "minimax",
+      "label": "MiniMax Hailuo",
+      "domains": [
+        "hailuoai.com"
+      ]
+    },
+    {
+      "id": "tiangong",
+      "label": "Tiangong",
+      "domains": [
+        "tiangong.cn"
+      ]
+    },
+    {
+      "id": "coze",
+      "label": "Coze",
+      "domains": [
+        "coze.com"
+      ]
+    },
+    {
+      "id": "duckai",
+      "label": "Duck.ai",
+      "domains": [
+        "duck.ai"
+      ]
+    },
+    {
+      "id": "komo",
+      "label": "Komo",
+      "domains": [
+        "komo.ai"
+      ]
+    },
+    {
+      "id": "andi",
+      "label": "Andi",
+      "domains": [
+        "andisearch.com"
+      ]
+    },
+    {
+      "id": "cursor",
+      "label": "Cursor",
+      "domains": [
+        "cursor.com"
+      ]
+    },
+    {
+      "id": "windsurf",
+      "label": "Windsurf",
+      "domains": [
+        "windsurf.com",
+        "codeium.com"
+      ]
+    },
+    {
+      "id": "tabnine",
+      "label": "Tabnine",
+      "domains": [
+        "tabnine.com"
+      ]
+    },
+    {
+      "id": "replit",
+      "label": "Replit",
+      "domains": [
+        "replit.com"
+      ]
+    },
+    {
+      "id": "v0",
+      "label": "v0",
+      "domains": [
+        "v0.dev"
+      ]
+    },
+    {
+      "id": "bolt",
+      "label": "Bolt",
+      "domains": [
+        "bolt.new"
+      ]
+    },
+    {
+      "id": "lovable",
+      "label": "Lovable",
+      "domains": [
+        "lovable.dev"
+      ]
+    },
+    {
+      "id": "sourcegraph",
+      "label": "Sourcegraph Cody",
+      "domains": [
+        "sourcegraph.com"
+      ]
+    },
+    {
+      "id": "qodo",
+      "label": "Qodo",
+      "domains": [
+        "qodo.ai"
+      ]
+    },
+    {
+      "id": "blackbox",
+      "label": "Blackbox AI",
+      "domains": [
+        "blackbox.ai"
+      ]
+    },
+    {
+      "id": "phind",
+      "label": "Phind",
+      "domains": [
+        "phind.com"
+      ]
+    },
+    {
+      "id": "devin",
+      "label": "Devin",
+      "domains": [
+        "app.devin.ai"
+      ]
+    },
+    {
+      "id": "continue",
+      "label": "Continue",
+      "domains": [
+        "continue.dev"
+      ]
+    },
+    {
+      "id": "magic",
+      "label": "Magic",
+      "domains": [
+        "magic.dev"
+      ]
+    },
+    {
+      "id": "augment",
+      "label": "Augment Code",
+      "domains": [
+        "augmentcode.com"
+      ]
+    },
+    {
+      "id": "zed",
+      "label": "Zed",
+      "domains": [
+        "zed.dev"
+      ]
+    },
+    {
+      "id": "warp",
+      "label": "Warp",
+      "domains": [
+        "warp.dev"
+      ]
+    },
+    {
+      "id": "midjourney",
+      "label": "Midjourney",
+      "domains": [
+        "midjourney.com"
+      ]
+    },
+    {
+      "id": "sora",
+      "label": "Sora",
+      "domains": [
+        "sora.com"
+      ]
+    },
+    {
+      "id": "dalle",
+      "label": "OpenAI Labs",
+      "domains": [
+        "labs.openai.com"
+      ]
+    },
+    {
+      "id": "firefly",
+      "label": "Adobe Firefly",
+      "domains": [
+        "firefly.adobe.com"
+      ]
+    },
+    {
+      "id": "leonardo",
+      "label": "Leonardo.Ai",
+      "domains": [
+        "leonardo.ai"
+      ]
+    },
+    {
+      "id": "ideogram",
+      "label": "Ideogram",
+      "domains": [
+        "ideogram.ai"
+      ]
+    },
+    {
+      "id": "civitai",
+      "label": "Civitai",
+      "domains": [
+        "civitai.com"
+      ]
+    },
+    {
+      "id": "clipdrop",
+      "label": "Clipdrop",
+      "domains": [
+        "clipdrop.co"
+      ]
+    },
+    {
+      "id": "stability",
+      "label": "Stability AI",
+      "domains": [
+        "stability.ai"
+      ]
+    },
+    {
+      "id": "runway",
+      "label": "Runway",
+      "domains": [
+        "runwayml.com"
+      ]
+    },
+    {
+      "id": "pika",
+      "label": "Pika",
+      "domains": [
+        "pika.art"
+      ]
+    },
+    {
+      "id": "luma",
+      "label": "Luma Dream Machine",
+      "domains": [
+        "lumalabs.ai"
+      ]
+    },
+    {
+      "id": "kling",
+      "label": "Kling AI",
+      "domains": [
+        "klingai.com"
+      ]
+    },
+    {
+      "id": "heygen",
+      "label": "HeyGen",
+      "domains": [
+        "heygen.com"
+      ]
+    },
+    {
+      "id": "synthesia",
+      "label": "Synthesia",
+      "domains": [
+        "synthesia.io"
+      ]
+    },
+    {
+      "id": "did",
+      "label": "D-ID",
+      "domains": [
+        "d-id.com"
+      ]
+    },
+    {
+      "id": "elevenlabs",
+      "label": "ElevenLabs",
+      "domains": [
+        "elevenlabs.io"
+      ]
+    },
+    {
+      "id": "suno",
+      "label": "Suno",
+      "domains": [
+        "suno.com"
+      ]
+    },
+    {
+      "id": "udio",
+      "label": "Udio",
+      "domains": [
+        "udio.com"
+      ]
+    },
+    {
+      "id": "descript",
+      "label": "Descript",
+      "domains": [
+        "descript.com"
+      ]
+    },
+    {
+      "id": "krea",
+      "label": "Krea",
+      "domains": [
+        "krea.ai"
+      ]
+    },
+    {
+      "id": "playground",
+      "label": "Playground",
+      "domains": [
+        "playground.com"
+      ]
+    },
+    {
+      "id": "recraft",
+      "label": "Recraft",
+      "domains": [
+        "recraft.ai"
+      ]
+    },
+    {
+      "id": "flux",
+      "label": "Black Forest Labs",
+      "domains": [
+        "blackforestlabs.ai"
+      ]
+    },
+    {
+      "id": "photoroom",
+      "label": "PhotoRoom",
+      "domains": [
+        "photoroom.com"
+      ]
+    },
+    {
+      "id": "jasper",
+      "label": "Jasper",
+      "domains": [
+        "jasper.ai"
+      ]
+    },
+    {
+      "id": "copyai",
+      "label": "Copy.ai",
+      "domains": [
+        "copy.ai"
+      ]
+    },
+    {
+      "id": "writesonic",
+      "label": "Writesonic",
+      "domains": [
+        "writesonic.com"
+      ]
+    },
+    {
+      "id": "rytr",
+      "label": "Rytr",
+      "domains": [
+        "rytr.me"
+      ]
+    },
+    {
+      "id": "quillbot",
+      "label": "QuillBot",
+      "domains": [
+        "quillbot.com"
+      ]
+    },
+    {
+      "id": "wordtune",
+      "label": "Wordtune",
+      "domains": [
+        "wordtune.com"
+      ]
+    },
+    {
+      "id": "sudowrite",
+      "label": "Sudowrite",
+      "domains": [
+        "sudowrite.com"
+      ]
+    },
+    {
+      "id": "gamma",
+      "label": "Gamma",
+      "domains": [
+        "gamma.app"
+      ]
+    },
+    {
+      "id": "tome",
+      "label": "Tome",
+      "domains": [
+        "tome.app"
+      ]
+    },
+    {
+      "id": "beautifulai",
+      "label": "Beautiful.ai",
+      "domains": [
+        "beautiful.ai"
+      ]
+    },
+    {
+      "id": "writer",
+      "label": "Writer",
+      "domains": [
+        "writer.com"
+      ]
+    },
+    {
+      "id": "napkin",
+      "label": "Napkin",
+      "domains": [
+        "napkin.ai"
+      ]
+    },
+    {
+      "id": "otter",
+      "label": "Otter.ai",
+      "domains": [
+        "otter.ai"
+      ]
+    },
+    {
+      "id": "fireflies",
+      "label": "Fireflies",
+      "domains": [
+        "fireflies.ai"
+      ]
+    },
+    {
+      "id": "fathom",
+      "label": "Fathom",
+      "domains": [
+        "fathom.video"
+      ]
+    },
+    {
+      "id": "tldv",
+      "label": "tl;dv",
+      "domains": [
+        "tldv.io"
+      ]
+    },
+    {
+      "id": "readai",
+      "label": "Read AI",
+      "domains": [
+        "read.ai"
+      ]
+    },
+    {
+      "id": "avoma",
+      "label": "Avoma",
+      "domains": [
+        "avoma.com"
+      ]
+    },
+    {
+      "id": "supernormal",
+      "label": "Supernormal",
+      "domains": [
+        "supernormal.com"
+      ]
+    },
+    {
+      "id": "granola",
+      "label": "Granola",
+      "domains": [
+        "granola.ai"
+      ]
+    },
+    {
+      "id": "circleback",
+      "label": "Circleback",
+      "domains": [
+        "circleback.ai"
+      ]
+    },
+    {
+      "id": "notta",
+      "label": "Notta",
+      "domains": [
+        "notta.ai"
+      ]
+    },
+    {
+      "id": "consensus",
+      "label": "Consensus",
+      "domains": [
+        "consensus.app"
+      ]
+    },
+    {
+      "id": "elicit",
+      "label": "Elicit",
+      "domains": [
+        "elicit.com"
+      ]
+    },
+    {
+      "id": "scite",
+      "label": "Scite",
+      "domains": [
+        "scite.ai"
+      ]
+    },
+    {
+      "id": "scholarcy",
+      "label": "Scholarcy",
+      "domains": [
+        "scholarcy.com"
+      ]
+    },
+    {
+      "id": "exa",
+      "label": "Exa",
+      "domains": [
+        "exa.ai"
+      ]
+    },
+    {
+      "id": "felo",
+      "label": "Felo",
+      "domains": [
+        "felo.ai"
+      ]
+    },
+    {
+      "id": "genspark",
+      "label": "Genspark",
+      "domains": [
+        "genspark.ai"
+      ]
+    },
+    {
+      "id": "manus",
+      "label": "Manus",
+      "domains": [
+        "manus.im"
+      ]
+    },
+    {
+      "id": "dify",
+      "label": "Dify",
+      "domains": [
+        "dify.ai"
+      ]
+    },
+    {
+      "id": "relevanceai",
+      "label": "Relevance AI",
+      "domains": [
+        "relevanceai.com"
+      ]
+    },
+    {
+      "id": "lindy",
+      "label": "Lindy",
+      "domains": [
+        "lindy.ai"
+      ]
+    },
+    {
+      "id": "flowise",
+      "label": "Flowise",
+      "domains": [
+        "flowiseai.com"
+      ]
+    },
+    {
+      "id": "langflow",
+      "label": "Langflow",
+      "domains": [
+        "langflow.org"
+      ]
+    },
+    {
+      "id": "dust",
+      "label": "Dust",
+      "domains": [
+        "dust.tt"
+      ]
+    },
+    {
+      "id": "browseruse",
+      "label": "Browser Use",
+      "domains": [
+        "browser-use.com"
+      ]
+    },
+    {
+      "id": "openai-platform",
+      "label": "OpenAI Platform",
+      "domains": [
+        "platform.openai.com"
+      ]
+    },
+    {
+      "id": "anthropic-console",
+      "label": "Anthropic Console",
+      "domains": [
+        "console.anthropic.com"
+      ]
+    },
+    {
+      "id": "google-ai-dev",
+      "label": "Google AI for Developers",
+      "domains": [
+        "ai.google.dev"
+      ]
+    },
+    {
+      "id": "xai-console",
+      "label": "xAI Console",
+      "domains": [
+        "console.x.ai"
+      ]
+    },
+    {
+      "id": "groq",
+      "label": "Groq Console",
+      "domains": [
+        "console.groq.com"
+      ]
+    },
+    {
+      "id": "replicate",
+      "label": "Replicate",
+      "domains": [
+        "replicate.com"
+      ]
+    },
+    {
+      "id": "together",
+      "label": "Together AI",
+      "domains": [
+        "together.ai"
+      ]
+    },
+    {
+      "id": "fireworks",
+      "label": "Fireworks AI",
+      "domains": [
+        "fireworks.ai"
+      ]
+    },
+    {
+      "id": "deepinfra",
+      "label": "DeepInfra",
+      "domains": [
+        "deepinfra.com"
+      ]
+    },
+    {
+      "id": "modal",
+      "label": "Modal",
+      "domains": [
+        "modal.com"
+      ]
+    },
+    {
+      "id": "cohere",
+      "label": "Cohere",
+      "domains": [
+        "cohere.com",
+        "dashboard.cohere.com"
+      ]
+    },
+    {
+      "id": "ai21",
+      "label": "AI21 Studio",
+      "domains": [
+        "studio.ai21.com"
+      ]
+    },
+    {
+      "id": "reka",
+      "label": "Reka",
+      "domains": [
+        "reka.ai"
+      ]
+    },
+    {
+      "id": "zeroone",
+      "label": "01.AI",
+      "domains": [
+        "01.ai"
+      ]
+    },
+    {
+      "id": "alephalpha",
+      "label": "Aleph Alpha",
+      "domains": [
+        "aleph-alpha.com"
+      ]
+    },
+    {
+      "id": "lighton",
+      "label": "LightOn",
+      "domains": [
+        "lighton.ai"
+      ]
+    },
+    {
+      "id": "silo",
+      "label": "Silo AI",
+      "domains": [
+        "silo.ai"
+      ]
+    },
+    {
+      "id": "langsmith",
+      "label": "LangSmith",
+      "domains": [
+        "langsmith.com"
+      ]
+    },
+    {
+      "id": "wandb",
+      "label": "Weights & Biases",
+      "domains": [
+        "wandb.ai"
+      ]
+    },
+    {
+      "id": "azure-openai",
+      "label": "Azure OpenAI",
+      "domains": [
+        "ai.azure.com",
+        "oai.azure.com"
+      ]
+    },
+    {
+      "id": "ollama",
+      "label": "Ollama",
+      "domains": [
+        "ollama.com"
+      ]
+    },
+    {
+      "id": "lmstudio",
+      "label": "LM Studio",
+      "domains": [
+        "lmstudio.ai"
+      ]
+    },
+    {
+      "id": "jan",
+      "label": "Jan",
+      "domains": [
+        "jan.ai"
+      ]
+    },
+    {
+      "id": "msty",
+      "label": "Msty",
+      "domains": [
+        "msty.app"
+      ]
+    },
+    {
+      "id": "nomic",
+      "label": "GPT4All",
+      "domains": [
+        "nomic.ai"
+      ]
+    },
+    {
+      "id": "anythingllm",
+      "label": "AnythingLLM",
+      "domains": [
+        "anythingllm.com"
+      ]
+    },
+    {
+      "id": "harvey",
+      "label": "Harvey",
+      "domains": [
+        "harvey.ai"
+      ]
+    },
+    {
+      "id": "casetext",
+      "label": "CoCounsel",
+      "domains": [
+        "casetext.com"
+      ]
+    },
+    {
+      "id": "spellbook",
+      "label": "Spellbook",
+      "domains": [
+        "spellbook.legal"
+      ]
+    },
+    {
+      "id": "luminance",
+      "label": "Luminance",
+      "domains": [
+        "luminance.com"
+      ]
+    },
+    {
+      "id": "robin",
+      "label": "Robin AI",
+      "domains": [
+        "robin.ai"
+      ]
+    },
+    {
+      "id": "doctrine",
+      "label": "Doctrine",
+      "domains": [
+        "doctrine.fr"
+      ]
+    },
+    {
+      "id": "jimini",
+      "label": "Jimini",
+      "domains": [
+        "jimini.ai"
+      ]
+    },
+    {
+      "id": "abridge",
+      "label": "Abridge",
+      "domains": [
+        "abridge.com"
+      ]
+    },
+    {
+      "id": "glasshealth",
+      "label": "Glass Health",
+      "domains": [
+        "glass.health"
+      ]
+    },
+    {
+      "id": "hippocratic",
+      "label": "Hippocratic AI",
+      "domains": [
+        "hippocratic.ai"
+      ]
+    },
+    {
+      "id": "nabla",
+      "label": "Nabla",
+      "domains": [
+        "nabla.com"
+      ]
+    },
+    {
+      "id": "regie",
+      "label": "Regie.ai",
+      "domains": [
+        "regie.ai"
+      ]
+    },
+    {
+      "id": "lavender",
+      "label": "Lavender",
+      "domains": [
+        "lavender.ai"
+      ]
+    },
+    {
+      "id": "clay",
+      "label": "Clay",
+      "domains": [
+        "clay.com"
+      ]
+    },
+    {
+      "id": "instantly",
+      "label": "Instantly",
+      "domains": [
+        "instantly.ai"
+      ]
+    },
+    {
+      "id": "julius",
+      "label": "Julius",
+      "domains": [
+        "julius.ai"
+      ]
+    },
+    {
+      "id": "github-copilot",
+      "label": "GitHub Copilot",
+      "domains": [
+        "github.com"
+      ],
+      "paths": [
+        "/copilot*"
+      ]
+    },
+    {
+      "id": "x-grok",
+      "label": "Grok sur X",
+      "domains": [
+        "x.com"
+      ],
+      "paths": [
+        "/i/grok*"
+      ]
+    },
+    {
+      "id": "ddg-ai",
+      "label": "DuckDuckGo AI Chat",
+      "domains": [
+        "duckduckgo.com"
+      ],
+      "paths": [
+        "/aichat*"
+      ]
+    },
+    {
+      "id": "bing-chat",
+      "label": "Bing Chat",
+      "domains": [
+        "bing.com"
+      ],
+      "paths": [
+        "/chat*"
+      ]
+    },
+    {
+      "id": "vertex-ai",
+      "label": "Google Vertex AI",
+      "domains": [
+        "console.cloud.google.com"
+      ],
+      "paths": [
+        "/vertex-ai*"
+      ]
+    },
+    {
+      "id": "m365-copilot",
+      "label": "Microsoft 365 Copilot",
+      "domains": [
+        "m365.cloud.microsoft"
+      ],
+      "paths": [
+        "/chat*"
+      ]
+    },
+    {
+      "id": "copilot-studio",
+      "label": "Copilot Studio",
+      "domains": [
+        "copilotstudio.microsoft.com"
+      ]
+    }
+  ]
+}
