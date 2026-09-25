@@ -19,29 +19,29 @@ import (
 	"time"
 )
 
-// The catalogue edited in the console is the product's own way of teaching the
-// fleet where to read a model name, without a new agent or a new installer. Until
-// now `publishDetectionCatalog` had no test at all: the only proven round trip was
-// the signed vendor import, which is a different handler. This exercises the path
-// the Publish button actually takes -- edit, publish, then read it back as a device
-// does -- because a catalogue that is stored but never served teaches nothing.
-func TestDetectionCatalogPublish(t *testing.T) {
+type detectionPublishFixture struct {
+	p        *projectionFixture
+	ctx      context.Context
+	revision int64
+	content  DetectionContent
+	target   int
+	body     map[string]any
+}
+
+func newDetectionPublishFixture(t *testing.T) *detectionPublishFixture {
+	t.Helper()
 	p := newProjectionFixture(t)
-	// The editor is a maintenance path, closed unless the operator asked for it. The
-	// fixture keeps the zero value, so the test that exercises publication says so
-	// here rather than having the whole suite run with the flag on.
+	// The editor is enabled only for the publication scenario.
 	p.a.config.ConsoleDebug = true
 	ctx := context.Background()
 	var revision int64
-	if e := p.admin.QueryRow(ctx, "SELECT max(revision) FROM detection_catalogs").Scan(&revision); e != nil {
-		t.Fatal(e)
+	if err := p.admin.QueryRow(ctx, "SELECT max(revision) FROM detection_catalogs").Scan(&revision); err != nil {
+		t.Fatal(err)
 	}
 	var content DetectionContent
-	if e := json.Unmarshal(detectionFactory, &content); e != nil {
-		t.Fatal(e)
+	if err := json.Unmarshal(detectionFactory, &content); err != nil {
+		t.Fatal(err)
 	}
-	// The change under test is exactly the one this chantier needs: naming where a
-	// provider's completion request carries the model that answered.
 	target := -1
 	for i, provider := range content.Providers {
 		if provider.ID == "chatgpt" {
@@ -51,174 +51,181 @@ func TestDetectionCatalogPublish(t *testing.T) {
 	if target < 0 {
 		t.Fatal("the factory catalogue no longer ships a chatgpt provider")
 	}
-	// The factory catalogue declares a chatgpt network rule since 2026-09-14; this test
-	// publishes its own and asserts what survives the trip, so it replaces whatever is
-	// there rather than requiring the slot to be empty. The earlier assertion turned a
-	// legitimate catalogue change into a failing suite.
-	content.Providers[target].Network = nil
-	// Read off the real page on 2026-09-14: the body carries the model and the effort
-	// at the root, the text under messages[*].content.parts[*], and the conversation
-	// identifier from the second message on. Publishing the rule exactly as it will be
-	// written is what proves none of those fields is lost on the way to a device.
+	// Publish a measured rule with all the fields the device must receive.
 	content.Providers[target].Network = []DetectionNetwork{{
 		Method: "POST", Host: "chatgpt.com", Path: "/backend-api/f/conversation",
 		TextPath: "messages[*].content.parts[*]", ModelPath: "model",
 		EffortPath: "thinking_effort", ConversationPath: "conversation_id",
-		// Ordered fallbacks, as chat.mistral.ai needs: it renames the text field between
-		// the request that opens a conversation and the ones that continue it.
 		TextPaths: []string{"messageInput[*].text", "content[*].text"},
 	}}
-	body := map[string]any{"revision": revision, "content": content}
+	return &detectionPublishFixture{p: p, ctx: ctx, revision: revision, content: content,
+		target: target, body: map[string]any{"revision": revision, "content": content}}
+}
 
+func (fixture *detectionPublishFixture) assertStaleRevision(t *testing.T) {
+	requireHTTP(t, fixture.p.as("owner", "PUT", "/api/detection/catalog", map[string]any{"revision": fixture.revision + 1, "content": fixture.content}), 409)
+}
+
+func (fixture *detectionPublishFixture) assertInvalidCatalog(t *testing.T) {
+	broken := fixture.content
+	broken.Providers = append([]DetectionProvider{}, fixture.content.Providers...)
+	broken.Providers[fixture.target].Network = []DetectionNetwork{{
+		Method: "POST", Host: "chatgpt.com", Path: "/backend-api/conversation",
+		// A JSON path may not carry a numeric index, only [*].
+		ModelPath: "choices[0].model",
+	}}
+	requireHTTP(t, fixture.p.as("owner", "PUT", "/api/detection/catalog", map[string]any{"revision": fixture.revision, "content": broken}), 400)
+}
+
+func (fixture *detectionPublishFixture) assertTextFallbacks(t *testing.T) {
+	for _, paths := range [][]string{
+		{"a", "b", "c", "d", "e"},
+		{"messageInput[*].text", ""},
+		{"__proto__.secret"},
+		{"choices[0].text"},
+	} {
+		refused := fixture.content
+		refused.Providers = append([]DetectionProvider{}, fixture.content.Providers...)
+		refused.Providers[fixture.target].Network = []DetectionNetwork{{
+			Method: "POST", Host: "chatgpt.com", Path: "/backend-api/f/conversation", TextPaths: paths,
+		}}
+		requireHTTP(t, fixture.p.as("owner", "PUT", "/api/detection/catalog", map[string]any{"revision": fixture.revision, "content": refused}), 400)
+	}
+}
+
+func (fixture *detectionPublishFixture) assertForeignHost(t *testing.T) {
+	foreign := fixture.content
+	foreign.Providers = append([]DetectionProvider{}, fixture.content.Providers...)
+	foreign.Providers[fixture.target].Network = []DetectionNetwork{{
+		Method: "POST", Host: "api.example.invalid", Path: "/v1/chat", ModelPath: "model",
+	}}
+	requireHTTP(t, fixture.p.as("owner", "PUT", "/api/detection/catalog", map[string]any{"revision": fixture.revision, "content": foreign}), 400)
+}
+
+func (fixture *detectionPublishFixture) assertRequestSizeCeiling(t *testing.T) {
+	// The request body reaches its 128 KiB limit before the catalog's 512 KiB limit.
+	wide := "textarea" + string(bytes.Repeat([]byte("a"), 500))
+	big := fixture.content
+	big.Providers = append([]DetectionProvider{}, fixture.content.Providers...)
+	for i := 0; len(big.Providers) < 128; i++ {
+		filler := fixture.content.Providers[fixture.target]
+		filler.ID = fmt.Sprintf("filler-%03d", i)
+		filler.Label = fmt.Sprintf("Filler %03d", i)
+		filler.Domains = []string{fmt.Sprintf("filler-%03d.example.invalid", i)}
+		filler.Aliases = nil
+		filler.Network = nil
+		filler.DOM = DetectionDOM{Editor: wide, Send: wide, Response: wide}
+		big.Providers = append(big.Providers, filler)
+	}
+	requireHTTP(t, fixture.p.as("owner", "PUT", "/api/detection/catalog", map[string]any{"revision": fixture.revision, "content": big}), 400)
+}
+
+func assertPublishedRule(t *testing.T, content DetectionContent) {
+	t.Helper()
+	for _, provider := range content.Providers {
+		if provider.ID != "chatgpt" {
+			continue
+		}
+		if len(provider.Network) != 1 {
+			t.Fatalf("the published rule did not survive: %+v", provider.Network)
+		}
+		rule := provider.Network[0]
+		if rule.ModelPath != "model" || rule.EffortPath != "thinking_effort" || rule.ConversationPath != "conversation_id" || rule.TextPath != "messages[*].content.parts[*]" {
+			t.Fatalf("a field of the rule was dropped in the round trip: %+v", rule)
+		}
+		if len(rule.TextPaths) != 2 || rule.TextPaths[0] != "messageInput[*].text" || rule.TextPaths[1] != "content[*].text" {
+			t.Fatalf("the ordered text fallbacks did not survive: %v", rule.TextPaths)
+		}
+		return
+	}
+	t.Fatal("chatgpt missing from the served catalogue")
+}
+
+func (fixture *detectionPublishFixture) assertDeviceCatalog(t *testing.T, revision int64) {
+	credential := randomToken()
+	if tag, err := fixture.p.admin.Exec(fixture.ctx, "UPDATE devices SET credential_hash=$1 WHERE id=$2", hash(credential), fixture.p.device); err != nil || tag.RowsAffected() != 1 {
+		t.Fatal("device credential fixture missing", err)
+	}
+	request := httptest.NewRequest("GET", "/v3/detection-catalog", nil)
+	request.Header.Set("Authorization", "Bearer "+credential)
+	served := httptest.NewRecorder()
+	fixture.p.a.mux.ServeHTTP(served, request)
+	requireHTTP(t, served, 200)
+	var envelope publisherEnvelope
+	if err := json.Unmarshal(served.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := base64.StdEncoding.DecodeString(envelope.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature, err := base64.StdEncoding.DecodeString(envelope.Signature)
+	if err != nil || !ed25519.Verify(fixture.p.a.policyKey(fixture.p.org).Public().(ed25519.PublicKey), payload, signature) {
+		t.Fatal("the served catalogue is not signed for this organization", err)
+	}
+	var header publisherHeader
+	if err = json.Unmarshal(payload, &header); err != nil || header.Revision != revision {
+		t.Fatal("the device was served another revision", err, header.Revision, revision)
+	}
+	bodyBytes, err := base64.StdEncoding.DecodeString(header.Content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The handler re-marshals omitted lists as [] rather than null.
+	normalizeDetectionLists(&fixture.content)
+	expected, _ := json.Marshal(fixture.content)
+	if !bytes.Equal(bodyBytes, expected) {
+		t.Fatal("the served bytes are not the published ones")
+	}
+	var round DetectionContent
+	if err = json.Unmarshal(bodyBytes, &round); err != nil {
+		t.Fatal(err)
+	}
+	assertPublishedRule(t, round)
+}
+
+func (fixture *detectionPublishFixture) assertPublished(t *testing.T) {
+	response := fixture.p.as("owner", "PUT", "/api/detection/catalog", fixture.body)
+	requireHTTP(t, response, 200)
+	var out struct {
+		Revision int64 `json:"revision"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &out); err != nil || out.Revision <= fixture.revision {
+		t.Fatal("publication did not advance the revision", err, out.Revision)
+	}
+	var audited int
+	if err := fixture.p.admin.QueryRow(fixture.ctx, "SELECT count(*) FROM audit WHERE action='detection.catalog.publish'").Scan(&audited); err != nil || audited != 1 {
+		t.Fatal("publication not audited exactly once", err, audited)
+	}
+	fixture.assertDeviceCatalog(t, out.Revision)
+}
+
+func (fixture *detectionPublishFixture) assertStaleMFA(t *testing.T) {
+	if tag, err := fixture.p.admin.Exec(fixture.ctx, "UPDATE sessions SET mfa_verified_at=clock_timestamp()-interval '6 minutes' WHERE token_hash=$1", hash(fixture.p.owner.Value)); err != nil || tag.RowsAffected() != 1 {
+		t.Fatal("stale MFA fixture missing", err)
+	}
+	var current int64
+	if err := fixture.p.admin.QueryRow(fixture.ctx, "SELECT max(revision) FROM detection_catalogs").Scan(&current); err != nil {
+		t.Fatal(err)
+	}
+	requireHTTP(t, fixture.p.as("owner", "PUT", "/api/detection/catalog", map[string]any{"revision": current, "content": fixture.content}), 403)
+}
+
+// The catalogue edited in the console must reach the device as signed bytes.
+func TestDetectionCatalogPublish(t *testing.T) {
+	fixture := newDetectionPublishFixture(t)
 	for _, actor := range []string{"admin", "viewer", "reporter", "key"} {
 		t.Run("refuse_"+actor, func(t *testing.T) {
-			requireHTTP(t, p.as(actor, "PUT", "/api/detection/catalog", body), 403)
+			requireHTTP(t, fixture.p.as(actor, "PUT", "/api/detection/catalog", fixture.body), 403)
 		})
 	}
-	t.Run("a stale revision is refused rather than overwriting a concurrent edit", func(t *testing.T) {
-		requireHTTP(t, p.as("owner", "PUT", "/api/detection/catalog", map[string]any{"revision": revision + 1, "content": content}), 409)
-	})
-	t.Run("an invalid catalogue never reaches the fleet", func(t *testing.T) {
-		broken := content
-		broken.Providers = append([]DetectionProvider{}, content.Providers...)
-		broken.Providers[target].Network = []DetectionNetwork{{
-			Method: "POST", Host: "chatgpt.com", Path: "/backend-api/conversation",
-			// A JSON path may not carry a numeric index, only [*].
-			ModelPath: "choices[0].model",
-		}}
-		requireHTTP(t, p.as("owner", "PUT", "/api/detection/catalog", map[string]any{"revision": revision, "content": broken}), 400)
-	})
-	t.Run("the text fallbacks are bounded and never empty", func(t *testing.T) {
-		for _, paths := range [][]string{
-			{"a", "b", "c", "d", "e"},    // five is one too many
-			{"messageInput[*].text", ""}, // an empty entry would shorten the list in silence
-			{"__proto__.secret"},         // the same reserved names as any other path
-			{"choices[0].text"},          // no numeric index, only [*]
-		} {
-			refused := content
-			refused.Providers = append([]DetectionProvider{}, content.Providers...)
-			refused.Providers[target].Network = []DetectionNetwork{{
-				Method: "POST", Host: "chatgpt.com", Path: "/backend-api/f/conversation", TextPaths: paths,
-			}}
-			requireHTTP(t, p.as("owner", "PUT", "/api/detection/catalog", map[string]any{"revision": revision, "content": refused}), 400)
-		}
-	})
-	t.Run("a network rule on a host the provider does not own is refused", func(t *testing.T) {
-		foreign := content
-		foreign.Providers = append([]DetectionProvider{}, content.Providers...)
-		foreign.Providers[target].Network = []DetectionNetwork{{
-			Method: "POST", Host: "api.example.invalid", Path: "/v1/chat", ModelPath: "model",
-		}}
-		requireHTTP(t, p.as("owner", "PUT", "/api/detection/catalog", map[string]any{"revision": revision, "content": foreign}), 400)
-	})
-	t.Run("the effective size ceiling is the request body, not the documented catalogue limit", func(t *testing.T) {
-		// publishDetectionCatalog refuses a marshalled catalogue above 512 KiB, but
-		// `decode` caps the request body at 128 KiB first, so that branch cannot be
-		// reached over HTTP. The ceiling a console user actually meets is 128 KiB,
-		// and it answers 400. Pinned so the discrepancy is noticed if either moves.
-		// A selector may be 512 characters; three of them per provider, times the 128
-		// providers the schema allows, comfortably passes 128 KiB while staying valid.
-		wide := "textarea" + string(bytes.Repeat([]byte("a"), 500))
-		big := content
-		big.Providers = append([]DetectionProvider{}, content.Providers...)
-		for i := 0; len(big.Providers) < 128; i++ {
-			filler := content.Providers[target]
-			filler.ID = fmt.Sprintf("filler-%03d", i)
-			filler.Label = fmt.Sprintf("Filler %03d", i)
-			filler.Domains = []string{fmt.Sprintf("filler-%03d.example.invalid", i)}
-			filler.Aliases = nil
-			filler.Network = nil
-			filler.DOM = DetectionDOM{Editor: wide, Send: wide, Response: wide}
-			big.Providers = append(big.Providers, filler)
-		}
-		requireHTTP(t, p.as("owner", "PUT", "/api/detection/catalog", map[string]any{"revision": revision, "content": big}), 400)
-	})
-	t.Run("a published catalogue reaches a device, signed for its organization", func(t *testing.T) {
-		w := p.as("owner", "PUT", "/api/detection/catalog", body)
-		requireHTTP(t, w, 200)
-		var out struct {
-			Revision int64 `json:"revision"`
-		}
-		if e := json.Unmarshal(w.Body.Bytes(), &out); e != nil || out.Revision <= revision {
-			t.Fatal("publication did not advance the revision", e, out.Revision)
-		}
-		var audited int
-		if e := p.admin.QueryRow(ctx, "SELECT count(*) FROM audit WHERE action='detection.catalog.publish'").Scan(&audited); e != nil || audited != 1 {
-			t.Fatal("publication not audited exactly once", e, audited)
-		}
-		// Read it back the way an approved device does. A catalogue stored but not
-		// served would leave the fleet on the compiled factory table for ever.
-		credential := randomToken()
-		if tag, e := p.admin.Exec(ctx, "UPDATE devices SET credential_hash=$1 WHERE id=$2", hash(credential), p.device); e != nil || tag.RowsAffected() != 1 {
-			t.Fatal("device credential fixture missing", e)
-		}
-		r := httptest.NewRequest("GET", "/v3/detection-catalog", nil)
-		r.Header.Set("Authorization", "Bearer "+credential)
-		served := httptest.NewRecorder()
-		p.a.mux.ServeHTTP(served, r)
-		requireHTTP(t, served, 200)
-		var envelope publisherEnvelope
-		if e := json.Unmarshal(served.Body.Bytes(), &envelope); e != nil {
-			t.Fatal(e)
-		}
-		payload, e := base64.StdEncoding.DecodeString(envelope.Payload)
-		if e != nil {
-			t.Fatal(e)
-		}
-		signature, e := base64.StdEncoding.DecodeString(envelope.Signature)
-		if e != nil || !ed25519.Verify(p.a.policyKey(p.org).Public().(ed25519.PublicKey), payload, signature) {
-			t.Fatal("the served catalogue is not signed for this organization", e)
-		}
-		var header publisherHeader
-		if e = json.Unmarshal(payload, &header); e != nil || header.Revision != out.Revision {
-			t.Fatal("the device was served another revision", e, header.Revision, out.Revision)
-		}
-		bodyBytes, e := base64.StdEncoding.DecodeString(header.Content)
-		if e != nil {
-			t.Fatal(e)
-		}
-		// The handler re-marshals what it validated, with omitted lists written as []
-		// rather than null, so compare against that rather than the file bytes.
-		normalizeDetectionLists(&content)
-		expected, _ := json.Marshal(content)
-		if !bytes.Equal(bodyBytes, expected) {
-			t.Fatal("the served bytes are not the published ones")
-		}
-		var round DetectionContent
-		if e = json.Unmarshal(bodyBytes, &round); e != nil {
-			t.Fatal(e)
-		}
-		for _, provider := range round.Providers {
-			if provider.ID != "chatgpt" {
-				continue
-			}
-			// Go decodes then re-marshals: a field the struct does not declare vanishes
-			// here without a word. That is exactly how effort_path was nearly lost.
-			if len(provider.Network) != 1 {
-				t.Fatalf("the published rule did not survive: %+v", provider.Network)
-			}
-			rule := provider.Network[0]
-			if rule.ModelPath != "model" || rule.EffortPath != "thinking_effort" || rule.ConversationPath != "conversation_id" || rule.TextPath != "messages[*].content.parts[*]" {
-				t.Fatalf("a field of the rule was dropped in the round trip: %+v", rule)
-			}
-			// A slice is as easy to lose as a string, and its order carries meaning.
-			if len(rule.TextPaths) != 2 || rule.TextPaths[0] != "messageInput[*].text" || rule.TextPaths[1] != "content[*].text" {
-				t.Fatalf("the ordered text fallbacks did not survive: %v", rule.TextPaths)
-			}
-			return
-		}
-		t.Fatal("chatgpt missing from the served catalogue")
-	})
-	t.Run("a stale second factor cannot publish", func(t *testing.T) {
-		if tag, e := p.admin.Exec(ctx, "UPDATE sessions SET mfa_verified_at=clock_timestamp()-interval '6 minutes' WHERE token_hash=$1", hash(p.owner.Value)); e != nil || tag.RowsAffected() != 1 {
-			t.Fatal("stale MFA fixture missing", e)
-		}
-		var current int64
-		if e := p.admin.QueryRow(ctx, "SELECT max(revision) FROM detection_catalogs").Scan(&current); e != nil {
-			t.Fatal(e)
-		}
-		requireHTTP(t, p.as("owner", "PUT", "/api/detection/catalog", map[string]any{"revision": current, "content": content}), 403)
-	})
+	t.Run("a stale revision is refused rather than overwriting a concurrent edit", fixture.assertStaleRevision)
+	t.Run("an invalid catalogue never reaches the fleet", fixture.assertInvalidCatalog)
+	t.Run("the text fallbacks are bounded and never empty", fixture.assertTextFallbacks)
+	t.Run("a network rule on a host the provider does not own is refused", fixture.assertForeignHost)
+	t.Run("the effective size ceiling is the request body, not the documented catalogue limit", fixture.assertRequestSizeCeiling)
+	t.Run("a published catalogue reaches a device, signed for its organization", fixture.assertPublished)
+	t.Run("a stale second factor cannot publish", fixture.assertStaleMFA)
 }
 
 // The factory catalogue ships twice: once for the extension build and once
@@ -237,6 +244,58 @@ func TestDetectionCatalogPublish(t *testing.T) {
 // noise decision that quietly froze the automatic publisher import would turn a hidden
 // editor into a fleet that stops receiving detector corrections — a far worse outage
 // than the clutter it removes.
+func assertCatalogDebugSession(t *testing.T, p *projectionFixture) {
+	t.Helper()
+	for _, on := range []bool{false, true} {
+		p.a.config.ConsoleDebug = on
+		response := p.as("owner", "GET", "/api/session", nil)
+		requireHTTP(t, response, 200)
+		var session struct {
+			ConsoleDebug bool `json:"console_debug"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &session); err != nil {
+			t.Fatal(err)
+		}
+		if session.ConsoleDebug != on {
+			t.Fatalf("session reported console_debug=%v with the flag %v", session.ConsoleDebug, on)
+		}
+	}
+	p.a.config.ConsoleDebug = false
+}
+
+func assertAutomaticCatalogImport(t *testing.T, p *projectionFixture, ctx context.Context, signed []byte, revision int64) {
+	t.Helper()
+	publisher := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/detection-catalog/latest" {
+			w.WriteHeader(404)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(signed)
+	}))
+	defer publisher.Close()
+	p.a.config.PublisherURL = publisher.URL
+	p.a.config.PublisherCredential = strings.Repeat("x", 40)
+	tx, err := tenantTx(ctx, p.a.db, p.org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if err = p.a.importPublisher(ctx, tx, p.org, 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var imported int64
+	if err = p.admin.QueryRow(ctx, "SELECT max(revision) FROM detection_catalogs").Scan(&imported); err != nil {
+		t.Fatal(err)
+	}
+	if imported <= revision {
+		t.Fatal("the flag froze the automatic catalogue import")
+	}
+}
+
 func TestDetectionCatalogWritesClosedWithoutDebug(t *testing.T) {
 	p := newProjectionFixture(t)
 	ctx := context.Background()
@@ -291,21 +350,7 @@ func TestDetectionCatalogWritesClosedWithoutDebug(t *testing.T) {
 	// it -- and has to say it from the configuration alone. Nothing reads console_debug
 	// from a request: this is the only way it travels.
 	t.Run("the session carries the flag and follows the configuration", func(t *testing.T) {
-		for _, on := range []bool{false, true} {
-			p.a.config.ConsoleDebug = on
-			w := p.as("owner", "GET", "/api/session", nil)
-			requireHTTP(t, w, 200)
-			var session struct {
-				ConsoleDebug bool `json:"console_debug"`
-			}
-			if e := json.Unmarshal(w.Body.Bytes(), &session); e != nil {
-				t.Fatal(e)
-			}
-			if session.ConsoleDebug != on {
-				t.Fatalf("session reported console_debug=%v with the flag %v", session.ConsoleDebug, on)
-			}
-		}
-		p.a.config.ConsoleDebug = false
+		assertCatalogDebugSession(t, p)
 	})
 	var refused int64
 	if e := p.admin.QueryRow(ctx, "SELECT max(revision) FROM detection_catalogs").Scan(&refused); e != nil {
@@ -315,36 +360,9 @@ func TestDetectionCatalogWritesClosedWithoutDebug(t *testing.T) {
 		t.Fatalf("a refused write still published revision %d", refused)
 	}
 	t.Run("the automatic publisher import does not notice the flag", func(t *testing.T) {
-		publisher := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/v1/detection-catalog/latest" {
-				w.WriteHeader(404)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write(signed)
-		}))
-		defer publisher.Close()
-		p.a.config.PublisherURL = publisher.URL
-		p.a.config.PublisherCredential = strings.Repeat("x", 40)
-		tx, e := tenantTx(ctx, p.a.db, p.org)
-		if e != nil {
-			t.Fatal(e)
-		}
-		defer tx.Rollback(ctx)
-		if e = p.a.importPublisher(ctx, tx, p.org, 0, ""); e != nil {
-			t.Fatal(e)
-		}
-		if e = tx.Commit(ctx); e != nil {
-			t.Fatal(e)
-		}
-		var imported int64
-		if e = p.admin.QueryRow(ctx, "SELECT max(revision) FROM detection_catalogs").Scan(&imported); e != nil {
-			t.Fatal(e)
-		}
-		if imported <= revision {
-			t.Fatal("the flag froze the automatic catalogue import")
-		}
+		assertAutomaticCatalogImport(t, p, ctx, signed, revision)
 	})
+
 }
 
 // The catalogue travels to the agent as bytes this package re-marshals, and the agent

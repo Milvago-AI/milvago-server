@@ -20,6 +20,7 @@ import (
 
 const (
 	msgDeviceCredentialRequired = "An approved device credential is required."
+	routeV2Events               = "/v2/events"
 )
 
 func (a *App) enroll(w http.ResponseWriter, r *http.Request) {
@@ -64,7 +65,7 @@ func (a *App) enrollRequest(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	var org string
-	if e := a.db.QueryRow(r.Context(), `SELECT organization_id FROM enrollment_identity($1)`, hash(body.Token)).Scan(&org); e != nil {
+	if a.db.QueryRow(r.Context(), `SELECT organization_id FROM enrollment_identity($1)`, hash(body.Token)).Scan(&org) != nil {
 		return apiError{401, "invalid_enrollment", "Enrollment token is invalid, expired or consumed."}
 	}
 	tx, e := tenantTx(r.Context(), a.db, org)
@@ -107,8 +108,8 @@ func (a *App) enrollRequest(w http.ResponseWriter, r *http.Request) error {
 	reply(w, 201, map[string]string{"device_id": id, "credential": credential})
 	return nil
 }
-func validMetadata(s string, max int) bool {
-	if len(s) < 1 || len(s) > max || strings.TrimSpace(s) != s {
+func validMetadata(s string, maxLength int) bool {
+	if len(s) < 1 || len(s) > maxLength || strings.TrimSpace(s) != s {
 		return false
 	}
 	// Control and format characters (C1, bidi overrides, U+2028) are refused as well:
@@ -178,7 +179,7 @@ func (a *App) identifyDevice(r *http.Request) (deviceIdentified, error) {
 	// lock, which are what a flood would actually cost.
 	route := r.URL.Path
 	if route == "/v1/events" {
-		route = "/v2/events"
+		route = routeV2Events
 	}
 	if route == "/v1/policy" || route == "/v2/policy" {
 		route = "/v3/policy"
@@ -204,7 +205,7 @@ func (a *App) deviceTx(r *http.Request) (pgx.Tx, string, string, error) {
 	}
 	org, id, digest, route := d.org, d.id, d.digest, d.route
 	var tx pgx.Tx
-	if route == "/v2/events" {
+	if route == routeV2Events {
 		tx, e = a.eventTransaction(r.Context(), org)
 	} else {
 		tx, e = tenantTx(r.Context(), a.db, org)
@@ -219,7 +220,7 @@ func (a *App) deviceTx(r *http.Request) (pgx.Tx, string, string, error) {
 	// enforcement and the v1 events read the policy under it after locking the row,
 	// which deadlocked with a group move or deletion (audit of 2026-09-24).
 	// Event batches read the privacy policy of the device's organization chain first.
-	if route == "/v2/events" {
+	if route == routeV2Events {
 		if e = sharedBarrier(r.Context(), tx, org, true); e != nil {
 			tx.Rollback(r.Context())
 			return nil, "", "", e

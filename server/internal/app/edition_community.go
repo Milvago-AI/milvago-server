@@ -22,17 +22,23 @@ const editionMigration = ""
 func editionGrants(role string) string                { return "" }
 func initializeEdition(context.Context, pgx.Tx) error { return nil }
 
-func (a *App) registerEditionRoutes() {}
+func (a *App) registerEditionRoutes() {
+	// Community does not expose edition-specific routes.
+}
 
 // This edition has one bearer credential, the API key: no MCP endpoint, therefore
 // no OAuth resource, nothing to discover and no access token to verify. The
 // challenge says what it has always said, and a bearer is resolved the one way
 // there is.
-func (a *App) initMCPVerifier(*oidc.Provider) {}
+func (a *App) initMCPVerifier(*oidc.Provider) {
+	// Community does not serve MCP endpoints.
+}
 
 // Nothing to declare on the identity provider either: no endpoint, no resource, no
 // connector client.
-func (a *App) ensureMCPIdentity(context.Context) {}
+func (a *App) ensureMCPIdentity(context.Context) {
+	// Community does not provision an MCP identity client.
+}
 
 func (a *App) bearerTx(r *http.Request, mode credentialMode) (pgx.Tx, *Session, error) {
 	return a.apiKeyTx(r)
@@ -40,4 +46,6 @@ func (a *App) bearerTx(r *http.Request, mode credentialMode) (pgx.Tx, *Session, 
 func (a *App) bearerChallenge(r *http.Request) string { return `Bearer realm="Milvago"` }
 
 // warnTenantDirectories: one organization in Community, nothing to warn about.
-func (a *App) warnTenantDirectories(context.Context) {}
+func (a *App) warnTenantDirectories(context.Context) {
+	// Community has a single organization and no child directories.
+}

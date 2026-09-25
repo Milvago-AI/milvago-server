@@ -16,6 +16,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+const setTenantConfigSQL = "SELECT set_config('milvago.organization_id',$1,true)"
+
 type hpaDevice struct {
 	ID           string `json:"id"`
 	Organization string `json:"organization"`
@@ -89,7 +91,7 @@ func seedHPALab(ctx context.Context, pool *pgxpool.Pool) (hpaFixture, error) {
 	if err = tx.QueryRow(ctx, "SELECT id FROM organizations LIMIT 1").Scan(&out.Root); err != nil {
 		return out, err
 	}
-	if _, err = tx.Exec(ctx, "SELECT set_config('milvago.organization_id',$1,true)", out.Root); err != nil {
+	if _, err = tx.Exec(ctx, setTenantConfigSQL, out.Root); err != nil {
 		return out, err
 	}
 	if err = tx.QueryRow(ctx, "SELECT count(*) FROM devices").Scan(&count); err != nil {
@@ -113,7 +115,7 @@ func seedHPALab(ctx context.Context, pool *pgxpool.Pool) (hpaFixture, error) {
 				return out, err
 			}
 		}
-		if _, err = tx.Exec(ctx, "SELECT set_config('milvago.organization_id',$1,true)", org); err != nil {
+		if _, err = tx.Exec(ctx, setTenantConfigSQL, org); err != nil {
 			return out, err
 		}
 		if err = seedBuiltinRoles(ctx, tx, org); err != nil {
@@ -187,7 +189,7 @@ func configureHPALabExports(ctx context.Context, pool *pgxpool.Pool, enabled boo
 	}
 	raw, _ := json.Marshal(map[string]any{"inherit": false, "destinations": []any{map[string]any{"id": "grafana", "enabled": enabled, "endpoint": endpoint, "event_filter": "all", "metrics": false, "shadow_events": true, "audit": false}, map[string]any{"id": "siem", "enabled": false, "endpoint": "", "event_filter": "security", "metrics": false, "shadow_events": true, "audit": false}}})
 	for _, org := range orgs {
-		if _, err = tx.Exec(ctx, "SELECT set_config('milvago.organization_id',$1,true)", org); err != nil {
+		if _, err = tx.Exec(ctx, setTenantConfigSQL, org); err != nil {
 			return err
 		}
 		if _, err = tx.Exec(ctx, "INSERT INTO observability_settings(organization_id,configuration) VALUES($1,$2) ON CONFLICT(organization_id) DO UPDATE SET configuration=excluded.configuration,revision=observability_settings.revision+1,updated_at=clock_timestamp()", org, raw); err != nil {
@@ -230,45 +232,39 @@ func reportHPALab(ctx context.Context, pool *pgxpool.Pool) (any, error) {
 	}
 	return result, nil
 }
-func reportHPATenant(ctx context.Context, tx pgx.Tx, org string) (any, error) {
-	if _, err := tx.Exec(ctx, "SELECT set_config('milvago.organization_id',$1,true)", org); err != nil {
-		return nil, err
-	}
-	var events []string
-	rows, err := tx.Query(ctx, "SELECT organization_id::text||'/'||device_id::text||'/'||id::text FROM shadow_events ORDER BY id")
+func hpaTenantKeys(ctx context.Context, tx pgx.Tx, query string) ([]string, error) {
+	rows, err := tx.Query(ctx, query)
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
+	var keys []string
 	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
-			rows.Close()
+		var key string
+		if err := rows.Scan(&key); err != nil {
 			return nil, err
 		}
-		events = append(events, id)
+		keys = append(keys, key)
 	}
-	rows.Close()
-	if rows.Err() != nil {
-		return nil, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
+
+func reportHPATenant(ctx context.Context, tx pgx.Tx, org string) (any, error) {
+	if _, err := tx.Exec(ctx, setTenantConfigSQL, org); err != nil {
+		return nil, err
+	}
+	events, err := hpaTenantKeys(ctx, tx, "SELECT organization_id::text||'/'||device_id::text||'/'||id::text FROM shadow_events ORDER BY id")
+	if err != nil {
+		return nil, err
 	}
 	value := map[string]any{"event_keys": events}
 	if Edition == "commercial" {
-		var delivered []string
-		rows, err = tx.Query(ctx, "SELECT organization_id::text||'/'||device_id||'/'||record_id::text FROM observability_deliveries WHERE stream='shadow' AND sink='grafana' ORDER BY record_id")
+		delivered, err := hpaTenantKeys(ctx, tx, "SELECT organization_id::text||'/'||device_id||'/'||record_id::text FROM observability_deliveries WHERE stream='shadow' AND sink='grafana' ORDER BY record_id")
 		if err != nil {
 			return nil, err
-		}
-		for rows.Next() {
-			var id string
-			if err = rows.Scan(&id); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			delivered = append(delivered, id)
-		}
-		rows.Close()
-		if rows.Err() != nil {
-			return nil, rows.Err()
 		}
 		value["delivered_keys"] = delivered
 	}

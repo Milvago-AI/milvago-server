@@ -13,6 +13,45 @@ import "testing"
 // Invariant: on acceptance, every size bound validateDetection is documented to enforce
 // actually held on the decoded value -- the memo in decodedDetection hands this struct
 // to every later caller (agents, console, MCP tools) exactly as returned here.
+func assertDetectionNetworkPaths(t *testing.T, provider DetectionProvider) {
+	t.Helper()
+	for _, network := range provider.Network {
+		if !validDetectionJSONPath(network.TextPath) {
+			t.Fatalf("accepted an invalid text_path %q on provider %q", network.TextPath, provider.ID)
+		}
+	}
+}
+
+func assertUniqueDetectionProviders(t *testing.T, providers []DetectionProvider) {
+	t.Helper()
+	ids := map[string]bool{}
+	for _, provider := range providers {
+		if ids[provider.ID] {
+			t.Fatalf("accepted a duplicate provider id %q", provider.ID)
+		}
+		ids[provider.ID] = true
+		assertDetectionNetworkPaths(t, provider)
+	}
+}
+
+func assertDecodedDetection(t *testing.T, raw []byte) {
+	t.Helper()
+	content, err := decodeDetection(raw)
+	if err != nil {
+		return
+	}
+	if len(content.Providers) == 0 || len(content.Providers) > 128 {
+		t.Fatalf("accepted catalogue with %d providers", len(content.Providers))
+	}
+	if len(content.NativeTools) > 32 {
+		t.Fatalf("accepted %d native tools", len(content.NativeTools))
+	}
+	if len(content.KnownPlatforms) > 256 {
+		t.Fatalf("accepted %d known platforms", len(content.KnownPlatforms))
+	}
+	assertUniqueDetectionProviders(t, content.Providers)
+}
+
 func FuzzDecodeDetection(f *testing.F) {
 	f.Add(detectionFactory)
 	f.Add([]byte(`{}`))
@@ -24,31 +63,5 @@ func FuzzDecodeDetection(f *testing.F) {
 	f.Add([]byte(`{"unknown_field":1}`))
 	f.Add([]byte(`{"known_platforms":[{"id":"x","domains":["a.com"]}]}`))
 
-	f.Fuzz(func(t *testing.T, raw []byte) {
-		c, err := decodeDetection(raw)
-		if err != nil {
-			return
-		}
-		if len(c.Providers) == 0 || len(c.Providers) > 128 {
-			t.Fatalf("accepted catalogue with %d providers", len(c.Providers))
-		}
-		if len(c.NativeTools) > 32 {
-			t.Fatalf("accepted %d native tools", len(c.NativeTools))
-		}
-		if len(c.KnownPlatforms) > 256 {
-			t.Fatalf("accepted %d known platforms", len(c.KnownPlatforms))
-		}
-		ids := map[string]bool{}
-		for _, p := range c.Providers {
-			if ids[p.ID] {
-				t.Fatalf("accepted a duplicate provider id %q", p.ID)
-			}
-			ids[p.ID] = true
-			for _, n := range p.Network {
-				if !validDetectionJSONPath(n.TextPath) {
-					t.Fatalf("accepted an invalid text_path %q on provider %q", n.TextPath, p.ID)
-				}
-			}
-		}
-	})
+	f.Fuzz(assertDecodedDetection)
 }

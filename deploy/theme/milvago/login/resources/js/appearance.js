@@ -21,6 +21,33 @@
  // language to a Brazilian reader.
  const codes = { fr: 'FR', en: 'EN', es: 'ES', 'pt-br': 'BR' };
 
+function addLanguageControls(controls, t, locale) {
+  // Language: replace Keycloak's native <select> with a compact segmented
+  // toggle built from its own options (keeps the kc_locale navigation).
+  const select = document.getElementById('login-select-toggle');
+  if (select && select.options.length > 1) {
+   const group = document.createElement('div');
+   group.className = 'mv-lang';
+   group.setAttribute('role', 'group');
+   group.setAttribute('aria-label', t.lang);
+   for (const option of select.options) {
+    const match = /[?&]kc_locale=([a-zA-Z-]+)/.exec(option.value);
+    const loc = (match ? match[1] : '').toLowerCase();
+    const current = option.selected || (loc && loc === locale);
+    const item = document.createElement(current ? 'span' : 'a');
+    item.className = 'mv-lang-item';
+    item.textContent = codes[loc] || (loc ? loc.slice(0, 2).toUpperCase() : option.text.trim().slice(0, 2).toUpperCase());
+    item.title = option.text.trim();
+    if (current) item.setAttribute('aria-current', 'true');
+    else item.href = option.value;
+    group.append(item);
+   }
+   controls.append(group);
+   document.documentElement.classList.add('mv-enhanced');
+  }
+
+ }
+
  addEventListener('DOMContentLoaded', () => {
   const locale = (document.documentElement.lang || 'fr').toLowerCase();
   const t = strings[locale.slice(0, 2)] || strings.fr;
@@ -46,29 +73,7 @@
   paint();
   controls.append(button);
 
-  // Language: replace Keycloak's native <select> with a compact segmented
-  // toggle built from its own options (keeps the kc_locale navigation).
-  const select = document.getElementById('login-select-toggle');
-  if (select && select.options.length > 1) {
-   const group = document.createElement('div');
-   group.className = 'mv-lang';
-   group.setAttribute('role', 'group');
-   group.setAttribute('aria-label', t.lang);
-   for (const option of select.options) {
-    const match = /[?&]kc_locale=([a-zA-Z-]+)/.exec(option.value);
-    const loc = (match ? match[1] : '').toLowerCase();
-    const current = option.selected || (loc && loc === locale);
-    const item = document.createElement(current ? 'span' : 'a');
-    item.className = 'mv-lang-item';
-    item.textContent = codes[loc] || (loc ? loc.slice(0, 2).toUpperCase() : option.text.trim().slice(0, 2).toUpperCase());
-    item.title = option.text.trim();
-    if (current) item.setAttribute('aria-current', 'true');
-    else item.href = option.value;
-    group.append(item);
-   }
-   controls.append(group);
-   document.documentElement.classList.add('mv-enhanced');
-  }
+  addLanguageControls(controls, t, locale);
 
   document.body.append(controls);
  });

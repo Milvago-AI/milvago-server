@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
+	// Required by go:embed directives in this file.
 	_ "embed"
 	"encoding/base64"
 	"encoding/hex"
@@ -394,10 +395,10 @@ func decodeDetection(raw []byte) (DetectionContent, error) {
 	if len(raw) > 512*1024 {
 		return c, bad("Catalogue exceeds size limit.")
 	}
-	if e := d.Decode(&c); e != nil {
+	if d.Decode(&c) != nil {
 		return c, bad("Invalid catalogue document.")
 	}
-	if e := d.Decode(new(any)); e != io.EOF {
+	if d.Decode(new(any)) != io.EOF {
 		return c, bad("One catalogue document is required.")
 	}
 	normalizeDetectionLists(&c)
@@ -997,6 +998,15 @@ func (a *App) updateKnownPlatform(w http.ResponseWriter, r *http.Request, tx pgx
 	reply(w, 200, map[string]bool{"ok": true})
 	return nil
 }
+func candidateInCatalog(catalog DetectionContent, domain string) bool {
+	for _, provider := range catalog.Providers {
+		if slices.Contains(provider.Domains, domain) || slices.Contains(provider.Aliases, domain) {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *App) updateCandidate(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
 	var b struct {
 		Domain string `json:"domain"`
@@ -1013,14 +1023,7 @@ func (a *App) updateCandidate(w http.ResponseWriter, r *http.Request, tx pgx.Tx,
 		if err != nil {
 			return err
 		}
-		published := false
-		for _, provider := range catalog.Providers {
-			if slices.Contains(provider.Domains, b.Domain) || slices.Contains(provider.Aliases, b.Domain) {
-				published = true
-				break
-			}
-		}
-		if !published {
+		if !candidateInCatalog(catalog, b.Domain) {
 			return apiError{409, "catalog_publication_required", "Publish this domain in the catalogue before promoting the candidate."}
 		}
 	}

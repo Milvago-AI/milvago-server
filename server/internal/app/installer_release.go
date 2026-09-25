@@ -72,6 +72,73 @@ func (a *App) artifactDigest(platform, path string, artifact *os.File, before os
 	return sum, nil
 }
 
+func readInstallerManifest(root *os.Root, platform string) (InstallerBundle, bool) {
+	var bundle InstallerBundle
+	manifest := Edition + "-" + platform + ".json"
+	info, err := root.Lstat(manifest)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 65536 {
+		return bundle, false
+	}
+	file, err := root.Open(manifest)
+	if err != nil {
+		return bundle, false
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, 65537))
+	file.Close()
+	if err != nil || len(raw) > 65536 {
+		return bundle, false
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&bundle) != nil || decoder.Decode(&struct{}{}) != io.EOF ||
+		!versionPattern.MatchString(bundle.Version) || !digestPattern.MatchString(bundle.SHA256) ||
+		bundle.Size < 1 || bundle.Size > installerBundleLimit || bundle.Artifact == "" ||
+		len(bundle.Artifact) > 160 || filepath.Base(bundle.Artifact) != bundle.Artifact ||
+		strings.ContainsAny(bundle.Artifact, "/\\") {
+		return bundle, false
+	}
+	extension := ".msi"
+	if platform == "linux" {
+		extension = ".tar.gz"
+	}
+	return bundle, strings.HasSuffix(bundle.Artifact, extension)
+}
+
+func verifiedInstallerArtifact(root *os.Root, directory, platform string, bundle InstallerBundle, cache *App) (string, bool) {
+	path := filepath.Join(directory, bundle.Artifact)
+	before, err := root.Lstat(bundle.Artifact)
+	if err != nil || !before.Mode().IsRegular() || before.Size() != bundle.Size {
+		return "", false
+	}
+	artifact, err := root.Open(bundle.Artifact)
+	if err != nil {
+		return "", false
+	}
+	defer artifact.Close()
+	opened, err := artifact.Stat()
+	if err != nil || !os.SameFile(before, opened) {
+		return "", false
+	}
+	if cache != nil {
+		sum, err := cache.artifactDigest(platform, path, artifact, before)
+		if err != nil || sum != bundle.SHA256 {
+			return "", false
+		}
+	} else {
+		digest := sha256.New()
+		size, err := io.Copy(digest, io.LimitReader(artifact, installerBundleLimit+1))
+		if err != nil || size != bundle.Size || hex.EncodeToString(digest.Sum(nil)) != bundle.SHA256 {
+			return "", false
+		}
+	}
+	after, err := root.Lstat(bundle.Artifact)
+	if err != nil || !after.Mode().IsRegular() || !os.SameFile(before, after) ||
+		after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) {
+		return "", false
+	}
+	return path, true
+}
+
 func installerBundleDigest(platform string, cache *App) (InstallerBundle, string, error) {
 	var bundle InstallerBundle
 	unavailable := func() (InstallerBundle, string, error) {
@@ -92,66 +159,19 @@ func installerBundleDigest(platform string, cache *App) (InstallerBundle, string
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return unavailable()
 	}
-	// Every read below goes through an os.Root on the release directory: no name, `..`
-	// or link can resolve outside it.
+	// Every release read stays rooted in the verified directory.
 	root, err := os.OpenRoot(directory)
 	if err != nil {
 		return unavailable()
 	}
 	defer root.Close()
-	manifest := Edition + "-" + platform + ".json"
-	info, err = root.Lstat(manifest)
-	if err != nil || !info.Mode().IsRegular() || info.Size() > 65536 {
+	var valid bool
+	bundle, valid = readInstallerManifest(root, platform)
+	if !valid {
 		return unavailable()
 	}
-	file, err := root.Open(manifest)
-	if err != nil {
-		return unavailable()
-	}
-	raw, err := io.ReadAll(io.LimitReader(file, 65537))
-	file.Close()
-	if err != nil || len(raw) > 65536 {
-		return unavailable()
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if decoder.Decode(&bundle) != nil || decoder.Decode(&struct{}{}) != io.EOF || !versionPattern.MatchString(bundle.Version) || !digestPattern.MatchString(bundle.SHA256) || bundle.Size < 1 || bundle.Size > installerBundleLimit || bundle.Artifact == "" || len(bundle.Artifact) > 160 || filepath.Base(bundle.Artifact) != bundle.Artifact || strings.ContainsAny(bundle.Artifact, "/\\") {
-		return unavailable()
-	}
-	extension := ".msi"
-	if platform == "linux" {
-		extension = ".tar.gz"
-	}
-	if !strings.HasSuffix(bundle.Artifact, extension) {
-		return unavailable()
-	}
-	path := filepath.Join(directory, bundle.Artifact)
-	before, err := root.Lstat(bundle.Artifact)
-	if err != nil || !before.Mode().IsRegular() || before.Size() != bundle.Size {
-		return unavailable()
-	}
-	artifact, err := root.Open(bundle.Artifact)
-	if err != nil {
-		return unavailable()
-	}
-	defer artifact.Close()
-	opened, err := artifact.Stat()
-	if err != nil || !os.SameFile(before, opened) {
-		return unavailable()
-	}
-	if cache != nil {
-		if sum, err := cache.artifactDigest(platform, path, artifact, before); err != nil || sum != bundle.SHA256 {
-			return unavailable()
-		}
-	} else {
-		digest := sha256.New()
-		size, err := io.Copy(digest, io.LimitReader(artifact, installerBundleLimit+1))
-		if err != nil || size != bundle.Size || hex.EncodeToString(digest.Sum(nil)) != bundle.SHA256 {
-			return unavailable()
-		}
-	}
-	after, err := root.Lstat(bundle.Artifact)
-	if err != nil || !after.Mode().IsRegular() || !os.SameFile(before, after) || after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) {
+	path, valid := verifiedInstallerArtifact(root, directory, platform, bundle, cache)
+	if !valid {
 		return unavailable()
 	}
 	return bundle, path, nil

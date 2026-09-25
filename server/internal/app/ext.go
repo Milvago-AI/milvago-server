@@ -45,7 +45,7 @@ func (a *App) publicOrigin(ctx context.Context) string {
 
 func (a *App) publicOriginIn(ctx context.Context, q rowQuerier) string {
 	var stored string
-	if e := q.QueryRow(ctx, `SELECT public_url FROM app_config`).Scan(&stored); e != nil {
+	if q.QueryRow(ctx, `SELECT public_url FROM app_config`).Scan(&stored) != nil {
 		return a.config.AppURL
 	}
 	stored = strings.TrimRight(strings.TrimSpace(stored), "/")
@@ -72,13 +72,17 @@ const (
 	headerXContentTypeOptions       = "X-Content-Type-Options"
 )
 
+type firefoxXPIGeckoSettings struct {
+	ID string `json:"id"`
+}
+
+type firefoxXPIBrowserSettings struct {
+	Gecko firefoxXPIGeckoSettings `json:"gecko"`
+}
+
 type firefoxXPIMetadata struct {
-	Version                 string `json:"version"`
-	BrowserSpecificSettings struct {
-		Gecko struct {
-			ID string `json:"id"`
-		} `json:"gecko"`
-	} `json:"browser_specific_settings"`
+	Version                 string                    `json:"version"`
+	BrowserSpecificSettings firefoxXPIBrowserSettings `json:"browser_specific_settings"`
 }
 
 // firefoxXPIInfo binds an update manifest to the signed XPI that the route will

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	// Required by go:embed directives in this file.
 	_ "embed"
 	"fmt"
 	"github.com/jackc/pgx/v5"

@@ -100,41 +100,46 @@ func TestProcessRoleConfiguration(t *testing.T) {
 func TestBackgroundRolesExposeOnlyOperationalRoutes(t *testing.T) {
 	for _, role := range []string{RoleMaintenance, RoleExports} {
 		t.Run(role, func(t *testing.T) {
-			var identityCalls atomic.Int32
-			idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				identityCalls.Add(1)
-				http.Error(w, "discovery must not be requested", 500)
-			}))
-			defer idp.Close()
-			a, e := New(context.Background(), Config{Role: role, Issuer: idp.URL, MetricsToken: "synthetic-metrics-token"}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
-			if role == RoleExports && Edition == "community" {
-				if e == nil {
-					t.Fatal("Community created export worker")
-				}
-				return
-			}
-			if e != nil {
-				t.Fatal(e)
-			}
-			if identityCalls.Load() != 0 || a.verifier != nil || a.mcpVerifier != nil {
-				t.Fatal("worker initialized console identity")
-			}
-			for _, path := range []string{"/", "/api/bootstrap", "/api/session", "/auth/login", "/v1/policy", "/mcp"} {
-				w := httptest.NewRecorder()
-				a.Handler().ServeHTTP(w, httptest.NewRequest("GET", path, nil))
-				requireHTTP(t, w, http.StatusNotFound)
-			}
-			w := httptest.NewRecorder()
-			a.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/health/live", nil))
-			requireHTTP(t, w, http.StatusOK)
-			if w.Header().Get("Cross-Origin-Resource-Policy") != "same-origin" || !strings.Contains(w.Header().Get("Permissions-Policy"), "camera=()") {
-				t.Fatalf("security headers missing: %v", w.Header())
-			}
-			w = httptest.NewRecorder()
-			a.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
-			requireHTTP(t, w, http.StatusUnauthorized)
+			verifyBackgroundRoleRoutes(t, role)
 		})
 	}
+}
+
+func verifyBackgroundRoleRoutes(t *testing.T, role string) {
+	t.Helper()
+	var identityCalls atomic.Int32
+	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		identityCalls.Add(1)
+		http.Error(w, "discovery must not be requested", 500)
+	}))
+	defer idp.Close()
+	a, e := New(context.Background(), Config{Role: role, Issuer: idp.URL, MetricsToken: "synthetic-metrics-token"}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if role == RoleExports && Edition == "community" {
+		if e == nil {
+			t.Fatal("Community created export worker")
+		}
+		return
+	}
+	if e != nil {
+		t.Fatal(e)
+	}
+	if identityCalls.Load() != 0 || a.verifier != nil || a.mcpVerifier != nil {
+		t.Fatal("worker initialized console identity")
+	}
+	for _, path := range []string{"/", "/api/bootstrap", "/api/session", "/auth/login", "/v1/policy", "/mcp"} {
+		w := httptest.NewRecorder()
+		a.Handler().ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		requireHTTP(t, w, http.StatusNotFound)
+	}
+	w := httptest.NewRecorder()
+	a.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/health/live", nil))
+	requireHTTP(t, w, http.StatusOK)
+	if w.Header().Get("Cross-Origin-Resource-Policy") != "same-origin" || !strings.Contains(w.Header().Get("Permissions-Policy"), "camera=()") {
+		t.Fatalf("security headers missing: %v", w.Header())
+	}
+	w = httptest.NewRecorder()
+	a.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
+	requireHTTP(t, w, http.StatusUnauthorized)
 }
 
 func TestRuntimeDatabaseAndMaintenanceIntegration(t *testing.T) {
@@ -256,7 +261,7 @@ func TestRuntimeDatabaseAndMaintenanceIntegration(t *testing.T) {
 		if _, e := f.admin.Exec(ctx, `DELETE FROM runtime_maintenance WHERE task='minute'`); e != nil {
 			t.Fatal(e)
 		}
-		if e := f.a.maintenanceOnce(ctx, "minute", func(context.Context) error { panic("synthetic panic") }); e == nil {
+		if f.a.maintenanceOnce(ctx, "minute", func(context.Context) error { panic("synthetic panic") }) == nil {
 			t.Fatal("panic not reported as a failure")
 		}
 		called := false

@@ -245,7 +245,8 @@ func TestPresenceAuthorizationAgainstTheStoredCatalogue(t *testing.T) {
 	// One batch for the whole subtest, as an ingest request builds one: the batch
 	// memoizes the decoded catalogue by revision, which is the point of the type.
 	batch := detectionEventBatch{catalogs: map[int64]DetectionContent{}}
-	authorize := func(provider string) *V2Event {
+	authorize := func(t *testing.T, provider string) *V2Event {
+		t.Helper()
 		v := &V2Event{Provider: provider, Source: "browser", Tool: "chrome", Kind: "navigation", Action: "observed", Detector: "presence", URL: "https://" + provider + "/c/secret", Characters: 12, CatalogRevision: &revision}
 		if e := batch.authorize(ctx, tx, v); e != nil {
 			t.Fatal(e)
@@ -253,31 +254,35 @@ func TestPresenceAuthorizationAgainstTheStoredCatalogue(t *testing.T) {
 		return v
 	}
 	t.Run("a named platform keeps its name and loses everything else", func(t *testing.T) {
-		v := authorize("aggregator.example.invalid")
+		v := authorize(t, "aggregator.example.invalid")
 		if v.Provider != "aggregator.example.invalid" || v.URL != "" || v.Characters != 0 {
 			t.Fatalf("presence not reduced: %+v", v)
 		}
 	})
 	t.Run("a host named nowhere stays unknown", func(t *testing.T) {
-		v := authorize("unlisted.example.invalid")
+		v := authorize(t, "unlisted.example.invalid")
 		if v.Provider != "unknown" || v.URL != "" {
 			t.Fatalf("an unnamed host was attributed: %+v", v)
 		}
 	})
 	t.Run("a covered provider wins over the presence entry", func(t *testing.T) {
-		v := authorize("gemini.google.com")
-		if Edition == "commercial" {
-			// Covered here: the record keeps what capture gathered, and is not reduced.
-			if v.Provider != "gemini.google.com" || v.URL == "" {
-				t.Fatalf("a covered provider was reduced to presence: %+v", v)
-			}
-			return
-		}
-		// Not covered in this edition, so the presence entry applies and reduces it.
-		if v.Provider != "gemini.google.com" || v.URL != "" || v.Characters != 0 {
-			t.Fatalf("presence not applied where the provider is absent: %+v", v)
-		}
+		assertCoveredProviderPrecedence(t, authorize(t, "gemini.google.com"))
 	})
+}
+
+func assertCoveredProviderPrecedence(t *testing.T, v *V2Event) {
+	t.Helper()
+	if Edition == "commercial" {
+		// Covered here: the record keeps what capture gathered, and is not reduced.
+		if v.Provider != "gemini.google.com" || v.URL == "" {
+			t.Fatalf("a covered provider was reduced to presence: %+v", v)
+		}
+		return
+	}
+	// Not covered in this edition, so the presence entry applies and reduces it.
+	if v.Provider != "gemini.google.com" || v.URL != "" || v.Characters != 0 {
+		t.Fatalf("presence not applied where the provider is absent: %+v", v)
+	}
 }
 
 // Hiding a platform is a reading choice on one console screen, not a change to what the
@@ -446,22 +451,23 @@ func TestDiscoveryHidesWhatTheEditionAlreadyCaptures(t *testing.T) {
 	}
 	// Covered by both editions: never a discovery finding.
 	for _, key := range []string{"candidate:chatgpt.com", "platform:chatgpt.com"} {
-		if named[key] {
-			t.Fatalf("Discovery named %s, which this edition captures in full", key)
-		}
+		assertDiscoveryNamed(t, named, key, false)
 	}
 	// Covered only by Enterprise. Community is where the presence path applies, so it
 	// must still be reported there -- filtering it in both editions would be the same
 	// bug in the other direction.
 	for _, key := range []string{"candidate:gemini.google.com", "platform:gemini.google.com"} {
-		if named[key] != (Edition != "commercial") {
-			t.Fatalf("%s reported=%v in edition %q", key, named[key], Edition)
-		}
+		assertDiscoveryNamed(t, named, key, Edition != "commercial")
 	}
 	// The guard against a filter that hides everything: an uncovered platform survives.
 	for _, key := range []string{"candidate:mammouth.ai", "platform:mammouth.ai"} {
-		if !named[key] {
-			t.Fatalf("Discovery dropped %s, which no edition covers", key)
-		}
+		assertDiscoveryNamed(t, named, key, true)
+	}
+}
+
+func assertDiscoveryNamed(t *testing.T, named map[string]bool, key string, want bool) {
+	t.Helper()
+	if named[key] != want {
+		t.Fatalf("Discovery %s reported=%v, want %v in edition %q", key, named[key], want, Edition)
 	}
 }

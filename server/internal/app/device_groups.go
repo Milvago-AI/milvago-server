@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	// Required by go:embed directives in this file.
 	_ "embed"
 	"errors"
 	"fmt"
@@ -254,7 +255,7 @@ func (a *App) assignDeviceGroup(w http.ResponseWriter, r *http.Request, tx pgx.T
 		return e
 	}
 	var current *string
-	if e := tx.QueryRow(r.Context(), `SELECT group_id FROM devices WHERE id=$1 FOR UPDATE`, id).Scan(&current); e != nil {
+	if tx.QueryRow(r.Context(), `SELECT group_id FROM devices WHERE id=$1 FOR UPDATE`, id).Scan(&current) != nil {
 		return apiError{404, "device_not_found", "This device does not exist in this organization."}
 	}
 	if body.GroupID != nil {

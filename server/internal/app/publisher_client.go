@@ -326,7 +326,7 @@ func (a *App) maintainPublisher(ctx context.Context) {
 	}
 	job, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if e := a.publisherPass(job); e != nil {
+	if a.publisherPass(job) != nil {
 		a.log.Error("publisher maintenance failed")
 	}
 }

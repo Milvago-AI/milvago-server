@@ -706,7 +706,7 @@ func testIdentitySubsystem(t *testing.T, a *App, admin *pgxpool.Pool, ownerCooki
 			if e := guardParentControl(ctx, childTx, &Session{UserID: rootOwner, OrganizationID: otherOrg, Role: "owner"}, childOwner); e != nil {
 				t.Fatal("the root owner may not manage a member of the child", e)
 			}
-			if e := guardParentControl(ctx, childTx, childSession, adminMember); e == nil {
+			if guardParentControl(ctx, childTx, childSession, adminMember) == nil {
 				t.Fatal("a root admin reached the child through the parent yet the child owner may shadow them")
 			}
 			childTx.Rollback(ctx)

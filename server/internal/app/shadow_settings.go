@@ -373,7 +373,7 @@ func overlayShadow(base ShadowConfig, sections map[string]json.RawMessage) (Shad
 	raw, _ = json.Marshal(m)
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.DisallowUnknownFields()
-	if e := d.Decode(&base); e != nil {
+	if d.Decode(&base) != nil {
 		return base, bad("Invalid configuration fields.")
 	}
 	if base.Classification.MedicalTerms == nil {
@@ -816,7 +816,7 @@ func (a *App) putDeviceShadow(w http.ResponseWriter, r *http.Request, tx pgx.Tx,
 	return a.putScopedShadow(w, r, tx, s, shadowScope{
 		lock: func() error {
 			var exists string
-			if e := tx.QueryRow(ctx, `SELECT id FROM devices WHERE id=$1 FOR UPDATE`, id).Scan(&exists); e != nil {
+			if tx.QueryRow(ctx, `SELECT id FROM devices WHERE id=$1 FOR UPDATE`, id).Scan(&exists) != nil {
 				return apiError{404, "not_found", "Device not found."}
 			}
 			return nil
@@ -860,7 +860,7 @@ func (a *App) putGroupShadow(w http.ResponseWriter, r *http.Request, tx pgx.Tx, 
 	return a.putScopedShadow(w, r, tx, s, shadowScope{
 		lock: func() error {
 			var exists string
-			if e := tx.QueryRow(ctx, `SELECT id FROM device_groups WHERE id=$1 FOR UPDATE`, id).Scan(&exists); e != nil {
+			if tx.QueryRow(ctx, `SELECT id FROM device_groups WHERE id=$1 FOR UPDATE`, id).Scan(&exists) != nil {
 				return groupNotFound()
 			}
 			return nil

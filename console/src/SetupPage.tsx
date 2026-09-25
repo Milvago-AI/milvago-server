@@ -16,6 +16,11 @@ type LicenseChoice = "have" | "request" | "none";
 
 const STEPS = 9;
 
+function setupLicenseValue(license: string, commercial: boolean, choice: LicenseChoice): string {
+  if (!commercial && choice === "none") return "";
+  return license.trim();
+}
+
 export function SetupPage({ status, language, chooseLanguage }: Readonly<{ status: SetupStatus; language: Language; chooseLanguage: (next: Language) => void }>) {
   const t = useText();
   const [step, setStep] = useState(1);
@@ -44,7 +49,7 @@ export function SetupPage({ status, language, chooseLanguage }: Readonly<{ statu
   // What is actually sent: a Community reader who typed something into the textarea
   // and then switched back to "continue without one" must not have that text leak
   // into the request behind their back.
-  const effectiveLicense = commercial ? license.trim() : (licenseChoice === "none" ? "" : license.trim());
+  const effectiveLicense = setupLicenseValue(license, commercial, licenseChoice);
 
   if (!status.ready)
     return <main className="entry-main"><Notice tone="warning" title={t("setupClosed")}>{t("setupClosedHelp")}</Notice></main>;

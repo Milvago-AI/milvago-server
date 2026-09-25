@@ -34,12 +34,7 @@ func newObservabilityFixture(t *testing.T) *observabilityFixture {
 	if runtimeURL == "" || migrationURL == "" {
 		t.Skip("requires disposable milvago_test database")
 	}
-	for _, raw := range []string{runtimeURL, migrationURL} {
-		u, e := url.Parse(raw)
-		if e != nil || u.Path != "/milvago_test" {
-			t.Fatal("requires disposable milvago_test database")
-		}
-	}
+	requireDisposableObservabilityURLs(t, runtimeURL, migrationURL)
 	ctx := context.Background()
 	poolConfig, e := pgxpool.ParseConfig(migrationURL)
 	if e != nil {
@@ -88,6 +83,16 @@ func newObservabilityFixture(t *testing.T) *observabilityFixture {
 	}
 	return f
 }
+func requireDisposableObservabilityURLs(t *testing.T, urls ...string) {
+	t.Helper()
+	for _, raw := range urls {
+		u, e := url.Parse(raw)
+		if e != nil || u.Path != "/milvago_test" {
+			t.Fatal("requires disposable milvago_test database")
+		}
+	}
+}
+
 func (f *observabilityFixture) call(method, path string, body any, csrf string) *httptest.ResponseRecorder {
 	raw, _ := json.Marshal(body)
 	r := httptest.NewRequest(method, path, bytes.NewReader(raw))

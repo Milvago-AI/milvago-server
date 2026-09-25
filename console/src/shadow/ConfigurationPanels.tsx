@@ -36,7 +36,7 @@ function ApprovalRules({ enrollment, change }: Readonly<{ enrollment: ShadowConf
   const edit = (index: number, field: 'cidr' | 'domain', value: string) => set(rules.map((rule, position) => position === index ? { ...rule, [field]: value } : rule));
   return <div className="approval-rules">
     <Notice tone="warning">{t("approvalDomainDeclaredNotProof")}</Notice>
-    {rules.map((rule, index) => <div className="config-inline approval-rule" key={index}>
+    {rules.map((rule, index) => <div className="config-inline approval-rule" key={`${rule.cidr}:${rule.domain}`}>
       <label>{t("approvalRuleNetwork")}<input className="mono" required maxLength={49} value={rule.cidr} placeholder="198.51.100.0/24" onChange={e => edit(index, 'cidr', e.target.value.trim())} /></label>
       <label>{t("approvalRuleDomain")}<input className="mono" maxLength={253} value={rule.domain} placeholder="corp.example.com" onChange={e => edit(index, 'domain', e.target.value.trim())} /></label>
       <button type="button" className="button danger small" aria-label={`${t("deleteApprovalRule")} ${index + 1}`} onClick={() => set(rules.filter((_, position) => position !== index))}>{t("delete")}</button>
@@ -113,7 +113,11 @@ function ModelAccessPanel({ config, update, capabilities, modelCatalog }: ModelA
       </article>;
     })}</div>
     <section className="model-status"><h3>{t("appliedDeviceStatus")}</h3><p>{t("savedRulesRemainDistinctFromRevisions")}</p>
-    <ResourceView resource={status}>{data => data.counts?.length ? <div className="table-scroll"><table><thead><tr><th>{t("platform")}</th><th>{t("status")}</th><th>{t("devices")}</th></tr></thead><tbody>{data.counts.map(item => <tr key={`${item.platform_id}:${item.channel}:${item.status}`}><td>{item.platform_id}<span className="cell-detail">{item.channel}</span></td><td><Badge tone={modelStatusTone(item.status)}>{modelStatusLabel(item.status, t)}</Badge></td><td>{item.devices}</td></tr>)}</tbody></table></div> : data.items.length ? <div className="table-scroll"><table><thead><tr><th>{t("device")}</th><th>{t("platform")}</th><th>{t("status")}</th><th>{t("revision")}</th><th>{t("reason")}</th></tr></thead><tbody>{data.items.map(item => <tr key={`${item.device_id}:${item.platform_id}:${item.channel}`}><td><strong>{item.hostname || t("machineNameUnavailable")}</strong><span className="cell-detail mono">{item.device_id}</span><span className="cell-detail">{item.version}</span></td><td>{item.platform_id}<span className="cell-detail">{item.channel}</span></td><td><Badge tone={modelStatusTone(item.status)}>{modelStatusLabel(item.status, t)}</Badge></td><td>{item.applied_revision} / {item.expected_revision}</td><td>{item.reason || '—'}</td></tr>)}</tbody></table></div> : <Empty title={t("noModelStatusReported")} />}</ResourceView>
+    <ResourceView resource={status}>{data => {
+      if (data.counts?.length) return <div className="table-scroll"><table><thead><tr><th>{t("platform")}</th><th>{t("status")}</th><th>{t("devices")}</th></tr></thead><tbody>{data.counts.map(item => <tr key={`${item.platform_id}:${item.channel}:${item.status}`}><td>{item.platform_id}<span className="cell-detail">{item.channel}</span></td><td><Badge tone={modelStatusTone(item.status)}>{modelStatusLabel(item.status, t)}</Badge></td><td>{item.devices}</td></tr>)}</tbody></table></div>;
+      if (data.items.length) return <div className="table-scroll"><table><thead><tr><th>{t("device")}</th><th>{t("platform")}</th><th>{t("status")}</th><th>{t("revision")}</th><th>{t("reason")}</th></tr></thead><tbody>{data.items.map(item => <tr key={`${item.device_id}:${item.platform_id}:${item.channel}`}><td><strong>{item.hostname || t("machineNameUnavailable")}</strong><span className="cell-detail mono">{item.device_id}</span><span className="cell-detail">{item.version}</span></td><td>{item.platform_id}<span className="cell-detail">{item.channel}</span></td><td><Badge tone={modelStatusTone(item.status)}>{modelStatusLabel(item.status, t)}</Badge></td><td>{item.applied_revision} / {item.expected_revision}</td><td>{item.reason || '—'}</td></tr>)}</tbody></table></div>;
+      return <Empty title={t("noModelStatusReported")} />;
+    }}</ResourceView>
     </section>
   </ConfigBlock>;
 }

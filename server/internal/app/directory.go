@@ -115,13 +115,36 @@ func (d *directoryConfig) validate() error {
 	if !ldapVendors[d.Vendor] {
 		return bad("Unknown directory vendor.")
 	}
+	if err := d.validateConnection(); err != nil {
+		return err
+	}
+	if err := d.validateAuthentication(); err != nil {
+		return err
+	}
+	return d.validateSchema()
+}
+
+func (d *directoryConfig) validateConnection() error {
 	if len(d.ConnectionURL) > 300 || strings.ContainsAny(d.ConnectionURL, " \t\r\n") {
 		return bad("Connection URL is too long or malformed.")
 	}
-	u, e := url.Parse(d.ConnectionURL)
-	if e != nil || (u.Scheme != "ldap" && u.Scheme != "ldaps") || u.Opaque != "" || u.Host == "" || u.Hostname() == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+	u, err := url.Parse(d.ConnectionURL)
+	if err != nil || (u.Scheme != "ldap" && u.Scheme != "ldaps") || u.Opaque != "" || u.Host == "" || u.Hostname() == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return bad("Connection URL must be ldap://host[:port] or ldaps://host[:port].")
 	}
+	if err := d.canonicalizeConnectionHost(u); err != nil {
+		return err
+	}
+	if u.Scheme != "ldaps" && !d.StartTLS {
+		return bad("LDAP requires LDAPS or StartTLS before any directory credentials are transmitted.")
+	}
+	if d.StartTLS && u.Scheme == "ldaps" {
+		return bad("StartTLS cannot be combined with ldaps.")
+	}
+	return nil
+}
+
+func (d *directoryConfig) canonicalizeConnectionHost(u *url.URL) error {
 	// Only a DNS name or an IP literal, with a real port, reaches Keycloak's
 	// LDAP client; the URL is stored in canonical form.
 	host, port := u.Hostname(), u.Port()
@@ -129,7 +152,7 @@ func (d *directoryConfig) validate() error {
 		return bad("Connection URL host must be a DNS name or an IP address.")
 	}
 	if port != "" {
-		if n, e := strconv.Atoi(port); e != nil || n < 1 || n > 65535 {
+		if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
 			return bad("Connection URL port must be between 1 and 65535.")
 		}
 		host = net.JoinHostPort(host, port)
@@ -137,12 +160,10 @@ func (d *directoryConfig) validate() error {
 		host = "[" + host + "]"
 	}
 	d.ConnectionURL = u.Scheme + "://" + host
-	if u.Scheme != "ldaps" && !d.StartTLS {
-		return bad("LDAP requires LDAPS or StartTLS before any directory credentials are transmitted.")
-	}
-	if d.StartTLS && u.Scheme == "ldaps" {
-		return bad("StartTLS cannot be combined with ldaps.")
-	}
+	return nil
+}
+
+func (d *directoryConfig) validateAuthentication() error {
 	switch d.AuthType {
 	case "none":
 		d.BindDN = ""
@@ -159,23 +180,18 @@ func (d *directoryConfig) validate() error {
 	if len(d.UsersDN) < 1 || len(d.UsersDN) > 512 {
 		return bad("Users DN must contain 1 to 512 characters.")
 	}
+	return nil
+}
+
+func (d *directoryConfig) validateSchema() error {
 	for _, attr := range []string{d.UsernameAttribute, d.RDNAttribute, d.UUIDAttribute} {
 		if !ldapNamePattern.MatchString(attr) {
 			return bad("LDAP attribute names must be alphanumeric.")
 		}
 	}
-	if len(d.UserObjectClasses) > 256 {
-		return bad("User object classes must contain at most 256 characters.")
+	if err := d.validateObjectClasses(); err != nil {
+		return err
 	}
-	var classes []string
-	for _, c := range strings.Split(d.UserObjectClasses, ",") {
-		c = strings.TrimSpace(c)
-		if !ldapNamePattern.MatchString(c) {
-			return bad("User object classes must be a comma-separated list of names.")
-		}
-		classes = append(classes, c)
-	}
-	d.UserObjectClasses = strings.Join(classes, ", ")
 	if len(d.CustomFilter) > 1024 || (d.CustomFilter != "" && (!strings.HasPrefix(d.CustomFilter, "(") || !strings.HasSuffix(d.CustomFilter, ")"))) {
 		return bad("Custom filter must be enclosed in parentheses and contain at most 1024 characters.")
 	}
@@ -188,6 +204,22 @@ func (d *directoryConfig) validate() error {
 	if d.ConnectionTimeout < 0 || d.ConnectionTimeout > 300000 || d.ReadTimeout < 0 || d.ReadTimeout > 300000 {
 		return bad("Timeouts must be between 0 and 300000 milliseconds.")
 	}
+	return nil
+}
+
+func (d *directoryConfig) validateObjectClasses() error {
+	if len(d.UserObjectClasses) > 256 {
+		return bad("User object classes must contain at most 256 characters.")
+	}
+	var classes []string
+	for _, class := range strings.Split(d.UserObjectClasses, ",") {
+		class = strings.TrimSpace(class)
+		if !ldapNamePattern.MatchString(class) {
+			return bad("User object classes must be a comma-separated list of names.")
+		}
+		classes = append(classes, class)
+	}
+	d.UserObjectClasses = strings.Join(classes, ", ")
 	return nil
 }
 
@@ -328,120 +360,147 @@ func (a *App) directory(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Se
 }
 
 func (a *App) putDirectory(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
-	if e := requireDirectoryOperator(r.Context(), tx, s); e != nil {
-		return e
+	if err := requireDirectoryOperator(r.Context(), tx, s); err != nil {
+		return err
 	}
 	var body directoryBody
-	if e := decode(w, r, &body); e != nil {
-		return e
+	if err := decode(w, r, &body); err != nil {
+		return err
 	}
-	if e := body.validate(); e != nil {
-		return e
+	if err := body.validate(); err != nil {
+		return err
 	}
 	if hasControl(body.BindCredential) || len(body.BindCredential) > 512 {
 		return bad("Bind password is too long or malformed.")
 	}
-	// The stored bind credential answers this request, so it is a credential
-	// operation: a recent second factor is required, and an API key — which
-	// cannot present one — is refused here.
-	if e := a.requireFreshMFA(r, tx, s); e != nil {
-		return e
+	// A stored bind credential requires a fresh second factor and a session.
+	if err := a.requireFreshMFA(r, tx, s); err != nil {
+		return err
 	}
-	admin, e := a.identityAdmin(r.Context())
-	if e != nil {
-		return e
+	admin, err := a.identityAdmin(r.Context())
+	if err != nil {
+		return err
 	}
 	// Serialize directory changes per organization.
-	if _, e := tx.Exec(r.Context(), `SELECT id FROM organizations WHERE id=$1 FOR UPDATE`, s.OrganizationID); e != nil {
-		return e
+	if _, err := tx.Exec(r.Context(), "SELECT id FROM organizations WHERE id=$1 FOR UPDATE", s.OrganizationID); err != nil {
+		return err
 	}
-	stored, component, e := loadDirectory(r.Context(), tx, s.OrganizationID)
-	create := errors.Is(e, pgx.ErrNoRows)
-	if e != nil && !create {
-		return e
+	stored, component, err := loadDirectory(r.Context(), tx, s.OrganizationID)
+	create := errors.Is(err, pgx.ErrNoRows)
+	if err != nil && !create {
+		return err
 	}
+	credential, err := directoryBindCredential(body, stored, create)
+	if err != nil {
+		return err
+	}
+	current, create, err := readDirectoryComponent(admin, component, create, credential)
+	if err != nil {
+		return err
+	}
+	component, err = writeDirectoryComponent(admin, body, credential, component, create, current)
+	if err != nil {
+		return err
+	}
+	alignNameMapper(admin, component)
+	view, err := persistDirectoryUpdate(r.Context(), tx, s, admin, component, body, create)
+	if err != nil {
+		return err
+	}
+	reply(w, 200, view)
+	return nil
+}
+
+func directoryBindCredential(body directoryBody, stored directoryView, create bool) (string, error) {
 	credential := body.BindCredential
 	switch {
 	case body.AuthType == "none":
 		credential = ""
 	case credential == "" && create:
-		return bad("A bind password is required to create the directory.")
+		return "", bad("A bind password is required to create the directory.")
 	case credential == "":
-		// The stored secret is reused only for the very server it was saved
-		// against: keeping the old password while pointing the directory at a
-		// new URL is how the credential would be handed to an attacker's host.
-		// Both URLs are canonical (validate() normalizes the body in place, the
-		// stored one was normalized when recorded), so equality is exact.
+		// Reusing the stored secret for another server would disclose it.
 		if body.ConnectionURL != stored.ConnectionURL {
-			return bad("The bind password must be entered again to change the directory server.")
+			return "", bad("The bind password must be entered again to change the directory server.")
 		}
 		credential = secretMask // Keycloak keeps the stored secret
 	}
-	var current map[string]any
-	if !create {
-		status, _, raw, e := admin.call("GET", ldapComponentPath+url.PathEscape(component), nil)
-		if e != nil {
-			return e
-		}
-		switch status {
-		case 200:
-			if json.Unmarshal(raw, &current) != nil {
-				return apiError{502, "identity_unavailable", "Invalid identity administration response."}
-			}
-		case 404:
-			// The component vanished on the Keycloak side: recreate it.
-			create = true
-			if credential == secretMask {
-				return bad("The directory no longer exists in the identity provider; provide the bind password again.")
-			}
-		default:
-			return apiError{502, "identity_unavailable", "Could not read the directory in the identity provider."}
-		}
+	return credential, nil
+}
+
+func readDirectoryComponent(admin *identityAdmin, component string, create bool, credential string) (map[string]any, bool, error) {
+	if create {
+		return nil, true, nil
 	}
+	status, _, raw, err := admin.call("GET", ldapComponentPath+url.PathEscape(component), nil)
+	if err != nil {
+		return nil, false, err
+	}
+	var current map[string]any
+	switch status {
+	case 200:
+		if json.Unmarshal(raw, &current) != nil {
+			return nil, false, apiError{502, "identity_unavailable", "Invalid identity administration response."}
+		}
+	case 404:
+		// The component vanished on the Keycloak side: recreate it.
+		if credential == secretMask {
+			return nil, false, bad("The directory no longer exists in the identity provider; provide the bind password again.")
+		}
+		return nil, true, nil
+	default:
+		return nil, false, apiError{502, "identity_unavailable", "Could not read the directory in the identity provider."}
+	}
+	return current, false, nil
+}
+
+func writeDirectoryComponent(admin *identityAdmin, body directoryBody, credential, component string, create bool, current map[string]any) (string, error) {
 	config := body.componentConfig(credential)
 	if create {
-		status, header, _, e := admin.call("POST", "/components", map[string]any{"name": body.Name, "providerId": "ldap", "providerType": "org.keycloak.storage.UserStorageProvider", "config": config})
-		if e != nil {
-			return e
+		status, header, _, err := admin.call("POST", "/components", map[string]any{"name": body.Name, "providerId": "ldap", "providerType": "org.keycloak.storage.UserStorageProvider", "config": config})
+		if err != nil {
+			return "", err
 		}
 		if status != 201 {
-			return apiError{502, "identity_unavailable", "The identity provider refused the directory configuration."}
+			return "", apiError{502, "identity_unavailable", "The identity provider refused the directory configuration."}
 		}
 		component = path.Base(header.Get("Location"))
 		if component == "" || component == "." || component == "/" || !ldapSubjectPattern.MatchString(component) {
-			return apiError{502, "identity_unavailable", "The identity provider did not return the directory identifier."}
+			return "", apiError{502, "identity_unavailable", "The identity provider did not return the directory identifier."}
 		}
-	} else {
-		current["name"] = body.Name
-		current["config"] = config
-		status, _, _, e := admin.call("PUT", ldapComponentPath+url.PathEscape(component), current)
-		if e != nil {
-			return e
-		}
-		if status != 204 {
-			return apiError{502, "identity_unavailable", "The identity provider refused the directory configuration."}
-		}
+		return component, nil
 	}
-	alignNameMapper(admin, component)
-	if e := saveDirectory(r.Context(), tx, s.OrganizationID, component, body.directoryConfig); e != nil {
+	current["name"] = body.Name
+	current["config"] = config
+	status, _, _, err := admin.call("PUT", ldapComponentPath+url.PathEscape(component), current)
+	if err != nil {
+		return "", err
+	}
+	if status != 204 {
+		return "", apiError{502, "identity_unavailable", "The identity provider refused the directory configuration."}
+	}
+	return component, nil
+}
+
+func persistDirectoryUpdate(ctx context.Context, tx pgx.Tx, s *Session, admin *identityAdmin, component string, body directoryBody, create bool) (directoryView, error) {
+	if err := saveDirectory(ctx, tx, s.OrganizationID, component, body.directoryConfig); err != nil {
 		if create {
 			// Best effort: do not leave an unreferenced provider behind.
 			_, _, _, _ = admin.call("DELETE", ldapComponentPath+url.PathEscape(component), nil)
 		}
-		return e
+		return directoryView{}, err
 	}
-	if e := audit(r.Context(), tx, s.OrganizationID, s.UserID, "directory.update", s.OrganizationID); e != nil {
-		return e
+	if err := audit(ctx, tx, s.OrganizationID, s.UserID, "directory.update", s.OrganizationID); err != nil {
+		return directoryView{}, err
 	}
-	view, _, e := loadDirectory(r.Context(), tx, s.OrganizationID)
-	if e != nil {
-		return e
+	view, _, err := loadDirectory(ctx, tx, s.OrganizationID)
+	if err != nil {
+		return directoryView{}, err
 	}
-	if e := tx.Commit(r.Context()); e != nil {
-		return e
+	if err := tx.Commit(ctx); err != nil {
+		return directoryView{}, err
 	}
-	reply(w, 200, view)
-	return nil
+	return view, nil
 }
 
 func (a *App) deleteDirectory(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
@@ -486,57 +545,30 @@ func (a *App) deleteDirectory(w http.ResponseWriter, r *http.Request, tx pgx.Tx,
 }
 
 func (a *App) testDirectory(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
-	if e := requireDirectoryOperator(r.Context(), tx, s); e != nil {
-		return e
+	if err := requireDirectoryOperator(r.Context(), tx, s); err != nil {
+		return err
 	}
 	var body directoryBody
-	if e := decode(w, r, &body); e != nil {
-		return e
+	if err := decode(w, r, &body); err != nil {
+		return err
 	}
-	if e := body.validate(); e != nil {
-		return e
+	if err := body.validate(); err != nil {
+		return err
 	}
 	if hasControl(body.BindCredential) || len(body.BindCredential) > 512 {
 		return bad("Bind password is too long or malformed.")
 	}
-	// Same standing as the save route: the test can spend the stored credential.
-	if e := a.requireFreshMFA(r, tx, s); e != nil {
-		return e
+	// The test can spend the stored credential, so it requires a fresh second factor.
+	if err := a.requireFreshMFA(r, tx, s); err != nil {
+		return err
 	}
-	credential, component := body.BindCredential, ""
-	if body.AuthType == "none" {
-		credential = ""
-	} else if credential == "" {
-		// Reuse the secret Keycloak already holds for this organization's directory,
-		// only against the server it was saved for (see putDirectory).
-		stored, id, e := loadDirectory(r.Context(), tx, s.OrganizationID)
-		if errors.Is(e, pgx.ErrNoRows) {
-			return bad("A bind password is required to test the connection.")
-		}
-		if e != nil {
-			return e
-		}
-		if body.ConnectionURL != stored.ConnectionURL {
-			return bad("The bind password must be entered again to change the directory server.")
-		}
-		credential, component = secretMask, id
+	credential, component, err := directoryTestCredential(r.Context(), tx, s.OrganizationID, body)
+	if err != nil {
+		return err
 	}
-	admin, e := a.identityAdmin(r.Context())
-	if e != nil {
-		return e
-	}
-	run := func(action string) (bool, string, error) {
-		status, _, raw, e := admin.call("POST", "/testLDAPConnection", map[string]string{"action": action, "connectionUrl": body.ConnectionURL, "bindDn": body.BindDN, "bindCredential": credential, "useTruststoreSpi": body.UseTruststore, "connectionTimeout": strconv.Itoa(body.ConnectionTimeout), "startTls": strconv.FormatBool(body.StartTLS), "authType": body.AuthType, "componentId": component})
-		if e != nil {
-			return false, "", e
-		}
-		if status == 204 {
-			return true, "", nil
-		}
-		if status >= 500 {
-			return false, "", apiError{502, "identity_unavailable", "The identity provider could not run the directory test."}
-		}
-		return false, keycloakMessage(raw), nil
+	admin, err := a.identityAdmin(r.Context())
+	if err != nil {
+		return err
 	}
 	steps := []string{"connection"}
 	if body.AuthType == "simple" {
@@ -547,9 +579,9 @@ func (a *App) testDirectory(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s
 		if step == "authentication" {
 			action = "testAuthentication"
 		}
-		ok, message, e := run(action)
-		if e != nil {
-			return e
+		ok, message, err := runDirectoryConnectionTest(admin, body, credential, component, action)
+		if err != nil {
+			return err
 		}
 		if !ok {
 			reply(w, 200, map[string]any{"ok": false, "step": step, "message": message})
@@ -558,6 +590,41 @@ func (a *App) testDirectory(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s
 	}
 	reply(w, 200, map[string]any{"ok": true, "step": steps[len(steps)-1]})
 	return nil
+}
+
+func directoryTestCredential(ctx context.Context, tx pgx.Tx, org string, body directoryBody) (string, string, error) {
+	credential, component := body.BindCredential, ""
+	if body.AuthType == "none" {
+		credential = ""
+	} else if credential == "" {
+		// Reuse the secret only for the server it was saved against.
+		stored, id, err := loadDirectory(ctx, tx, org)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", "", bad("A bind password is required to test the connection.")
+		}
+		if err != nil {
+			return "", "", err
+		}
+		if body.ConnectionURL != stored.ConnectionURL {
+			return "", "", bad("The bind password must be entered again to change the directory server.")
+		}
+		credential, component = secretMask, id
+	}
+	return credential, component, nil
+}
+
+func runDirectoryConnectionTest(admin *identityAdmin, body directoryBody, credential, component, action string) (bool, string, error) {
+	status, _, raw, err := admin.call("POST", "/testLDAPConnection", map[string]string{"action": action, "connectionUrl": body.ConnectionURL, "bindDn": body.BindDN, "bindCredential": credential, "useTruststoreSpi": body.UseTruststore, "connectionTimeout": strconv.Itoa(body.ConnectionTimeout), "startTls": strconv.FormatBool(body.StartTLS), "authType": body.AuthType, "componentId": component})
+	if err != nil {
+		return false, "", err
+	}
+	if status == 204 {
+		return true, "", nil
+	}
+	if status >= 500 {
+		return false, "", apiError{502, "identity_unavailable", "The identity provider could not run the directory test."}
+	}
+	return false, keycloakMessage(raw), nil
 }
 
 func (a *App) searchDirectory(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
@@ -571,7 +638,7 @@ func (a *App) searchDirectory(w http.ResponseWriter, r *http.Request, tx pgx.Tx,
 	if e != nil {
 		return e
 	}
-	if e := directory.validate(); e != nil {
+	if directory.validate() != nil {
 		return apiError{409, "directory_transport_required", "Update this directory to verified LDAPS or StartTLS before searching."}
 	}
 	// Keycloak forwards the search text into LDAP filters: wildcards are
@@ -588,16 +655,31 @@ func (a *App) searchDirectory(w http.ResponseWriter, r *http.Request, tx pgx.Tx,
 	// provided by this organization's own directory are kept.
 	// Filter each page of realm accounts, not just its first twenty users.
 	// An incomplete search is explicit rather than an empty success.
+	found, err := searchDirectoryUsers(admin, query, component)
+	if err != nil {
+		return err
+	}
+	members, err := directoryMemberSet(r.Context(), tx, found, component)
+	if err != nil {
+		return err
+	}
+	items := directorySearchItems(found, component, members)
+	reply(w, 200, map[string]any{"items": items})
+	return nil
+}
+
+func searchDirectoryUsers(admin *identityAdmin, query, component string) ([]identityUser, error) {
+	// Keycloak searches every provider, so filter each page by this organization's component.
 	found := []identityUser{}
 	const pageSize, searchLimit = 100, 1000
 	for first := 0; ; first += pageSize {
 		status, _, raw, err := admin.call("GET", "/users?search="+url.QueryEscape(query)+"&first="+strconv.Itoa(first)+"&max="+strconv.Itoa(pageSize), nil)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		var page []identityUser
 		if status != 200 || json.Unmarshal(raw, &page) != nil || len(page) > pageSize {
-			return apiError{502, "identity_unavailable", "Could not search the directory."}
+			return nil, apiError{502, "identity_unavailable", "Could not search the directory."}
 		}
 		for _, candidate := range page {
 			if candidate.FederationLink == component {
@@ -608,42 +690,70 @@ func (a *App) searchDirectory(w http.ResponseWriter, r *http.Request, tx pgx.Tx,
 			break
 		}
 		if first+pageSize >= searchLimit {
-			return apiError{422, "search_too_broad", "This search matches too many accounts. Use a more specific name or email."}
+			return nil, apiError{422, "search_too_broad", "This search matches too many accounts. Use a more specific name or email."}
 		}
 	}
+	return found, nil
+}
+
+func directoryMemberSet(ctx context.Context, tx pgx.Tx, found []identityUser, component string) (map[string]bool, error) {
 	var subjects []string
-	for _, u := range found {
-		if u.FederationLink == component {
-			subjects = append(subjects, u.ID)
+	for _, user := range found {
+		if user.FederationLink == component {
+			subjects = append(subjects, user.ID)
 		}
 	}
 	members := map[string]bool{}
-	if len(subjects) > 0 {
-		rows, e := tx.Query(r.Context(), `SELECT u.subject FROM memberships m JOIN users u ON u.id=m.user_id WHERE u.subject=ANY($1)`, subjects)
-		if e != nil {
-			return e
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var subject string
-			if e = rows.Scan(&subject); e != nil {
-				return e
-			}
-			members[subject] = true
-		}
-		if e = rows.Err(); e != nil {
-			return e
-		}
+	if len(subjects) == 0 {
+		return members, nil
 	}
+	rows, err := tx.Query(ctx, "SELECT u.subject FROM memberships m JOIN users u ON u.id=m.user_id WHERE u.subject=ANY($1)", subjects)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var subject string
+		if err := rows.Scan(&subject); err != nil {
+			return nil, err
+		}
+		members[subject] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return members, nil
+}
+
+func directorySearchItems(found []identityUser, component string, members map[string]bool) []map[string]string {
 	items := []map[string]string{}
-	for _, u := range found {
-		if u.FederationLink != component || members[u.ID] {
+	for _, user := range found {
+		if user.FederationLink != component || members[user.ID] {
 			continue
 		}
-		items = append(items, map[string]string{"subject": u.ID, "username": u.Username, "email": strings.ToLower(u.Email), "display_name": u.displayName()})
+		items = append(items, map[string]string{"subject": user.ID, "username": user.Username, "email": strings.ToLower(user.Email), "display_name": user.displayName()})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i]["username"] < items[j]["username"] })
-	reply(w, 200, map[string]any{"items": items})
+	return items
+}
+
+func validateDirectoryImportRole(ctx context.Context, tx pgx.Tx, s *Session, role string) error {
+	if role == "owner" && s.Role != "owner" {
+		return forbidden()
+	}
+	// A key cannot import a directory account into a role broader than itself.
+	if may, err := mayGrantRole(ctx, tx, s, role); err != nil {
+		return err
+	} else if !may {
+		return notGranted()
+	}
+	var known bool
+	if err := tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM roles WHERE name=$1)", role).Scan(&known); err != nil {
+		return err
+	}
+	if !known {
+		return bad("Unknown role for this organization.")
+	}
 	return nil
 }
 
@@ -658,21 +768,8 @@ func (a *App) importDirectoryMember(w http.ResponseWriter, r *http.Request, tx p
 	if !ldapSubjectPattern.MatchString(body.Subject) || body.Role == "" {
 		return bad("Provide a directory account and a role.")
 	}
-	if body.Role == "owner" && s.Role != "owner" {
-		return forbidden()
-	}
-	// A key cannot import a directory account into a role broader than itself.
-	if may, e := mayGrantRole(r.Context(), tx, s, body.Role); e != nil {
-		return e
-	} else if !may {
-		return notGranted()
-	}
-	var known bool
-	if e := tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM roles WHERE name=$1)`, body.Role).Scan(&known); e != nil {
-		return e
-	}
-	if !known {
-		return bad("Unknown role for this organization.")
+	if err := validateDirectoryImportRole(r.Context(), tx, s, body.Role); err != nil {
+		return err
 	}
 	_, component, e := loadDirectory(r.Context(), tx, s.OrganizationID)
 	if errors.Is(e, pgx.ErrNoRows) {

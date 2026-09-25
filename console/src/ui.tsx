@@ -231,7 +231,9 @@ export function ErrorNotice({ error, retry }: Readonly<{ error: unknown; retry?:
   // its own notice, in the reader's language, next to what it is about.
   if (secondFactorRequired(error)) return <output className="notice warning"><Icon name="lock" /><div><strong>{t("secondFactorNeeded")}</strong><p>{t("secondFactorRedirecting")}</p></div></output>;
   const knownKey = error instanceof ApiError ? knownErrorMessages[error.code] : undefined;
-  const text = knownKey ? t(knownKey) : error instanceof ApiError ? error.message : t("cannotReachTheServerCheckYour");
+  let text = t("cannotReachTheServerCheckYour");
+  if (error instanceof ApiError) text = error.message;
+  if (knownKey) text = t(knownKey);
   return <div className="notice error" role="alert"><Icon name="alert" /><div><strong>{errorTitle(error, t)}</strong><p>{text}</p></div>{retry && <button type="button" className="button secondary small" onClick={retry}>{t("retry")}</button>}</div>;
 }
 export function Loading() { const t = useText(); return <output className="loading"><span className="spinner" />{t("loading")}</output>; }

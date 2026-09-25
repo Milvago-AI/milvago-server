@@ -50,7 +50,7 @@ func (a *App) deviceAssociationRequest(w http.ResponseWriter, r *http.Request) e
 	token := r.URL.Query().Get("token")
 	if r.Method == "POST" {
 		r.Body = http.MaxBytesReader(w, r.Body, 4096)
-		if e := r.ParseForm(); e != nil {
+		if r.ParseForm() != nil {
 			return bad("Invalid confirmation form.")
 		}
 		token = r.PostForm.Get("token")
@@ -64,7 +64,7 @@ func (a *App) deviceAssociationRequest(w http.ResponseWriter, r *http.Request) e
 		return bad("Invalid association link.")
 	}
 	var org, device string
-	if e := a.db.QueryRow(r.Context(), `SELECT organization_id,device_id FROM association_identity($1)`, hash(token)).Scan(&org, &device); e != nil {
+	if a.db.QueryRow(r.Context(), `SELECT organization_id,device_id FROM association_identity($1)`, hash(token)).Scan(&org, &device) != nil {
 		return apiError{410, "association_expired", "The association link expired or was already used."}
 	}
 	tx, e := tenantTx(r.Context(), a.db, org)
@@ -106,7 +106,16 @@ func (a *App) deviceAssociationRequest(w http.ResponseWriter, r *http.Request) e
 	http.Redirect(w, r, a.oauth.AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("prompt", "select_account")), 302)
 	return nil
 }
-func (a *App) finishDeviceAssociation(w http.ResponseWriter, r *http.Request, org, device string, digest []byte, subject, email, name string, claims map[string]json.RawMessage) error {
+
+type deviceAssociationIdentity struct {
+	subject string
+	email   string
+	name    string
+	claims  map[string]json.RawMessage
+}
+
+func (a *App) finishDeviceAssociation(w http.ResponseWriter, r *http.Request, org, device string, digest []byte, identity deviceAssociationIdentity) error {
+	subject, email, name, claims := identity.subject, identity.email, identity.name, identity.claims
 	// A right-to-left display name legitimately carries direction marks; they are
 	// dropped rather than refused (the check refuses them for device-chosen names).
 	name = identityText(name)

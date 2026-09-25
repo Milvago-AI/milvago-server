@@ -29,6 +29,8 @@ import (
 	"golang.org/x/oauth2"
 )
 
+const logoutPath = "/auth/logout"
+
 type App struct {
 	config   Config
 	db       *pgxpool.Pool
@@ -268,10 +270,10 @@ func decode(w http.ResponseWriter, r *http.Request, v any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, 128*1024)
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
-	if e := d.Decode(v); e != nil {
+	if d.Decode(v) != nil {
 		return bad("Invalid or oversized JSON body.")
 	}
-	if e := d.Decode(&struct{}{}); e != io.EOF {
+	if d.Decode(&struct{}{}) != io.EOF {
 		return bad("Exactly one JSON document is required.")
 	}
 	return nil
@@ -311,7 +313,7 @@ func New(ctx context.Context, c Config, p *pgxpool.Pool, logger *slog.Logger) (*
 	// key polling it would hammer the identity provider. Neither is a machine
 	// operation. GET /api/session stays key-reachable as the discovery route
 	// ("who am I, what may this key do").
-	a.sessionOnly("POST /auth/logout", "", a.logout)
+	a.sessionOnly("POST "+logoutPath, "", a.logout)
 	a.mux.HandleFunc("GET /api/bootstrap", a.bootstrap)
 	a.registerSetupRoutes()
 	a.registerLicenseRoutes()
@@ -434,7 +436,7 @@ func demoRefuses(method, path string) bool {
 	// re-points their own session and grants nothing, since effective_access is
 	// resolved again on every request afterwards. Refusing it locked whoever signed in
 	// inside whichever organization the sign-in happened to pick, with no way out.
-	if method == "POST" && (path == "/auth/logout" || path == "/api/session/organization") {
+	if method == "POST" && (path == logoutPath || path == "/api/session/organization") {
 		return false
 	}
 	// The MCP endpoint, when the instance serves one. Its POST is an envelope, not a
@@ -493,7 +495,7 @@ func (a *App) permissionsFor(ctx context.Context, tx pgx.Tx, s *Session, org str
 		return nil, forbidden()
 	}
 	var perms []string
-	if e := tx.QueryRow(ctx, `SELECT permissions FROM effective_access($1,$2)`, s.UserID, org).Scan(&perms); e != nil {
+	if tx.QueryRow(ctx, `SELECT permissions FROM effective_access($1,$2)`, s.UserID, org).Scan(&perms) != nil {
 		return nil, forbidden()
 	}
 	if s.APIKeyID != "" {
@@ -647,7 +649,7 @@ func (a *App) handler(permission string, h apiHandler, mode credentialMode) http
 				if a.config.DemoReadOnly {
 					budget = "session " + hex.EncodeToString(s.TokenHash)
 				}
-				if r.URL.Path != "/auth/logout" {
+				if r.URL.Path != logoutPath {
 					e = a.checkIngestRate(r.Context(), budget, apiKeyBudget)
 				}
 				// The one large body is read for those who may send it: the catalogue import's
@@ -683,7 +685,7 @@ func (a *App) handler(permission string, h apiHandler, mode credentialMode) http
 		// or the nearest ancestor membership for hierarchy access). A creator
 		// whose membership was removed resolves to no row at all, so the key that
 		// borrows their authority goes inert here with no revocation needed.
-		if e := tx.QueryRow(r.Context(), `SELECT role,permissions FROM effective_access($1,$2)`, s.UserID, s.OrganizationID).Scan(&s.Role, &s.Permissions); e != nil {
+		if tx.QueryRow(r.Context(), `SELECT role,permissions FROM effective_access($1,$2)`, s.UserID, s.OrganizationID).Scan(&s.Role, &s.Permissions) != nil {
 			a.fail(w, forbidden())
 			return
 		}
@@ -711,7 +713,7 @@ func (a *App) handler(permission string, h apiHandler, mode credentialMode) http
 			a.fail(w, e)
 			return
 		}
-		if requireMFA && s.APIKeyID == "" && !s.MFA && r.URL.Path != "/auth/logout" {
+		if requireMFA && s.APIKeyID == "" && !s.MFA && r.URL.Path != logoutPath {
 			a.fail(w, apiError{403, "mfa_required", "Sign in with multi-factor authentication."})
 			return
 		}
@@ -758,7 +760,7 @@ func (a *App) readBody(r *http.Request, principal string) error {
 		return nil
 	}
 	// Signing out reads nothing, and its budget is never refused.
-	if r.URL.Path == "/auth/logout" {
+	if r.URL.Path == logoutPath {
 		r.Body = http.NoBody
 		return nil
 	}

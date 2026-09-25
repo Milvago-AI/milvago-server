@@ -82,13 +82,17 @@ func versionNewer(v, current string) bool {
 	}
 	return false
 }
+func validUpdateTarget(edition, platform string) bool {
+	return slices.Contains([]string{"community", "commercial"}, edition) && slices.Contains([]string{"windows", "linux"}, platform)
+}
+
 func (a *App) readUpdateManifest(edition, platform string) (signedEnvelope, UpdateManifest, error) {
 	var env signedEnvelope
 	var m UpdateManifest
 	if !a.updatesAvailable() {
 		return env, m, os.ErrNotExist
 	}
-	if !slices.Contains([]string{"community", "commercial"}, edition) || !slices.Contains([]string{"windows", "linux"}, platform) {
+	if !validUpdateTarget(edition, platform) {
 		return env, m, os.ErrNotExist
 	}
 	root, e := installerRoot()
@@ -262,6 +266,8 @@ func (a *App) updateAnchor(w http.ResponseWriter, r *http.Request) {
 	reply(w, 200, envelope)
 }
 
+const deviceAuditActorPrefix = "device:"
+
 var artifactSlots = make(chan struct{}, 2)
 
 // artifactHolders keeps one download slot per device: one device within its budget
@@ -312,7 +318,7 @@ func (a *App) updateArtifact(w http.ResponseWriter, r *http.Request) {
 	// Committed before the copy: the transaction holds the device row FOR UPDATE and a
 	// pool connection, which a copy and re-hash of up to 128 MB kept for its whole
 	// duration, stalling a revocation of that device (audit of 2026-09-24).
-	if e = audit(r.Context(), tx, org, "device:"+device, "update.download", m.Version); e != nil {
+	if e = audit(r.Context(), tx, org, deviceAuditActorPrefix+device, "update.download", m.Version); e != nil {
 		a.fail(w, e)
 		return
 	}
@@ -371,8 +377,8 @@ RETURNING prior.version IS DISTINCT FROM d.version OR prior.update_status IS DIS
 	// a change.
 	if e == nil && changed {
 		var recent int
-		if e = tx.QueryRow(r.Context(), `SELECT count(*) FROM audit WHERE organization_id=$1 AND actor=$2 AND action='update.report' AND occurred_at>now()-interval '1 hour'`, org, "device:"+device).Scan(&recent); e == nil && recent < 6 {
-			e = audit(r.Context(), tx, org, "device:"+device, "update.report", fmt.Sprintf("%s:%s", body.Version, body.Status))
+		if e = tx.QueryRow(r.Context(), `SELECT count(*) FROM audit WHERE organization_id=$1 AND actor=$2 AND action='update.report' AND occurred_at>now()-interval '1 hour'`, org, deviceAuditActorPrefix+device).Scan(&recent); e == nil && recent < 6 {
+			e = audit(r.Context(), tx, org, deviceAuditActorPrefix+device, "update.report", fmt.Sprintf("%s:%s", body.Version, body.Status))
 		}
 	}
 	if e == nil {

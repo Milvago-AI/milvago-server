@@ -942,6 +942,13 @@ function TimelineChart({
 // Detail pages are reached by a UUID in the hash query: #devices?id= and #organizations?id=.
 type DeviceArea = "details" | "policy" | "tools";
 
+function availableDeviceAreas(session: Session): DeviceArea[] {
+  const areas: DeviceArea[] = ["details"];
+  if (can(session, "policy.manage")) areas.push("policy");
+  if (session.edition === "commercial" && canAnalyze(session)) areas.push("tools");
+  return areas;
+}
+
 // The group a device follows. Managers change it here; the group page offers
 // the same move for several devices at once through the same endpoint.
 function DeviceGroupField({ device, changed }: Readonly<{ device: Device; changed: () => void }>) {
@@ -1209,7 +1216,8 @@ function DevicesPage() {
     if (platform) deviceParameters.set("platform", platform);
   }
   const deviceQuery = deviceParameters.toString();
-  const devicePath = `/api/devices${deviceQuery ? `?${deviceQuery}` : ""}`;
+  const deviceQuerySuffix = deviceQuery ? `?${deviceQuery}` : "";
+  const devicePath = `/api/devices${deviceQuerySuffix}`;
   // The three facets are the server's, never rebuilt from the page: `items.length` in
   // their place made an empty filtered page read as an empty fleet.
   const resource = useResource<{ items: Device[]; total: number; fleet: number; platforms: string[] }>(devicePath);
@@ -1350,11 +1358,7 @@ function DevicesPage() {
                 </>
               );
             }
-            const areas: DeviceArea[] = ["details"];
-            // Browser policy is served in both editions; only local tools are Enterprise.
-            if (can(session, "policy.manage")) areas.push("policy");
-            if (session.edition === "commercial" && canAnalyze(session))
-              areas.push("tools");
+            const areas = availableDeviceAreas(session);
             const areaNames: Record<DeviceArea, string> = {
               details: t("details"),
               policy: t("devicePolicy"),
@@ -1451,11 +1455,14 @@ function DevicesPage() {
                     <dt>{t("declaredDomain")}</dt>
                     <dd>
                       {device.machine_domains?.length ? (
-                        device.machine_domains.map((domain) => (
-                          <span key={`${domain.kind}:${domain.name}`} className="cell-detail mono">
-                            {domain.name} ({t(domain.kind === "entra" ? "domainKindEntra" : domain.kind === "realm" ? "domainKindRealm" : "domainKindAd")})
-                          </span>
-                        ))
+                        device.machine_domains.map((domain) => {
+                          let domainKind: TranslationKey = "domainKindAd";
+                          if (domain.kind === "entra") domainKind = "domainKindEntra";
+                          else if (domain.kind === "realm") domainKind = "domainKindRealm";
+                          return <span key={`${domain.kind}:${domain.name}`} className="cell-detail mono">
+                            {domain.name} ({t(domainKind)})
+                          </span>;
+                        })
                       ) : (
                         <span className="muted">{t("notReported")}</span>
                       )}
@@ -2702,6 +2709,9 @@ function LicensePanel() {
       /* Displayed via mutation.error below. */
     }
   }
+  let licenseKind: ReactNode = <span className="muted">—</span>;
+  if (license.kind === "enterprise") licenseKind = "Enterprise";
+  else if (license.kind === "community") licenseKind = "Community";
   return (
     <Card className="settings-panel" title={t("license")} description={t("licenseDescription")} flush>
       <ErrorNotice error={mutation.error} />
@@ -2710,7 +2720,7 @@ function LicensePanel() {
           <dt>{t("status")}</dt>
           <dd><Badge tone={licenseStateTone[license.state]}>{stateLabels[license.state]}</Badge></dd>
           <dt>{t("licenseKind")}</dt>
-          <dd>{license.kind === "enterprise" ? "Enterprise" : license.kind === "community" ? "Community" : <span className="muted">—</span>}</dd>
+          <dd>{licenseKind}</dd>
           <dt>{t("licenseMaxDevices")}</dt>
           <dd>{license.max_devices === 0 ? t("unlimited") : license.max_devices}</dd>
           {license.expires_at && <>

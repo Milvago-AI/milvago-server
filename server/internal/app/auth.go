@@ -209,7 +209,7 @@ func (a *App) callback(w http.ResponseWriter, r *http.Request) {
 			a.fail(w, bad("Invalid verified association claims."))
 			return
 		}
-		if e = a.finishDeviceAssociation(w, r, *associationOrg, *associationDevice, associationHash, id.Subject, claims.Email, claims.Name, associationClaims); e != nil {
+		if e = a.finishDeviceAssociation(w, r, *associationOrg, *associationDevice, associationHash, deviceAssociationIdentity{subject: id.Subject, email: claims.Email, name: claims.Name, claims: associationClaims}); e != nil {
 			a.fail(w, e)
 		}
 		return
@@ -513,6 +513,6 @@ func (a *App) session(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Sess
 	if e != nil {
 		return e
 	}
-	reply(w, 200, map[string]any{"license": license, "is_instance_owner": instanceOwner,"console_debug": a.config.ConsoleDebug, "demo_read_only": a.config.DemoReadOnly, "privacy": map[string]bool{"aggregate_only": privacyFor(r).view.Config.AggregateOnly}, "default_language": language, "user": map[string]string{"id": s.UserID, "email": s.Email, "display_name": s.DisplayName, "language": userLanguage}, "organization": current, "organizations": orgs, "permissions": s.Permissions, "csrf_token": s.CSRF, "edition": Edition})
+	reply(w, 200, map[string]any{"license": license, "is_instance_owner": instanceOwner, "console_debug": a.config.ConsoleDebug, "demo_read_only": a.config.DemoReadOnly, "privacy": map[string]bool{"aggregate_only": privacyFor(r).view.Config.AggregateOnly}, "default_language": language, "user": map[string]string{"id": s.UserID, "email": s.Email, "display_name": s.DisplayName, "language": userLanguage}, "organization": current, "organizations": orgs, "permissions": s.Permissions, "csrf_token": s.CSRF, "edition": Edition})
 	return nil
 }

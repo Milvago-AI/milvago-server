@@ -127,40 +127,40 @@ func TestRetentionPurge(t *testing.T) {
 		}
 		return n
 	}
-	if n := count(`SELECT count(*) FROM audit WHERE id=$1`, oldAudit); n != 0 {
+	if count(`SELECT count(*) FROM audit WHERE id=$1`, oldAudit) != 0 {
 		t.Fatal("audit row beyond the 730-day floor survived the purge")
 	}
-	if n := count(`SELECT count(*) FROM audit WHERE id=$1`, recentAudit); n != 1 {
+	if count(`SELECT count(*) FROM audit WHERE id=$1`, recentAudit) != 1 {
 		t.Fatal("recent audit row was purged")
 	}
-	if n := count(`SELECT count(*) FROM enrollments WHERE id=$1`, oldEnrollment); n != 0 {
+	if count(`SELECT count(*) FROM enrollments WHERE id=$1`, oldEnrollment) != 0 {
 		t.Fatal("stale enrollment survived the purge")
 	}
-	if n := count(`SELECT count(*) FROM enrollments WHERE id=$1`, freshEnrollment); n != 1 {
+	if count(`SELECT count(*) FROM enrollments WHERE id=$1`, freshEnrollment) != 1 {
 		t.Fatal("usable enrollment was purged")
 	}
-	if n := count(`SELECT count(*) FROM shadow_events WHERE id=$1`, oldEvent); n != 0 {
+	if count(`SELECT count(*) FROM shadow_events WHERE id=$1`, oldEvent) != 0 {
 		t.Fatal("event past retention survived the purge")
 	}
-	if n := count(`SELECT count(*) FROM shadow_events WHERE id=$1`, freshEvent); n != 1 {
+	if count(`SELECT count(*) FROM shadow_events WHERE id=$1`, freshEvent) != 1 {
 		t.Fatal("recent event was purged")
 	}
-	if n := count(`SELECT count(*) FROM shadow_content WHERE event_id=$1`, oldEvent); n != 0 {
+	if count(`SELECT count(*) FROM shadow_content WHERE event_id=$1`, oldEvent) != 0 {
 		t.Fatal("event deletion did not cascade only to its content")
 	}
-	if n := count(`SELECT count(*) FROM shadow_content WHERE event_id=$1`, freshEvent); n != 0 {
+	if count(`SELECT count(*) FROM shadow_content WHERE event_id=$1`, freshEvent) != 0 {
 		t.Fatal("expired content survived the purge")
 	}
-	if n := count(`SELECT count(*) FROM api_keys WHERE id=$1`, oldKey); n != 0 {
+	if count(`SELECT count(*) FROM api_keys WHERE id=$1`, oldKey) != 0 {
 		t.Fatal("long-retired API key survived the purge")
 	}
-	if n := count(`SELECT count(*) FROM api_keys WHERE id=$1`, liveKey); n != 1 {
+	if count(`SELECT count(*) FROM api_keys WHERE id=$1`, liveKey) != 1 {
 		t.Fatal("live API key was purged")
 	}
-	if n := count(`SELECT count(*) FROM installer_profiles WHERE id=$1`, retiredProfile); n != 0 {
+	if count(`SELECT count(*) FROM installer_profiles WHERE id=$1`, retiredProfile) != 0 {
 		t.Fatal("long-retired deployment key survived the purge")
 	}
-	if n := count(`SELECT count(*) FROM installer_profiles WHERE organization_id=$1 AND NOT revoked`, org); n != 1 {
+	if count(`SELECT count(*) FROM installer_profiles WHERE organization_id=$1 AND NOT revoked`, org) != 1 {
 		t.Fatal("the organization's live deployment key was purged")
 	}
 

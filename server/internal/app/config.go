@@ -321,9 +321,7 @@ func decodeContentKeys(session []byte) (map[int][]byte, int, error) {
 			return nil, 0, fmt.Errorf("CONTENT_KEYS version %d must differ from SESSION_KEY", version)
 		}
 		keys[version] = key
-		if version > active {
-			active = version
-		}
+		active = max(active, version)
 	}
 	return keys, active, nil
 }

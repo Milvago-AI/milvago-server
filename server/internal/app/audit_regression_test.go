@@ -177,7 +177,7 @@ func TestReadBodyReservation(t *testing.T) {
 			t.Fatal("slot refused below the ceiling")
 		}
 	}
-	if e := (&App{}).readBody(httptest.NewRequest("POST", "/api/enrollments", strings.NewReader("{}")), "person synthetic"); e == nil {
+	if (&App{}).readBody(httptest.NewRequest("POST", "/api/enrollments", strings.NewReader("{}")), "person synthetic") == nil {
 		t.Fatal("a fifth body in flight was read")
 	}
 	for range bodiesPerPrincipal - 1 {

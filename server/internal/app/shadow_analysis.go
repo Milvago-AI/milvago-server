@@ -34,6 +34,33 @@ type shadowFilter struct {
 // "kind" and "action" filters below reuse rather than duplicate.
 var sensitivityValues = []string{"normal", "sensitive", "unknown"}
 
+func validateShadowFilterValue(key, value string) error {
+	if len(value) > 200 || strings.ContainsAny(value, "\n\r\x00") {
+		return bad("Invalid filter value.")
+	}
+	if key == "actor_id" && value != "unknown" && !uuidPattern.MatchString(value) && !osActorPattern.MatchString(value) {
+		return bad("Invalid filter identity.")
+	}
+	if key == "device_id" && !uuidPattern.MatchString(value) {
+		return bad("Invalid filter identity.")
+	}
+	if key == "sensitivity" {
+		if Edition != "commercial" {
+			return apiError{409, "capability_unavailable", "Usage sensitivity requires the Enterprise edition."}
+		}
+		if !slices.Contains(sensitivityValues, value) {
+			return bad("Invalid sensitivity.")
+		}
+	}
+	if key == "kind" && !slices.Contains(eventKinds, value) {
+		return bad("Invalid event kind.")
+	}
+	if key == "action" && !slices.Contains(eventActions, value) {
+		return bad("Invalid action.")
+	}
+	return nil
+}
+
 func parseShadowFilter(q url.Values) (shadowFilter, error) {
 	f := shadowFilter{Where: "TRUE", Args: []any{}, Criteria: map[string]any{}}
 	add := func(expr string, value any) {
@@ -77,28 +104,8 @@ func parseShadowFilter(q url.Values) (shadowFilter, error) {
 			if v == "" {
 				continue
 			}
-			if len(v) > 200 || strings.ContainsAny(v, "\n\r\x00") {
-				return f, bad("Invalid filter value.")
-			}
-			if key == "actor_id" && v != "unknown" && !uuidPattern.MatchString(v) && !osActorPattern.MatchString(v) {
-				return f, bad("Invalid filter identity.")
-			}
-			if key == "device_id" && !uuidPattern.MatchString(v) {
-				return f, bad("Invalid filter identity.")
-			}
-			if key == "sensitivity" {
-				if Edition != "commercial" {
-					return f, apiError{409, "capability_unavailable", "Usage sensitivity requires the Enterprise edition."}
-				}
-				if !slices.Contains(sensitivityValues, v) {
-					return f, bad("Invalid sensitivity.")
-				}
-			}
-			if key == "kind" && !slices.Contains(eventKinds, v) {
-				return f, bad("Invalid event kind.")
-			}
-			if key == "action" && !slices.Contains(eventActions, v) {
-				return f, bad("Invalid action.")
+			if err := validateShadowFilterValue(key, v); err != nil {
+				return f, err
 			}
 			if !slices.Contains(out, v) {
 				out = append(out, v)
@@ -499,6 +506,31 @@ func csvSafe(s string) string {
 	}
 	return strings.Join(segments, ";")
 }
+func writeShadowCSV(w http.ResponseWriter, items []ShadowEventView) {
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	cw := csv.NewWriter(w)
+	header := []string{"id", "occurred_at", "kind", "collaborator", "device", "tool", "provider", "model", "action", "sensitivity", "characters"}
+	if Edition != "commercial" {
+		header = slices.Delete(header, 9, 10)
+	}
+	_ = cw.Write(header)
+	for _, v := range items {
+		characters := strconv.Itoa(v.Characters)
+		if v.CharactersKnown != nil && !*v.CharactersKnown {
+			characters = ""
+		}
+		row := []string{v.ID, v.OccurredAt.Format(time.RFC3339), v.Kind, v.ActorName, v.Hostname, v.Tool, v.Provider, v.Model, v.Action, v.Sensitivity, characters}
+		if Edition != "commercial" {
+			row = slices.Delete(row, 9, 10)
+		}
+		for i := range row {
+			row[i] = csvSafe(row[i])
+		}
+		_ = cw.Write(row)
+	}
+	cw.Flush()
+}
+
 func (a *App) shadowExport(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
 	if e := requireIndividual(r); e != nil {
 		return e
@@ -549,28 +581,7 @@ func (a *App) shadowExport(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s 
 	case "json":
 		reply(w, 200, map[string]any{"criteria": f.Criteria, "items": items})
 	case "csv":
-		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-		cw := csv.NewWriter(w)
-		header := []string{"id", "occurred_at", "kind", "collaborator", "device", "tool", "provider", "model", "action", "sensitivity", "characters"}
-		if Edition != "commercial" {
-			header = slices.Delete(header, 9, 10)
-		}
-		_ = cw.Write(header)
-		for _, v := range items {
-			characters := strconv.Itoa(v.Characters)
-			if v.CharactersKnown != nil && !*v.CharactersKnown {
-				characters = ""
-			}
-			row := []string{v.ID, v.OccurredAt.Format(time.RFC3339), v.Kind, v.ActorName, v.Hostname, v.Tool, v.Provider, v.Model, v.Action, v.Sensitivity, characters}
-			if Edition != "commercial" {
-				row = slices.Delete(row, 9, 10)
-			}
-			for i := range row {
-				row[i] = csvSafe(row[i])
-			}
-			_ = cw.Write(row)
-		}
-		cw.Flush()
+		writeShadowCSV(w, items)
 	}
 	return nil
 }

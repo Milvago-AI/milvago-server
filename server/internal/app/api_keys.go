@@ -90,7 +90,7 @@ func (a *App) apiKeyTx(r *http.Request) (pgx.Tx, *Session, error) {
 	// context exists, and the row identity. The owner and the permissions are read
 	// back below, under row-level security.
 	var org, keyID string
-	if e := a.db.QueryRow(ctx, `SELECT organization_id,key_id FROM api_key_identity($1)`, digest).Scan(&org, &keyID); e != nil {
+	if a.db.QueryRow(ctx, `SELECT organization_id,key_id FROM api_key_identity($1)`, digest).Scan(&org, &keyID) != nil {
 		return nil, nil, apiKeyUnauthorized()
 	}
 	// Spent once the key is identified, so the budget cannot be escaped by

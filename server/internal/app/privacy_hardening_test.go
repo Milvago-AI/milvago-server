@@ -449,47 +449,51 @@ func TestOSIdentityWithoutAssociation(t *testing.T) {
 	// Each subtest builds its own fixture so neither depends on the other having
 	// run first: -shuffle=on reorders sibling subtests, and this package never lets
 	// declaration order be a contract.
-	t.Run("pseudonymous: unattributed and no user disclosed", func(t *testing.T) {
-		const sentinel = "SENTINEL-OSONLY-SUBJECT"
-		p, event := osOnlyEventFixture(t, sentinel)
-		w := p.as("owner", "GET", wideEventWindow("/api/shadow/events"), nil)
-		requireHTTP(t, w, 200)
-		row := findShadowEvent(t, w.Body.Bytes(), event)
-		if row["actor_id"] != "unknown" {
-			t.Fatalf("actor_id = %v, want %q", row["actor_id"], "unknown")
-		}
-		if row["actor_name"] != "Unattributed" {
-			t.Fatalf("actor_name = %v, want %q", row["actor_name"], "Unattributed")
-		}
-		if v, present := row["user"]; present {
-			t.Fatalf("user disclosed under pseudonymisation: %v", v)
-		}
-		if strings.Contains(w.Body.String(), sentinel) {
-			t.Fatal("OS user leaked outside its own field", w.Body.String())
-		}
-		var collaborators int
-		if e := p.admin.QueryRow(context.Background(), "SELECT count(*) FROM collaborators").Scan(&collaborators); e != nil {
-			t.Fatal(e)
-		}
-		if collaborators != 1 {
-			t.Fatalf("an OS-only event created a subject: %d collaborators, want 1", collaborators)
-		}
-	})
+	t.Run("pseudonymous: unattributed and no user disclosed", testPseudonymousOSIdentity)
 
-	t.Run("pseudonymisation disabled: user disclosed, actor stays unattributed", func(t *testing.T) {
-		const sentinel = "SENTINEL-OSONLY-DISCLOSED"
-		p, event := osOnlyEventFixture(t, sentinel)
-		cfg := defaultPrivacy()
-		cfg.Pseudonymous = false
-		requireHTTP(t, putPrivacyTest(t, p.observabilityFixture, cfg), 200)
-		w := p.as("owner", "GET", wideEventWindow("/api/shadow/events"), nil)
-		requireHTTP(t, w, 200)
-		row := findShadowEvent(t, w.Body.Bytes(), event)
-		if row["actor_name"] != "Unattributed" {
-			t.Fatalf("actor_name = %v, want %q even without pseudonymisation: an OS user is never a verified identity", row["actor_name"], "Unattributed")
-		}
-		if row["user"] != sentinel {
-			t.Fatalf("user = %v, want the disclosed sentinel %q", row["user"], sentinel)
-		}
-	})
+	t.Run("pseudonymisation disabled: user disclosed, actor stays unattributed", testDisclosedOSIdentity)
+}
+
+func testPseudonymousOSIdentity(t *testing.T) {
+	const sentinel = "SENTINEL-OSONLY-SUBJECT"
+	p, event := osOnlyEventFixture(t, sentinel)
+	w := p.as("owner", "GET", wideEventWindow("/api/shadow/events"), nil)
+	requireHTTP(t, w, 200)
+	row := findShadowEvent(t, w.Body.Bytes(), event)
+	if row["actor_id"] != "unknown" {
+		t.Fatalf("actor_id = %v, want %q", row["actor_id"], "unknown")
+	}
+	if row["actor_name"] != "Unattributed" {
+		t.Fatalf("actor_name = %v, want %q", row["actor_name"], "Unattributed")
+	}
+	if v, present := row["user"]; present {
+		t.Fatalf("user disclosed under pseudonymisation: %v", v)
+	}
+	if strings.Contains(w.Body.String(), sentinel) {
+		t.Fatal("OS user leaked outside its own field", w.Body.String())
+	}
+	var collaborators int
+	if e := p.admin.QueryRow(context.Background(), "SELECT count(*) FROM collaborators").Scan(&collaborators); e != nil {
+		t.Fatal(e)
+	}
+	if collaborators != 1 {
+		t.Fatalf("an OS-only event created a subject: %d collaborators, want 1", collaborators)
+	}
+}
+
+func testDisclosedOSIdentity(t *testing.T) {
+	const sentinel = "SENTINEL-OSONLY-DISCLOSED"
+	p, event := osOnlyEventFixture(t, sentinel)
+	cfg := defaultPrivacy()
+	cfg.Pseudonymous = false
+	requireHTTP(t, putPrivacyTest(t, p.observabilityFixture, cfg), 200)
+	w := p.as("owner", "GET", wideEventWindow("/api/shadow/events"), nil)
+	requireHTTP(t, w, 200)
+	row := findShadowEvent(t, w.Body.Bytes(), event)
+	if row["actor_name"] != "Unattributed" {
+		t.Fatalf("actor_name = %v, want %q even without pseudonymisation: an OS user is never a verified identity", row["actor_name"], "Unattributed")
+	}
+	if row["user"] != sentinel {
+		t.Fatalf("user = %v, want the disclosed sentinel %q", row["user"], sentinel)
+	}
 }

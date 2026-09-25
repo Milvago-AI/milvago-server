@@ -46,6 +46,7 @@ func (o *orgSlots) release(org string) {
 }
 
 const fileProvisionJSON = "provision.json"
+const msgInstallerBusy = "Installer preparation is busy. Try again shortly."
 
 func (a *App) downloadInstaller(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
 	provision, err := a.installerProvision(r.Context(), tx, s.OrganizationID, r.PathValue("platform"))
@@ -81,17 +82,17 @@ func (a *App) downloadInstaller(w http.ResponseWriter, r *http.Request, tx pgx.T
 	// the write timeout (audit of 2026-09-24).
 	// And eight in all: each transfer keeps its built installer on disk until it ends.
 	if !installerStreams.acquire("person "+s.UserID, 2) {
-		return apiError{429, "installer_busy", "Installer preparation is busy. Try again shortly."}
+		return apiError{429, "installer_busy", msgInstallerBusy}
 	}
 	defer installerStreams.release("person " + s.UserID)
 	if !installerStreams.acquire("", 8) {
-		return apiError{429, "installer_busy", "Installer preparation is busy. Try again shortly."}
+		return apiError{429, "installer_busy", msgInstallerBusy}
 	}
 	defer installerStreams.release("")
 	select {
 	case installerBuildSlots <- struct{}{}:
 	default:
-		return apiError{429, "installer_busy", "Installer preparation is busy. Try again shortly."}
+		return apiError{429, "installer_busy", msgInstallerBusy}
 	}
 	building := true
 	endBuild := func() {
@@ -164,6 +165,7 @@ func (a *App) downloadInstaller(w http.ResponseWriter, r *http.Request, tx pgx.T
 	http.ServeContent(w, r, name, info.ModTime(), file)
 	return nil
 }
+
 // The installer files live in the release directory or in this request's own temporary
 // directory. They are opened through an os.Root on their parent, so the last component
 // can never resolve through a link out of it.

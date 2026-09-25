@@ -10,100 +10,176 @@ import (
 	"time"
 )
 
-// Exercise the real startup migration against changed persisted bytes. A
-// successful SQL execution alone cannot prove that a replacement was inserted.
-func TestDetectionBuiltinUpgrade(t *testing.T) {
+type builtinUpgradeFixture struct {
+	f            *observabilityFixture
+	ctx          context.Context
+	content      DetectionContent
+	factory      []byte
+	expectedHash string
+}
+
+func newBuiltinUpgradeFixture(t *testing.T) builtinUpgradeFixture {
+	t.Helper()
 	f := newObservabilityFixture(t)
-	ctx := context.Background()
 	content, err := decodeDetection(detectionFactory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The built-in catalogue is inserted as the edition covers it, so the bytes this
-	// test expects are the narrowed ones wherever the edition narrows.
+	// Startup inserts the providers covered by the edition being tested.
 	restrictEditionProviders(&content)
 	factory, err := json.Marshal(content)
 	if err != nil {
 		t.Fatal(err)
 	}
 	digest := sha256.Sum256(factory)
-	expectedHash := hex.EncodeToString(digest[:])
-	initialize := func(t *testing.T) {
-		t.Helper()
-		tx, e := f.admin.Begin(ctx)
-		if e != nil {
-			t.Fatal(e)
-		}
-		defer tx.Rollback(ctx)
-		if e = initializeDetection(ctx, tx, "milvago_runtime"); e != nil {
-			t.Fatal(e)
-		}
-		if e = tx.Commit(ctx); e != nil {
-			t.Fatal(e)
-		}
+	return builtinUpgradeFixture{f: f, ctx: context.Background(), content: content, factory: factory, expectedHash: hex.EncodeToString(digest[:])}
+}
+
+func (fixture builtinUpgradeFixture) initialize(t *testing.T) {
+	t.Helper()
+	tx, err := fixture.f.admin.Begin(fixture.ctx)
+	if err != nil {
+		t.Fatal(err)
 	}
-	current := func(t *testing.T) (int64, int, []byte, string, string) {
-		t.Helper()
-		var revision int64
-		var count int
-		var raw []byte
-		var hash, source string
-		if e := f.admin.QueryRow(ctx, "SELECT revision,content,content_hash,source,(SELECT count(*) FROM detection_catalogs) FROM detection_catalogs ORDER BY revision DESC LIMIT 1").Scan(&revision, &raw, &hash, &source, &count); e != nil {
-			t.Fatal(e)
-		}
-		return revision, count, raw, hash, source
+	defer tx.Rollback(fixture.ctx)
+	if err = initializeDetection(fixture.ctx, tx, "milvago_runtime"); err != nil {
+		t.Fatal(err)
 	}
-	initial, count, raw, hash, source := current(t)
-	if count != 1 || !bytes.Equal(raw, factory) || hash != expectedHash || source != "builtin" {
+	if err = tx.Commit(fixture.ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (fixture builtinUpgradeFixture) current(t *testing.T) (int64, int, []byte, string, string) {
+	t.Helper()
+	var revision int64
+	var count int
+	var raw []byte
+	var hash, source string
+	if err := fixture.f.admin.QueryRow(fixture.ctx, "SELECT revision,content,content_hash,source,(SELECT count(*) FROM detection_catalogs) FROM detection_catalogs ORDER BY revision DESC LIMIT 1").Scan(&revision, &raw, &hash, &source, &count); err != nil {
+		t.Fatal(err)
+	}
+	return revision, count, raw, hash, source
+}
+
+func (fixture builtinUpgradeFixture) assertInitial(t *testing.T) int64 {
+	t.Helper()
+	initial, count, raw, hash, source := fixture.current(t)
+	if count != 1 || !bytes.Equal(raw, fixture.factory) || hash != fixture.expectedHash || source != "builtin" {
 		t.Fatal("initial builtin fixture missing", count, source)
 	}
-	initialize(t)
-	revision, count, _, _, _ := current(t)
+	fixture.initialize(t)
+	revision, count, _, _, _ := fixture.current(t)
 	if revision != initial || count != 1 {
 		t.Fatal("unchanged builtin duplicated")
 	}
-	// Create earlier valid builtin bytes with a different provider label.
-	changed := content
-	changed.Providers = append([]DetectionProvider(nil), content.Providers...)
+	return initial
+}
+
+func (fixture builtinUpgradeFixture) persistOlder(t *testing.T, initial int64) ([]byte, string) {
+	t.Helper()
+	changed := fixture.content
+	changed.Providers = append([]DetectionProvider(nil), fixture.content.Providers...)
 	if len(changed.Providers) == 0 {
 		t.Fatal("factory has no providers")
 	}
 	changed.Providers[0].Label = "Synthetic earlier catalog"
-	older, e := json.Marshal(changed)
-	if e != nil {
-		t.Fatal(e)
+	older, err := json.Marshal(changed)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if bytes.Equal(older, factory) {
+	if bytes.Equal(older, fixture.factory) {
 		t.Fatal("older fixture unchanged")
 	}
 	oldDigest := sha256.Sum256(older)
-	if tag, e := f.admin.Exec(ctx, "UPDATE detection_catalogs SET content=$1,content_hash=$2 WHERE revision=$3", older, hex.EncodeToString(oldDigest[:]), initial); e != nil || tag.RowsAffected() != 1 {
-		t.Fatal("older builtin not obtained", e)
+	oldHash := hex.EncodeToString(oldDigest[:])
+	if tag, err := fixture.f.admin.Exec(fixture.ctx, "UPDATE detection_catalogs SET content=$1,content_hash=$2 WHERE revision=$3", older, oldHash, initial); err != nil || tag.RowsAffected() != 1 {
+		t.Fatal("older builtin not obtained", err)
 	}
-	_, _, raw, hash, _ = current(t)
-	if !bytes.Equal(raw, older) || hash == expectedHash {
+	_, _, raw, hash, _ := fixture.current(t)
+	if !bytes.Equal(raw, older) || hash == fixture.expectedHash {
 		t.Fatal("older builtin not persisted")
 	}
-	initialize(t)
-	revision, count, raw, hash, source = current(t)
-	if revision <= initial || count != 2 || !bytes.Equal(raw, factory) || hash != expectedHash || source != "builtin" {
+	return older, oldHash
+}
+
+func (fixture builtinUpgradeFixture) assertReplacement(t *testing.T, initial int64) {
+	t.Helper()
+	fixture.initialize(t)
+	revision, count, raw, hash, source := fixture.current(t)
+	if revision <= initial || count != 2 || !bytes.Equal(raw, fixture.factory) || hash != fixture.expectedHash || source != "builtin" {
 		t.Fatal("changed builtin not replaced exactly once", revision, count, source)
 	}
 	upgraded := revision
-	initialize(t)
-	revision, count, _, _, _ = current(t)
+	fixture.initialize(t)
+	revision, count, _, _, _ = fixture.current(t)
 	if revision != upgraded || count != 2 {
 		t.Fatal("restart duplicated upgrade", revision, count)
 	}
+}
+
+func (fixture builtinUpgradeFixture) assertEditedPreserved(t *testing.T, older []byte, oldHash string) {
+	t.Helper()
 	var edited int64
-	if e := f.admin.QueryRow(ctx, "INSERT INTO detection_catalogs(content,content_hash,source) VALUES($1,$2,'edited') RETURNING revision", older, hex.EncodeToString(oldDigest[:])).Scan(&edited); e != nil {
-		t.Fatal(e)
+	if err := fixture.f.admin.QueryRow(fixture.ctx, "INSERT INTO detection_catalogs(content,content_hash,source) VALUES($1,$2,'edited') RETURNING revision", older, oldHash).Scan(&edited); err != nil {
+		t.Fatal(err)
 	}
-	initialize(t)
-	revision, count, raw, hash, source = current(t)
-	if revision != edited || count != 3 || !bytes.Equal(raw, older) || hash != hex.EncodeToString(oldDigest[:]) || source != "edited" {
+	fixture.initialize(t)
+	revision, count, raw, hash, source := fixture.current(t)
+	if revision != edited || count != 3 || !bytes.Equal(raw, older) || hash != oldHash || source != "edited" {
 		t.Fatal("edited latest catalog overwritten", revision, count, source)
 	}
+}
+
+// Exercise the real startup migration against changed persisted bytes. A
+// successful SQL execution alone cannot prove that a replacement was inserted.
+func TestDetectionBuiltinUpgrade(t *testing.T) {
+	fixture := newBuiltinUpgradeFixture(t)
+	initial := fixture.assertInitial(t)
+	older, oldHash := fixture.persistOlder(t, initial)
+	fixture.assertReplacement(t, initial)
+	fixture.assertEditedPreserved(t, older, oldHash)
+}
+
+func waitForBuiltinPublication(t *testing.T, ctx context.Context, f *observabilityFixture, finished <-chan error, pid int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		select {
+		case err := <-finished:
+			t.Fatalf("startup completed without waiting for publication: %v", err)
+		default:
+		}
+		var waiting bool
+		if err := f.a.db.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND locktype='advisory' AND NOT granted)", pid).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("startup advisory wait not observed")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func publishedCatalogBytes(t *testing.T) ([]byte, string) {
+	t.Helper()
+	content, err := decodeDetection(detectionFactory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(content.Providers) == 0 {
+		t.Fatal("factory providers missing")
+	}
+	content.Providers[0].Label = "Synthetic published catalog"
+	raw, err := json.Marshal(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(raw)
+	return raw, hex.EncodeToString(sum[:])
 }
 
 // Observe the actual PostgreSQL lock wait rather than infer serialization from
@@ -137,40 +213,10 @@ func TestDetectionBuiltinSerializesWithPublication(t *testing.T) {
 		}
 		finished <- err
 	}()
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		select {
-		case err := <-finished:
-			t.Fatalf("startup completed without waiting for publication: %v", err)
-		default:
-		}
-		var waiting bool
-		if e = f.a.db.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND locktype='advisory' AND NOT granted)", pid).Scan(&waiting); e != nil {
-			t.Fatal(e)
-		}
-		if waiting {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("startup advisory wait not observed")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	content, e := decodeDetection(detectionFactory)
-	if e != nil {
-		t.Fatal(e)
-	}
-	if len(content.Providers) == 0 {
-		t.Fatal("factory providers missing")
-	}
-	content.Providers[0].Label = "Synthetic published catalog"
-	raw, e := json.Marshal(content)
-	if e != nil {
-		t.Fatal(e)
-	}
-	sum := sha256.Sum256(raw)
+	waitForBuiltinPublication(t, ctx, f, finished, pid)
+	raw, digest := publishedCatalogBytes(t)
 	var edited int64
-	if e = publisher.QueryRow(ctx, "INSERT INTO detection_catalogs(content,content_hash,source) VALUES($1,$2,'edited') RETURNING revision", raw, hex.EncodeToString(sum[:])).Scan(&edited); e != nil {
+	if e = publisher.QueryRow(ctx, "INSERT INTO detection_catalogs(content,content_hash,source) VALUES($1,$2,'edited') RETURNING revision", raw, digest).Scan(&edited); e != nil {
 		t.Fatal(e)
 	}
 	if e = publisher.Commit(ctx); e != nil {

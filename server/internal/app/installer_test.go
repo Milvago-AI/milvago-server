@@ -585,7 +585,7 @@ func TestDeploymentKeyAndBootstrap(t *testing.T) {
 			t.Fatal("organizations share a deployment key")
 		}
 		childSession, childCSRF := newSession(other, "owner")
-		if key := read(childSession, childCSRF, "/api/deployment-key"); key == nil {
+		if read(childSession, childCSRF, "/api/deployment-key") == nil {
 			t.Fatal("child organization opened without a key")
 		}
 		// A member of the child has no standing over the parent, by either route.
@@ -594,7 +594,7 @@ func TestDeploymentKeyAndBootstrap(t *testing.T) {
 		// The parent owner reaches the child without switching session into it, and can
 		// act on it: reading was never the hard part, and a key that cannot be
 		// withdrawn from the page that shows it is not an incident-response tool.
-		if key := read(owner, csrf, "/api/organizations/"+other+"/deployment-key"); key == nil {
+		if read(owner, csrf, "/api/organizations/"+other+"/deployment-key") == nil {
 			t.Fatal("parent owner cannot read the child key")
 		}
 		childToken := provision(other).BootstrapToken
@@ -602,7 +602,7 @@ func TestDeploymentKeyAndBootstrap(t *testing.T) {
 		if provision(other).BootstrapToken == childToken {
 			t.Fatal("rotating the child from the parent page changed nothing")
 		}
-		if key := read(owner, csrf, "/api/deployment-key"); key == nil {
+		if read(owner, csrf, "/api/deployment-key") == nil {
 			t.Fatal("acting on the child disturbed the parent key")
 		}
 		requireHTTP(t, call("POST", "/api/organizations/"+other+"/deployment-key/revoke", map[string]any{}, owner, csrf, ""), 200)
