@@ -5,8 +5,8 @@ licensor of every component in this repository.
 
 | Component | Path | License |
 | --- | --- | --- |
-| Backend, single organization | `server/` | AGPL-3.0-or-later |
-| Console frontend | `console/` | AGPL-3.0-or-later |
+| Backend, single organization | `server/` | AGPL-3.0-only |
+| Console frontend | `console/` | AGPL-3.0-only |
 
 Full text: `LICENSE`. Where a directory carries its own license file (bundled fonts, for
 instance), that file governs it.

@@ -3,7 +3,7 @@
 ## Licensing of contributions
 
 A contribution is accepted under the license of the component it touches —
-AGPL-3.0-or-later for `server/` and `console/` (see `LICENSING.md`). Copyright holder:
+AGPL-3.0-only for `server/` and `console/` (see `LICENSING.md`). Copyright holder:
 Milvago AI, LLC. Inbound equals outbound:
 we ask for no copyright assignment.
 

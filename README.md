@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-18181B"></a>
+  <a href="LICENSE"><img alt="License: AGPL-3.0-only" src="https://img.shields.io/badge/license-AGPL--3.0--only-18181B"></a>
   <img alt="Go 1.27" src="https://img.shields.io/badge/Go-1.27-00ADD8">
   <img alt="React 19" src="https://img.shields.io/badge/React-19-149ECA">
   <img alt="Distroless image" src="https://img.shields.io/badge/image-distroless%2C%20non--root-18181B">
@@ -122,7 +122,7 @@ wizard, lifts those limits and unlocks custom roles, member invitations, SSO and
 | Masking | Custom rules | Custom rules and built-in sensitive-data patterns |
 | Model control and usage sensitivity | — | ✓ |
 | MCP server, observability export (OTLP) | — | ✓ |
-| License | AGPL-3.0 | Commercial |
+| License | AGPL-3.0-only | Commercial |
 
 Enterprise is available from Milvago AI, LLC — [www.milvago.ai](https://www.milvago.ai).
 
@@ -148,6 +148,6 @@ Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 ## License
 
 Copyright © 2026 Milvago AI, LLC. The server and the console are licensed under
-[AGPL-3.0-or-later](LICENSE); see [LICENSING.md](LICENSING.md) for what that means for
+[AGPL-3.0-only](LICENSE); see [LICENSING.md](LICENSING.md) for what that means for
 operators, and [THIRD-PARTY.md](THIRD-PARTY.md) for dependencies. "Milvago" and the Milvago
 logo are trademarks of Milvago AI, LLC.

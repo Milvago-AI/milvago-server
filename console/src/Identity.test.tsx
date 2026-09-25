@@ -71,7 +71,8 @@ describe('Identity: profile, member account types and LDAP directory', () => {
     serve({ '/api/profile/api-keys': noApiKeys, '/api/profile': profile });
     render(<App />);
     await screen.findByRole('heading', { level: 1, name: 'Mon profil' });
-    expect(screen.getByRole('textbox', { name: 'Prénom' })).toBeDisabled();
+    // The heading renders before the profile arrives: wait for the form, not the heading.
+    expect(await screen.findByRole('textbox', { name: 'Prénom' })).toBeDisabled();
     expect(screen.getByRole('textbox', { name: 'Nom' })).toBeDisabled();
     expect(screen.queryByRole('link', { name: 'Modifier mon adresse e-mail' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Changer mon mot de passe' })).not.toBeInTheDocument();
@@ -85,7 +86,7 @@ describe('Identity: profile, member account types and LDAP directory', () => {
     serve({ '/api/profile/api-keys': noApiKeys, '/api/profile': profile });
     render(<App />);
     await screen.findByRole('heading', { level: 1, name: 'Mon profil' });
-    expect(screen.getByRole('textbox', { name: 'Prénom' })).toBeDisabled();
+    expect(await screen.findByRole('textbox', { name: 'Prénom' })).toBeDisabled();
     expect(screen.queryByRole('link', { name: 'Modifier mon adresse e-mail' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Changer mon mot de passe' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Gérer mes seconds facteurs' })).toHaveAttribute('href', '/auth/login?action=manage_mfa&lang=fr');
