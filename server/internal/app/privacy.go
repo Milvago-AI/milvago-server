@@ -997,13 +997,67 @@ func (a *App) presentPrivateDevice(r *http.Request, s *Session, row map[string]a
 	return nil
 }
 
+func (a *App) privateDeviceRows(r *http.Request, tx pgx.Tx, s *Session, f privateDeviceFilter, show bool, matched int) ([]map[string]any, int, error) {
+	limit, offset, deviceID, groupID, excludeGroupID := f.limit, f.offset, f.deviceID, f.groupID, f.excludeGroupID
+	query, userQuery, platform, status := f.query, f.userQuery, f.platform, f.status
+	// hostname and os_user are sealed with a per-device purpose in the AAD, so `query`
+	// and `user` have no SQL form at all: deciding them means opening every envelope.
+	// Everything else is a plaintext column and is settled by the database. When no text
+	// search is active -- which is every request from the overview badge, the groups
+	// dialogs and the MCP tool -- the page is cut in SQL and only the rows actually
+	// returned are ever decrypted. Do not "simplify" this into one path.
+	scan := query != "" || userQuery != ""
+	statement, args, total := devicesRows, []any{deviceID, platform, status, groupID, excludeGroupID}, matched
+	if !scan {
+		statement, args = statement+" LIMIT $6 OFFSET $7", append(args, limit, offset)
+	} else {
+		total = 0
+	}
+	rows, e := tx.Query(r.Context(), statement, args...)
+	if e != nil {
+		return nil, 0, e
+	}
+	defer rows.Close()
+	items := []map[string]any{}
+	for rows.Next() {
+		var raw []byte
+		if e = rows.Scan(&raw); e != nil {
+			return nil, 0, e
+		}
+		var row map[string]any
+		if e = json.Unmarshal(raw, &row); e != nil {
+			return nil, 0, e
+		}
+		if e = a.presentPrivateDevice(r, s, row, show); e != nil {
+			return nil, 0, e
+		}
+		// Only the two sealed filters are left to decide here, and only when one is
+		// active: the database already applied the others and, on that path, the page.
+		if scan {
+			if (query != "" && !strings.Contains(strings.ToLower(row["hostname"].(string)), query)) ||
+				(userQuery != "" && !strings.Contains(strings.ToLower(row["os_user"].(string)), userQuery)) {
+				continue
+			}
+			total++
+			if total <= offset || len(items) >= limit {
+				continue
+			}
+		}
+		items = append(items, row)
+	}
+	if e = rows.Err(); e != nil {
+		return nil, 0, e
+	}
+	return items, total, nil
+}
+
 func (a *App) privateDevices(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
 	f, e := parsePrivateDeviceFilter(r)
 	if e != nil {
 		return e
 	}
 	limit, offset, deviceID, groupID, excludeGroupID := f.limit, f.offset, f.deviceID, f.groupID, f.excludeGroupID
-	query, userQuery, platform, status := f.query, f.userQuery, f.platform, f.status
+	platform, status := f.platform, f.status
 	show := false
 	if p := privacyFor(r); p != nil && !p.view.Config.AggregateOnly {
 		show, e = revealed(r, tx, "")
@@ -1028,52 +1082,8 @@ func (a *App) privateDevices(w http.ResponseWriter, r *http.Request, tx pgx.Tx, 
 		platforms = []string{}
 	}
 	slices.Sort(platforms)
-	// hostname and os_user are sealed with a per-device purpose in the AAD, so `query`
-	// and `user` have no SQL form at all: deciding them means opening every envelope.
-	// Everything else is a plaintext column and is settled by the database. When no text
-	// search is active -- which is every request from the overview badge, the groups
-	// dialogs and the MCP tool -- the page is cut in SQL and only the rows actually
-	// returned are ever decrypted. Do not "simplify" this into one path.
-	scan := query != "" || userQuery != ""
-	statement, args, total := devicesRows, []any{deviceID, platform, status, groupID, excludeGroupID}, matched
-	if !scan {
-		statement, args = statement+" LIMIT $6 OFFSET $7", append(args, limit, offset)
-	} else {
-		total = 0
-	}
-	rows, e := tx.Query(r.Context(), statement, args...)
+	items, total, e := a.privateDeviceRows(r, tx, s, f, show, matched)
 	if e != nil {
-		return e
-	}
-	defer rows.Close()
-	items := []map[string]any{}
-	for rows.Next() {
-		var raw []byte
-		if e = rows.Scan(&raw); e != nil {
-			return e
-		}
-		var row map[string]any
-		if e = json.Unmarshal(raw, &row); e != nil {
-			return e
-		}
-		if e = a.presentPrivateDevice(r, s, row, show); e != nil {
-			return e
-		}
-		// Only the two sealed filters are left to decide here, and only when one is
-		// active: the database already applied the others and, on that path, the page.
-		if scan {
-			if (query != "" && !strings.Contains(strings.ToLower(row["hostname"].(string)), query)) ||
-				(userQuery != "" && !strings.Contains(strings.ToLower(row["os_user"].(string)), userQuery)) {
-				continue
-			}
-			total++
-			if total <= offset || len(items) >= limit {
-				continue
-			}
-		}
-		items = append(items, row)
-	}
-	if e = rows.Err(); e != nil {
 		return e
 	}
 	reply(w, 200, map[string]any{"items": items, "total": total, "fleet": fleet, "pending": pending, "limit": limit, "offset": offset, "platforms": platforms})

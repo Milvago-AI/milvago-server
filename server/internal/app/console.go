@@ -309,6 +309,36 @@ type instanceSettings struct {
 	Editable  bool
 }
 
+func applyDefaultLanguage(state *instanceSettings, language *string) error {
+	if language == nil {
+		return nil
+	}
+	if !slices.Contains(consoleLanguages, *language) {
+		return bad("Default language must be one of fr, en, es, pt-BR.")
+	}
+	if *language != state.Language && !state.Editable {
+		return forbidden()
+	}
+	state.Language = *language
+	return nil
+}
+
+func updatePublicURL(r *http.Request, tx pgx.Tx, state *instanceSettings, raw string) error {
+	desired := strings.TrimRight(strings.TrimSpace(raw), "/")
+	if state.Editable {
+		if !validOrigin(desired) {
+			return bad("Public URL must be an HTTPS origin (HTTP permitted only on explicit loopback).")
+		}
+		if _, e := tx.Exec(r.Context(), "UPDATE app_config SET public_url=$1,public_url_confirmed=true,default_language=$2", desired, state.Language); e != nil {
+			return e
+		}
+		state.URL, state.Confirmed = desired, true
+	} else if desired != "" && desired != state.URL {
+		return apiError{403, "forbidden", "Only the root organization owner can change the public URL."}
+	}
+	return nil
+}
+
 func (a *App) updateInstanceSettings(r *http.Request, tx pgx.Tx, s *Session, body settingsUpdate) (instanceSettings, error) {
 	var state instanceSettings
 	var isRoot bool
@@ -321,26 +351,11 @@ func (a *App) updateInstanceSettings(r *http.Request, tx pgx.Tx, s *Session, bod
 	if e := tx.QueryRow(r.Context(), "SELECT public_url,public_url_confirmed,default_language FROM app_config").Scan(&state.URL, &state.Confirmed, &state.Language); e != nil {
 		return state, e
 	}
-	if body.DefaultLanguage != nil {
-		if !slices.Contains(consoleLanguages, *body.DefaultLanguage) {
-			return state, bad("Default language must be one of fr, en, es, pt-BR.")
-		}
-		if *body.DefaultLanguage != state.Language && !state.Editable {
-			return state, forbidden()
-		}
-		state.Language = *body.DefaultLanguage
+	if e := applyDefaultLanguage(&state, body.DefaultLanguage); e != nil {
+		return state, e
 	}
-	desired := strings.TrimRight(strings.TrimSpace(body.PublicURL), "/")
-	if state.Editable {
-		if !validOrigin(desired) {
-			return state, bad("Public URL must be an HTTPS origin (HTTP permitted only on explicit loopback).")
-		}
-		if _, e := tx.Exec(r.Context(), "UPDATE app_config SET public_url=$1,public_url_confirmed=true,default_language=$2", desired, state.Language); e != nil {
-			return state, e
-		}
-		state.URL, state.Confirmed = desired, true
-	} else if desired != "" && desired != state.URL {
-		return state, apiError{403, "forbidden", "Only the root organization owner can change the public URL."}
+	if e := updatePublicURL(r, tx, &state, body.PublicURL); e != nil {
+		return state, e
 	}
 	return state, nil
 }

@@ -252,6 +252,27 @@ func aggregateModelStatus(items []modelStatusItem, floor int) []map[string]any {
 
 type modelStatusDevice struct{ id, host, version, platform, kind, status string }
 
+func modelStatusForRule(r *http.Request, tx pgx.Tx, d modelStatusDevice, rule ModelAccessRule, revision int64, now time.Time) (modelStatusItem, bool, error) {
+	if rule.Mode == "off" || (rule.Channel == "native" && d.kind != "native") {
+		return modelStatusItem{}, false, nil
+	}
+	v := modelStatusItem{DeviceID: d.id, Hostname: d.host, Version: d.version, Platform: d.platform, PlatformID: rule.PlatformID, Channel: rule.Channel, ExpectedRevision: revision}
+	var reportedStatus string
+	e := tx.QueryRow(r.Context(), `SELECT revision,status,reason,reported_at FROM model_enforcement WHERE device_id=$1 AND platform_id=$2 AND channel=$3`, d.id, rule.PlatformID, rule.Channel).Scan(&v.AppliedRevision, &reportedStatus, &v.Reason, &v.ReportedAt)
+	if e != nil && e != pgx.ErrNoRows {
+		return modelStatusItem{}, false, e
+	}
+	v.Status = enforcementState(d.version, revision, v.AppliedRevision, reportedStatus, v.ReportedAt, now)
+	if d.status != "approved" {
+		v.Status = "unavailable"
+		v.Reason = "device_" + d.status
+	}
+	if v.Status == "unavailable" && v.Reason == "" {
+		v.Reason = "control_unavailable"
+	}
+	return v, true, nil
+}
+
 func (a *App) modelStatusItems(r *http.Request, tx pgx.Tx, s *Session, devices []modelStatusDevice) ([]modelStatusItem, error) {
 	items := []modelStatusItem{}
 	// Read the clock from the database, the same one that stamped `reported_at`.
@@ -267,25 +288,15 @@ func (a *App) modelStatusItems(r *http.Request, tx pgx.Tx, s *Session, devices [
 			return nil, e
 		}
 		for _, rule := range cfg.Config.ModelAccess {
-			if rule.Mode == "off" || (rule.Channel == "native" && d.kind != "native") {
-				continue
-			}
-			v := modelStatusItem{DeviceID: d.id, Hostname: d.host, Version: d.version, Platform: d.platform, PlatformID: rule.PlatformID, Channel: rule.Channel, ExpectedRevision: cfg.Revision}
-			var reportedStatus string
-			e = tx.QueryRow(r.Context(), `SELECT revision,status,reason,reported_at FROM model_enforcement WHERE device_id=$1 AND platform_id=$2 AND channel=$3`, d.id, rule.PlatformID, rule.Channel).Scan(&v.AppliedRevision, &reportedStatus, &v.Reason, &v.ReportedAt)
-			if e != nil && e != pgx.ErrNoRows {
+			v, active, e := modelStatusForRule(r, tx, d, rule, cfg.Revision, now)
+			if e != nil {
 				return nil, e
 			}
-			v.Status = enforcementState(d.version, cfg.Revision, v.AppliedRevision, reportedStatus, v.ReportedAt, now)
-			if d.status != "approved" {
-				v.Status = "unavailable"
-				v.Reason = "device_" + d.status
+			if active {
+				items = append(items, v)
 			}
-			if v.Status == "unavailable" && v.Reason == "" {
-				v.Reason = "control_unavailable"
-			}
-			items = append(items, v)
 		}
+
 	}
 	return items, nil
 }

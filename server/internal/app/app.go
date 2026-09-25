@@ -577,99 +577,69 @@ func (a *App) register(pattern, permission string, h apiHandler, mode credential
 // separate from register so a caller that must run a check before any database
 // access -- the MCP endpoint validates Origin first -- can wrap the chain
 // instead of reimplementing it.
+// routeCredential chooses one credential before any database access. An explicit
+// bearer header cannot fall back to an ambient browser cookie.
+func (a *App) routeCredential(w http.ResponseWriter, r *http.Request, mode credentialMode) (pgx.Tx, *Session, error) {
+	if r.Header.Get("Authorization") != "" {
+		if mode == accessSession {
+			return nil, nil, apiError{403, "session_required", "This operation requires an interactive console session."}
+		}
+		return a.bearerTx(r, mode)
+	}
+	if mode == accessKey {
+		w.Header().Set("WWW-Authenticate", a.bearerChallenge(r))
+		return nil, nil, apiKeyUnauthorized()
+	}
+	c, e := r.Cookie(a.cookieName("session"))
+	if e != nil {
+		return nil, nil, apiError{401, "unauthenticated", "Sign in to continue."}
+	}
+	// SameSite=Lax attaches cookies on some cross-site GET navigations.
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
+		return nil, nil, apiError{403, "csrf_failed", "The request origin or CSRF token is invalid."}
+	}
+	return a.cookieRouteTx(r, c.Value)
+}
+
+func (a *App) cookieRouteTx(r *http.Request, opaque string) (pgx.Tx, *Session, error) {
+	s, e := a.loadSession(r, opaque)
+	if e != nil {
+		return nil, nil, e
+	}
+	// Signing out always succeeds even when the ordinary request budget is spent.
+	budget := "person " + s.UserID
+	if a.config.DemoReadOnly {
+		budget = "session " + hex.EncodeToString(s.TokenHash)
+	}
+	if r.URL.Path != logoutPath {
+		if e = a.checkIngestRate(r.Context(), budget, apiKeyBudget); e != nil {
+			return nil, nil, e
+		}
+	}
+	// Permission for a large catalogue body is checked before reserving memory.
+	if r.URL.Path == "/api/detection/catalog/import" {
+		var may bool
+		if e = a.db.QueryRow(r.Context(), "SELECT coalesce((SELECT $3=ANY(permissions) FROM effective_access($1,$2)),false)", s.UserID, s.OrganizationID, permPolicyManage).Scan(&may); e != nil {
+			return nil, nil, e
+		}
+		if !may {
+			return nil, nil, forbidden()
+		}
+	}
+	if e = a.readBody(r, budget); e != nil {
+		return nil, nil, e
+	}
+	tx, e := tenantTx(r.Context(), a.db, s.OrganizationID)
+	return tx, s, e
+}
+
 func (a *App) handler(permission string, h apiHandler, mode credentialMode) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var tx pgx.Tx
-		var s *Session
-		var e error
-		// A body read by readBody returns its reservation when the request ends. Kept
-		// through the context, not r.Body, which a handler may wrap (decode does).
+		// A body reservation remains held until the request has ended.
 		hold := &bodyHold{}
 		defer hold.release()
 		r = r.WithContext(context.WithValue(context.WithValue(r.Context(), routePermissionKey{}, permission), bodyHoldKey{}, hold))
-		// One deterministic decision, taken on one input before any database
-		// access: an Authorization header means "API key", exclusively and with
-		// no fallback to the cookie. A request can therefore never carry two
-		// identities, so no path exists where the organization comes from one
-		// principal and the permission set from another.
-		//
-		// The explicit credential beats the ambient one. The cookie is attached
-		// by the browser whether or not the caller meant it; the header is only
-		// ever set on purpose. Falling back would be worse than failing: a client
-		// whose key just expired would silently continue as the human, with full
-		// session rights and an audit trail naming the wrong principal.
-		//
-		// This cannot weaken CSRF. Reaching the bearer branch skips loadSession
-		// entirely, so no cookie-authenticated mutation ever happens without
-		// Origin and X-CSRF-Token; and a bearer key is not ambient authority, so
-		// there is nothing for a cross-site request to forge. No CORS headers are
-		// served, deliberately, so a cross-origin request cannot set the header
-		// on a credentialed call in the first place.
-		if r.Header.Get("Authorization") != "" {
-			if mode == accessSession {
-				a.fail(w, apiError{403, "session_required", "This operation requires an interactive console session."})
-				return
-			}
-			tx, s, e = a.bearerTx(r, mode)
-		} else {
-			// A key-only route has no anonymous and no ambient reading: the
-			// challenge is emitted before any cookie is even looked for, so the
-			// refusal cannot depend on whether a browser happened to attach one.
-			if mode == accessKey {
-				w.Header().Set("WWW-Authenticate", a.bearerChallenge(r))
-				a.fail(w, apiKeyUnauthorized())
-				return
-			}
-			var c *http.Cookie
-			if c, e = r.Cookie(a.cookieName("session")); e != nil {
-				a.fail(w, apiError{401, "unauthenticated", "Sign in to continue."})
-				return
-			}
-			// SameSite=Lax still attaches the cookie to a cross-site top-level GET, which
-			// the CSRF check below lets through: a link elsewhere could make a signed-in
-			// person run an audited export (GET /api/shadow/export) under their name.
-			// Browsers that send Fetch Metadata say where the request came from.
-			if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
-				a.fail(w, apiError{403, "csrf_failed", "The request origin or CSRF token is invalid."})
-				return
-			}
-			// Origin and X-CSRF-Token are verified inside loadSession, which only
-			// this branch can reach. The check must stay there: hoisted into the
-			// shared tail it would compare a key session's empty CSRF against an
-			// empty header, and equal("","") is true.
-			if s, e = a.loadSession(r, c.Value); e == nil {
-				// A person gets the budget a key gets: the expensive reads (conversations,
-				// cartography, a revealed export) and the identity-administration calls
-				// behind the profile were otherwise unbounded for a signed-in member
-				// (audit of 2026-09-24). Per person, not per session, so opening more
-				// sessions buys nothing.
-				// Signing out is never refused; the public demonstration shares one account
-				// between every visitor, so there the budget is per session.
-				budget := "person " + s.UserID
-				if a.config.DemoReadOnly {
-					budget = "session " + hex.EncodeToString(s.TokenHash)
-				}
-				if r.URL.Path != logoutPath {
-					e = a.checkIngestRate(r.Context(), budget, apiKeyBudget)
-				}
-				// The one large body is read for those who may send it: the catalogue import's
-				// permission is checked first, so a member without it reserves 1.5 MiB never.
-				if e == nil && r.URL.Path == "/api/detection/catalog/import" {
-					var may bool
-					if qe := a.db.QueryRow(r.Context(), `SELECT coalesce((SELECT $3=ANY(permissions) FROM effective_access($1,$2)),false)`, s.UserID, s.OrganizationID, permPolicyManage).Scan(&may); qe != nil {
-						e = qe
-					} else if !may {
-						e = forbidden()
-					}
-				}
-				if e == nil {
-					e = a.readBody(r, budget)
-				}
-				if e == nil {
-					tx, e = tenantTx(r.Context(), a.db, s.OrganizationID)
-				}
-			}
-		}
+		tx, s, e := a.routeCredential(w, r, mode)
 		if e != nil {
 			a.fail(w, e)
 			return

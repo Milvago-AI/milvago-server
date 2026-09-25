@@ -173,88 +173,77 @@ func compactJSON(raw []byte) []byte {
 	return out
 }
 
-// Consent rows remain locked through delivery: a completed opt-out cannot race
-// a send assembled from an older consent. Organization IDs stay local.
-func (a *App) publisherSnapshot(ctx context.Context, tx pgx.Tx) (publisherBatch, []publisherConsent, string, bool, error) {
-	batch := publisherBatch{SentAt: time.Now().UTC(), EngineVersion: "0.5.0", ProviderHealth: []publisherHealth{}}
-	var root string
-	if e := tx.QueryRow(ctx, "SELECT organization_id FROM app_config").Scan(&root); e != nil {
-		return batch, nil, "", false, e
+type publisherSums struct{ devices, network, dom, navigations, previous int64 }
+type publisherHealthKey struct {
+	provider string
+	revision int64
+}
+
+type publisherSnapshotState struct {
+	batch    *publisherBatch
+	consents *[]publisherConsent
+	auto     *bool
+	root     string
+	known    map[string]bool
+	counts   map[publisherHealthKey]*publisherSums
+	dayEnd   time.Time
+}
+
+func (a *App) publisherSnapshotOrganization(ctx context.Context, tx pgx.Tx, org string, state *publisherSnapshotState) error {
+	var e error
+	root := state.root
+	if _, e = tx.Exec(ctx, "SELECT set_config('milvago.organization_id',$1,true)", org); e != nil {
+		return e
 	}
-	rows, e := tx.Query(ctx, "SELECT id FROM organizations ORDER BY id")
+	var ownRaw []byte
+	var since time.Time
+	e = tx.QueryRow(ctx, "SELECT configuration,updated_at FROM privacy_settings WHERE organization_id=$1 FOR SHARE", org).Scan(&ownRaw, &since)
+	if errors.Is(e, pgx.ErrNoRows) {
+		return nil
+	}
 	if e != nil {
-		return batch, nil, "", false, e
+		return e
 	}
-	orgs := []string{}
-	for rows.Next() {
-		var org string
-		if e = rows.Scan(&org); e != nil {
-			rows.Close()
-			return batch, nil, "", false, e
-		}
-		orgs = append(orgs, org)
+	cfg, e := a.readPrivacy(ctx, tx, org)
+	if e != nil {
+		return e
 	}
-	rows.Close()
-	if e = rows.Err(); e != nil {
-		return batch, nil, "", false, e
+	if org == root {
+		*state.auto = cfg.Config.AutoCatalog
 	}
-	known := map[string]bool{}
-	var factory DetectionContent
-	if e = json.Unmarshal(detectionFactory, &factory); e != nil {
-		return batch, nil, "", false, e
+	if !cfg.Config.ShareHealth && !cfg.Config.ShareFleet {
+		return nil
 	}
-	restrictEditionProviders(&factory)
-	for _, p := range factory.Providers {
-		known[p.ID] = true
+	*state.consents = append(*state.consents, publisherConsent{org, cfg.Revision, cfg.Config.ShareHealth, cfg.Config.ShareFleet})
+
+	if cfg.Config.ShareFleet {
+		if e := state.publisherAddFleet(ctx, tx); e != nil {
+			return e
+		}
 	}
-	type sums struct{ devices, network, dom, navigations, previous int64 }
-	type healthKey struct {
-		provider string
-		revision int64
+	if !cfg.Config.ShareHealth {
+		return nil
 	}
-	counts := map[healthKey]*sums{}
-	dayEnd := batch.SentAt.Truncate(24 * time.Hour)
-	consents := []publisherConsent{}
-	auto := false
-	for _, org := range orgs {
-		if _, e = tx.Exec(ctx, "SELECT set_config('milvago.organization_id',$1,true)", org); e != nil {
-			return batch, nil, "", false, e
-		}
-		var ownRaw []byte
-		var since time.Time
-		e = tx.QueryRow(ctx, "SELECT configuration,updated_at FROM privacy_settings WHERE organization_id=$1 FOR SHARE", org).Scan(&ownRaw, &since)
-		if errors.Is(e, pgx.ErrNoRows) {
-			continue
-		}
-		if e != nil {
-			return batch, nil, "", false, e
-		}
-		cfg, e := a.readPrivacy(ctx, tx, org)
-		if e != nil {
-			return batch, nil, "", false, e
-		}
-		if org == root {
-			auto = cfg.Config.AutoCatalog
-		}
-		if !cfg.Config.ShareHealth && !cfg.Config.ShareFleet {
-			continue
-		}
-		consents = append(consents, publisherConsent{org, cfg.Revision, cfg.Config.ShareHealth, cfg.Config.ShareFleet})
-		if cfg.Config.ShareFleet {
-			if batch.Fleet == nil {
-				batch.Fleet = &publisherFleet{}
-			}
-			var total, active uint64
-			if e = tx.QueryRow(ctx, "SELECT count(*),count(*) FILTER(WHERE last_seen>=now()-interval '30 days') FROM devices WHERE status<>'revoked'").Scan(&total, &active); e != nil {
-				return batch, nil, "", false, e
-			}
-			batch.Fleet.Enrolled += total
-			batch.Fleet.Active30d += active
-		}
-		if !cfg.Config.ShareHealth {
-			continue
-		}
-		data, e := tx.Query(ctx, `SELECT c->>'provider',(payload->>'catalog_revision')::bigint,
+	return state.publisherAddHealth(ctx, tx, since)
+}
+
+func (state *publisherSnapshotState) publisherAddFleet(ctx context.Context, tx pgx.Tx) error {
+	if state.batch.Fleet == nil {
+		state.batch.Fleet = &publisherFleet{}
+	}
+	var total, active uint64
+	if e := tx.QueryRow(ctx, "SELECT count(*),count(*) FILTER(WHERE last_seen>=now()-interval '30 days') FROM devices WHERE status<>'revoked'").Scan(&total, &active); e != nil {
+		return e
+	}
+	state.batch.Fleet.Enrolled += total
+	state.batch.Fleet.Active30d += active
+	return nil
+}
+
+func (state *publisherSnapshotState) publisherAddHealth(ctx context.Context, tx pgx.Tx, since time.Time) error {
+	known, counts, dayEnd := state.known, state.counts, state.dayEnd
+	var e error
+	data, e := tx.Query(ctx, `SELECT c->>'provider',(payload->>'catalog_revision')::bigint,
  count(DISTINCT device_id) FILTER(WHERE (payload->>'window_end')::timestamptz >= $3 AND coalesce((c->>'navigations')::bigint,0)>0),
  coalesce(sum((c->>'prompts_network')::bigint) FILTER(WHERE (payload->>'window_end')::timestamptz >= $3),0),
  coalesce(sum((c->>'prompts_dom')::bigint) FILTER(WHERE (payload->>'window_end')::timestamptz >= $3),0),
@@ -264,36 +253,74 @@ func (a *App) publisherSnapshot(ctx context.Context, tx pgx.Tx) (publisherBatch,
  WHERE (payload->>'window_end')::timestamptz < $1 AND (payload->>'window_end')::timestamptz >= $4
  AND (payload->>'window_start')::timestamptz >= $2
  GROUP BY c->>'provider',(payload->>'catalog_revision')::bigint`, dayEnd, since, dayEnd.Add(-24*time.Hour), dayEnd.Add(-8*24*time.Hour))
-		if e != nil {
-			return batch, nil, "", false, e
-		}
-		for data.Next() {
-			var id string
-			var revision int64
-			var v sums
-			if e = data.Scan(&id, &revision, &v.devices, &v.network, &v.dom, &v.navigations, &v.previous); e != nil {
-				data.Close()
-				return batch, nil, "", false, e
-			}
-			if !known[id] {
-				continue
-			}
-			key := healthKey{id, revision}
-			if counts[key] == nil {
-				counts[key] = &sums{}
-			}
-			n := counts[key]
-			n.devices += v.devices
-			n.network += v.network
-			n.dom += v.dom
-			n.navigations += v.navigations
-			n.previous += v.previous
-		}
-		data.Close()
-		if e = data.Err(); e != nil {
-			return batch, nil, "", false, e
-		}
+	if e != nil {
+		return e
 	}
+	for data.Next() {
+		var id string
+		var revision int64
+		var v publisherSums
+		if e = data.Scan(&id, &revision, &v.devices, &v.network, &v.dom, &v.navigations, &v.previous); e != nil {
+			data.Close()
+			return e
+		}
+		if !known[id] {
+			continue
+		}
+		key := publisherHealthKey{id, revision}
+		if counts[key] == nil {
+			counts[key] = &publisherSums{}
+		}
+		n := counts[key]
+		n.devices += v.devices
+		n.network += v.network
+		n.dom += v.dom
+		n.navigations += v.navigations
+		n.previous += v.previous
+	}
+	data.Close()
+	if e = data.Err(); e != nil {
+		return e
+	}
+	return nil
+}
+
+func publisherOrganizationIDs(ctx context.Context, tx pgx.Tx) ([]string, error) {
+	rows, e := tx.Query(ctx, "SELECT id FROM organizations ORDER BY id")
+	if e != nil {
+		return nil, e
+	}
+	orgs := []string{}
+	for rows.Next() {
+		var org string
+		if e = rows.Scan(&org); e != nil {
+			rows.Close()
+			return nil, e
+		}
+		orgs = append(orgs, org)
+	}
+	rows.Close()
+	if e = rows.Err(); e != nil {
+		return nil, e
+	}
+	return orgs, nil
+}
+
+func publisherKnownProviders() (map[string]bool, error) {
+	known := map[string]bool{}
+	var factory DetectionContent
+	if e := json.Unmarshal(detectionFactory, &factory); e != nil {
+		return nil, e
+	}
+	restrictEditionProviders(&factory)
+	for _, p := range factory.Providers {
+		known[p.ID] = true
+	}
+	return known, nil
+}
+
+func (state *publisherSnapshotState) finishHealth() {
+	batch, counts := state.batch, state.counts
 	for key, n := range counts {
 		var ratio *float64
 		if n.network > 0 {
@@ -318,6 +345,35 @@ func (a *App) publisherSnapshot(ctx context.Context, tx pgx.Tx) (publisherBatch,
 		}
 		return 0
 	})
+}
+
+// Consent rows remain locked through delivery: a completed opt-out cannot race
+// a send assembled from an older consent. Organization IDs stay local.
+func (a *App) publisherSnapshot(ctx context.Context, tx pgx.Tx) (publisherBatch, []publisherConsent, string, bool, error) {
+	batch := publisherBatch{SentAt: time.Now().UTC(), EngineVersion: "0.5.0", ProviderHealth: []publisherHealth{}}
+	var root string
+	if e := tx.QueryRow(ctx, "SELECT organization_id FROM app_config").Scan(&root); e != nil {
+		return batch, nil, "", false, e
+	}
+	orgs, e := publisherOrganizationIDs(ctx, tx)
+	if e != nil {
+		return batch, nil, "", false, e
+	}
+	known, e := publisherKnownProviders()
+	if e != nil {
+		return batch, nil, "", false, e
+	}
+	counts := map[publisherHealthKey]*publisherSums{}
+	dayEnd := batch.SentAt.Truncate(24 * time.Hour)
+	consents := []publisherConsent{}
+	auto := false
+	state := publisherSnapshotState{batch: &batch, consents: &consents, auto: &auto, root: root, known: known, counts: counts, dayEnd: dayEnd}
+	for _, org := range orgs {
+		if e := a.publisherSnapshotOrganization(ctx, tx, org, &state); e != nil {
+			return batch, nil, "", false, e
+		}
+	}
+	state.finishHealth()
 	return batch, consents, root, auto, nil
 }
 func (a *App) maintainPublisher(ctx context.Context) {
@@ -398,6 +454,23 @@ func discardPublisherOutbox(ctx context.Context, tx pgx.Tx, root, reason string)
 	return err
 }
 
+type publisherPassState struct {
+	day                      *time.Time
+	revision                 int64
+	digest, configurationKey string
+	catalogDue               bool
+	batch                    publisherBatch
+	consents                 []publisherConsent
+	root                     string
+	auto                     bool
+	key                      string
+	pending                  []byte
+	due                      bool
+	attempts                 int
+	snapshot                 []byte
+	today                    time.Time
+}
+
 func (a *App) publisherPass(ctx context.Context) error {
 	tx, e := a.db.Begin(ctx)
 	if e != nil {
@@ -408,102 +481,130 @@ func (a *App) publisherPass(ctx context.Context) error {
 	if e = tx.QueryRow(ctx, "SELECT pg_try_advisory_xact_lock(726403214)").Scan(&locked); e != nil || !locked {
 		return e
 	}
-	var day *time.Time
-	var revision int64
-	var digest, configurationKey string
-	var catalogDue bool
-	if e = tx.QueryRow(ctx, `SELECT last_telemetry_day,publisher_revision,publisher_hash,configuration_key,last_catalog_attempt IS NULL OR last_catalog_attempt<clock_timestamp()-interval '1 hour' FROM publisher_client_state WHERE singleton FOR UPDATE`).Scan(&day, &revision, &digest, &configurationKey, &catalogDue); e != nil {
-		return e
-	}
-	batch, consents, root, auto, e := a.publisherSnapshot(ctx, tx)
+	state, e := a.publisherPassSnapshot(ctx, tx)
 	if e != nil {
 		return e
 	}
-	if _, e = tx.Exec(ctx, "SELECT set_config('milvago.organization_id',$1,true)", root); e != nil {
+	if e = a.publisherPassCatalog(ctx, tx, &state); e != nil {
 		return e
 	}
-	key := a.publisherConfigurationKey()
-	if configurationKey != key {
-		if e = discardPublisherOutbox(ctx, tx, root, "configuration_changed"); e != nil {
-			return e
-		}
-		if _, e = tx.Exec(ctx, "UPDATE publisher_client_state SET configuration_key=$1,last_catalog_attempt=NULL", key); e != nil {
-			return e
-		}
-		catalogDue = true
-	}
-	if auto && catalogDue {
-		importErr := a.importPublisher(ctx, tx, root, revision, digest)
-		status := ""
-		if importErr != nil {
-			status = "catalog_refused"
-		}
-		if _, e = tx.Exec(ctx, "UPDATE publisher_client_state SET last_catalog_attempt=clock_timestamp(),last_error=$1", status); e != nil {
-			return e
-		}
-	}
-	var pending, heldConsents []byte
-	var due bool
-	var attempts int
-	var existingKey string
-	e = tx.QueryRow(ctx, "SELECT payload,consents,next_attempt<=clock_timestamp(),attempts,configuration_key FROM publisher_client_outbox WHERE singleton FOR UPDATE").Scan(&pending, &heldConsents, &due, &attempts, &existingKey)
-	if e != nil && !errors.Is(e, pgx.ErrNoRows) {
+	if e = publisherReadOutbox(ctx, tx, &state); e != nil {
 		return e
 	}
-	snapshot, _ := json.Marshal(consents)
-	if e == nil && (existingKey != key || !bytes.Equal(compactJSON(heldConsents), compactJSON(snapshot))) {
-		if e = discardPublisherOutbox(ctx, tx, root, "consent_changed"); e != nil {
-			return e
-		}
-		pending = nil
-	}
-	if len(consents) == 0 {
-		if e = discardPublisherOutbox(ctx, tx, root, "consent_changed"); e != nil {
+	if len(state.consents) == 0 {
+		if e = discardPublisherOutbox(ctx, tx, state.root, "consent_changed"); e != nil {
 			return e
 		}
 		return tx.Commit(ctx)
 	}
-	today := time.Now().UTC().Truncate(24 * time.Hour)
-	if len(pending) == 0 && (day == nil || day.Before(today)) && (len(batch.ProviderHealth) > 0 || batch.Fleet != nil) {
-		if e = tx.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&batch.BatchID); e != nil {
-			return e
-		}
-		pending, _ = json.Marshal(batch)
-		if _, e = tx.Exec(ctx, "INSERT INTO publisher_client_outbox(batch_id,payload,consents,configuration_key) VALUES($1,$2,$3,$4)", batch.BatchID, pending, snapshot, key); e != nil {
-			return e
-		}
-		due = true
-		attempts = 0
+	if e = publisherQueueOutbox(ctx, tx, &state); e != nil {
+		return e
 	}
-	if len(pending) > 0 && due {
-		var queued publisherBatch
-		if e = json.Unmarshal(pending, &queued); e != nil {
-			return e
-		}
-		if queued.SentAt.Before(time.Now().Add(-48 * time.Hour)) {
-			if e = discardPublisherOutbox(ctx, tx, root, "expired"); e != nil {
-				return e
-			}
-			return tx.Commit(ctx)
-		}
-		_, sendErr := a.publisherRequest(ctx, "POST", "/v1/telemetry", pending)
-		if sendErr == nil {
-			if _, e = tx.Exec(ctx, sqlDeletePublisherOutbox); e != nil {
-				return e
-			}
-			if _, e = tx.Exec(ctx, "UPDATE publisher_client_state SET last_telemetry_day=$1,last_success=clock_timestamp(),last_error=''", today); e != nil {
-				return e
-			}
-		} else {
-			if _, e = tx.Exec(ctx, "UPDATE publisher_client_outbox SET attempts=attempts+1,next_attempt=clock_timestamp()+$1::interval", (time.Minute * time.Duration(1<<min(attempts, 6))).String()); e != nil {
-				return e
-			}
-			if _, e = tx.Exec(ctx, "UPDATE publisher_client_state SET last_error='telemetry_unavailable'"); e != nil {
-				return e
-			}
-		}
+	if e = a.publisherDeliverOutbox(ctx, tx, &state); e != nil {
+		return e
 	}
 	return tx.Commit(ctx)
+}
+
+func (a *App) publisherPassSnapshot(ctx context.Context, tx pgx.Tx) (publisherPassState, error) {
+	var state publisherPassState
+	e := tx.QueryRow(ctx, `SELECT last_telemetry_day,publisher_revision,publisher_hash,configuration_key,last_catalog_attempt IS NULL OR last_catalog_attempt<clock_timestamp()-interval '1 hour' FROM publisher_client_state WHERE singleton FOR UPDATE`).Scan(&state.day, &state.revision, &state.digest, &state.configurationKey, &state.catalogDue)
+	if e != nil {
+		return state, e
+	}
+	state.batch, state.consents, state.root, state.auto, e = a.publisherSnapshot(ctx, tx)
+	if e != nil {
+		return state, e
+	}
+	_, e = tx.Exec(ctx, "SELECT set_config('milvago.organization_id',$1,true)", state.root)
+	return state, e
+}
+
+func (a *App) publisherPassCatalog(ctx context.Context, tx pgx.Tx, state *publisherPassState) error {
+	state.key = a.publisherConfigurationKey()
+	if state.configurationKey != state.key {
+		if e := discardPublisherOutbox(ctx, tx, state.root, "configuration_changed"); e != nil {
+			return e
+		}
+		if _, e := tx.Exec(ctx, "UPDATE publisher_client_state SET configuration_key=$1,last_catalog_attempt=NULL", state.key); e != nil {
+			return e
+		}
+		state.catalogDue = true
+	}
+	if state.auto && state.catalogDue {
+		importErr := a.importPublisher(ctx, tx, state.root, state.revision, state.digest)
+		status := ""
+		if importErr != nil {
+			status = "catalog_refused"
+		}
+		if _, e := tx.Exec(ctx, "UPDATE publisher_client_state SET last_catalog_attempt=clock_timestamp(),last_error=$1", status); e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
+func publisherReadOutbox(ctx context.Context, tx pgx.Tx, state *publisherPassState) error {
+	var heldConsents []byte
+	var existingKey string
+	e := tx.QueryRow(ctx, "SELECT payload,consents,next_attempt<=clock_timestamp(),attempts,configuration_key FROM publisher_client_outbox WHERE singleton FOR UPDATE").Scan(&state.pending, &heldConsents, &state.due, &state.attempts, &existingKey)
+	if e != nil && !errors.Is(e, pgx.ErrNoRows) {
+		return e
+	}
+	state.snapshot, _ = json.Marshal(state.consents)
+	if e == nil && (existingKey != state.key || !bytes.Equal(compactJSON(heldConsents), compactJSON(state.snapshot))) {
+		if e = discardPublisherOutbox(ctx, tx, state.root, "consent_changed"); e != nil {
+			return e
+		}
+		state.pending = nil
+	}
+	return nil
+}
+
+func publisherQueueOutbox(ctx context.Context, tx pgx.Tx, state *publisherPassState) error {
+	state.today = time.Now().UTC().Truncate(24 * time.Hour)
+	if len(state.pending) == 0 && (state.day == nil || state.day.Before(state.today)) && (len(state.batch.ProviderHealth) > 0 || state.batch.Fleet != nil) {
+		if e := tx.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&state.batch.BatchID); e != nil {
+			return e
+		}
+		state.pending, _ = json.Marshal(state.batch)
+		if _, e := tx.Exec(ctx, "INSERT INTO publisher_client_outbox(batch_id,payload,consents,configuration_key) VALUES($1,$2,$3,$4)", state.batch.BatchID, state.pending, state.snapshot, state.key); e != nil {
+			return e
+		}
+		state.due = true
+		state.attempts = 0
+	}
+	return nil
+}
+
+func (a *App) publisherDeliverOutbox(ctx context.Context, tx pgx.Tx, state *publisherPassState) error {
+	if len(state.pending) == 0 || !state.due {
+		return nil
+	}
+	var queued publisherBatch
+	if e := json.Unmarshal(state.pending, &queued); e != nil {
+		return e
+	}
+	if queued.SentAt.Before(time.Now().Add(-48 * time.Hour)) {
+		return discardPublisherOutbox(ctx, tx, state.root, "expired")
+	}
+	_, sendErr := a.publisherRequest(ctx, "POST", "/v1/telemetry", state.pending)
+	if sendErr == nil {
+		if _, e := tx.Exec(ctx, sqlDeletePublisherOutbox); e != nil {
+			return e
+		}
+		if _, e := tx.Exec(ctx, "UPDATE publisher_client_state SET last_telemetry_day=$1,last_success=clock_timestamp(),last_error=''", state.today); e != nil {
+			return e
+		}
+	} else {
+		if _, e := tx.Exec(ctx, "UPDATE publisher_client_outbox SET attempts=attempts+1,next_attempt=clock_timestamp()+$1::interval", (time.Minute * time.Duration(1<<min(state.attempts, 6))).String()); e != nil {
+			return e
+		}
+		if _, e := tx.Exec(ctx, "UPDATE publisher_client_state SET last_error='telemetry_unavailable'"); e != nil {
+			return e
+		}
+	}
+	return nil
 }
 func (a *App) publisherPreview(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
 	if !isInstanceOwner(r.Context(), tx, s) {

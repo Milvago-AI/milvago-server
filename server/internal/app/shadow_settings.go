@@ -317,34 +317,41 @@ func validatePrivacyShadow(c ShadowConfig) error {
 	}
 	seen := map[string]bool{}
 	for _, v := range c.Privacy.CustomRules {
-		if !uuidPattern.MatchString(v.ID) || seen[v.ID] || !validMetadata(v.Label, 60) || len(v.Pattern) > 200 || v.Pattern == "" {
-			return bad("Invalid custom privacy rule.")
+		if e := validateCustomPrivacyRule(v, seen); e != nil {
+			return e
 		}
-		seen[v.ID] = true
-		re, e := regexp.Compile(v.Pattern)
-		if e != nil || re.MatchString("") {
-			return bad("Custom rules must be bounded nonempty RE2-compatible expressions.")
+	}
+	return nil
+}
+
+func validateCustomPrivacyRule(v PrivacyRule, seen map[string]bool) error {
+	if !uuidPattern.MatchString(v.ID) || seen[v.ID] || !validMetadata(v.Label, 60) || len(v.Pattern) > 200 || v.Pattern == "" {
+		return bad("Invalid custom privacy rule.")
+	}
+	seen[v.ID] = true
+	re, e := regexp.Compile(v.Pattern)
+	if e != nil || re.MatchString("") {
+		return bad("Custom rules must be bounded nonempty RE2-compatible expressions.")
+	}
+	parsed, parseErr := syntax.Parse(v.Pattern, syntax.Perl)
+	if strings.Contains(v.Pattern, "(?") || parseErr != nil || nestedRepetition(parsed, false) {
+		return bad("Lookaround and nested repetition are not supported.")
+	}
+	// The label becomes the marker inserted into the masked text (`[LABEL]`, `[LABEL1]`...).
+	// If it matches the expression itself, the marker would in turn be captured and
+	// masked: each pass would rewrite the previous one, without end. Refused here as in the
+	// console (product decision of 2026-09-16). The check is on the label alone, with the
+	// rule's case sensitivity -- not on the marker's number, otherwise any numeric rule
+	// ("NUMERO", `[0-9]+`) would be refused even though `[NUMERO1]` is exactly the intended
+	// form.
+	probe := re
+	if v.CaseInsensitive {
+		if ci, e := regexp.Compile("(?i)" + v.Pattern); e == nil {
+			probe = ci
 		}
-		parsed, parseErr := syntax.Parse(v.Pattern, syntax.Perl)
-		if strings.Contains(v.Pattern, "(?") || parseErr != nil || nestedRepetition(parsed, false) {
-			return bad("Lookaround and nested repetition are not supported.")
-		}
-		// The label becomes the marker inserted into the masked text (`[LABEL]`, `[LABEL1]`...).
-		// If it matches the expression itself, the marker would in turn be captured and
-		// masked: each pass would rewrite the previous one, without end. Refused here as in the
-		// console (product decision of 2026-09-16). The check is on the label alone, with the
-		// rule's case sensitivity -- not on the marker's number, otherwise any numeric rule
-		// ("NUMERO", `[0-9]+`) would be refused even though `[NUMERO1]` is exactly the intended
-		// form.
-		probe := re
-		if v.CaseInsensitive {
-			if ci, e := regexp.Compile("(?i)" + v.Pattern); e == nil {
-				probe = ci
-			}
-		}
-		if probe.MatchString(v.Label) {
-			return bad("The rule label matches its own expression: the inserted placeholder would be masked again, endlessly.")
-		}
+	}
+	if probe.MatchString(v.Label) {
+		return bad("The rule label matches its own expression: the inserted placeholder would be masked again, endlessly.")
 	}
 	return nil
 }

@@ -455,6 +455,129 @@ func (a *App) setupComplete(w http.ResponseWriter, r *http.Request) {
 	reply(w, 200, map[string]string{"login": login})
 }
 
+func prepareSetupIdentity(admin *identityAdmin, body setupRequest) error {
+	// Never take over an account that already exists in the realm.
+	status, _, raw, e := admin.call("GET", "/users?email="+url.QueryEscape(body.Admin.Email)+"&exact=true", nil)
+	if e != nil {
+		return e
+	}
+	var existing []identityUser
+	if status != 200 || json.Unmarshal(raw, &existing) != nil {
+		return apiError{502, "identity_unavailable", "Could not query identity users."}
+	}
+	if len(existing) != 0 {
+		return apiError{409, "identity_exists", "An account with this e-mail address already exists."}
+	}
+	if body.SMTP != nil {
+		if status, _, _, e = admin.call("PUT", "", map[string]any{"smtpServer": body.SMTP.keycloak()}); e != nil {
+			return e
+		}
+		if status != 204 {
+			return apiError{502, "identity_unavailable", "Could not save the e-mail server settings."}
+		}
+	}
+	return nil
+}
+
+func (a *App) createSetupIdentity(ctx context.Context, body setupRequest) (string, error) {
+	admin, e := a.identityAdmin(ctx)
+	if e != nil {
+		return "", e
+	}
+	if e := prepareSetupIdentity(admin, body); e != nil {
+		return "", e
+	}
+	actions := []string{}
+	if body.AdminTOTP {
+		actions = append(actions, "CONFIGURE_TOTP")
+	}
+	status, header, raw, e := admin.call("POST", "/users", map[string]any{
+		"username": body.Admin.Email, "email": body.Admin.Email, "firstName": body.Admin.FirstName, "lastName": body.Admin.LastName,
+		"enabled": true, "emailVerified": true, "requiredActions": actions,
+		"credentials": []map[string]any{{"type": "password", "value": body.Admin.Password, "temporary": false}},
+	})
+	if e != nil {
+		return "", e
+	}
+	switch status {
+	case 201:
+	case 409:
+		return "", apiError{409, "identity_exists", "An account with this e-mail address already exists."}
+	case 400:
+		var refusal struct {
+			Description string `json:"error_description"`
+		}
+		_ = json.Unmarshal(raw, &refusal)
+		message := "The password does not satisfy the identity provider's password policy."
+		if d, ok := cleanText(refusal.Description, 300); ok {
+			message = d
+		}
+		return "", apiError{400, "password_rejected", message}
+	default:
+		return "", apiError{502, "identity_unavailable", "Could not create the administrator account."}
+	}
+	location, e := url.Parse(header.Get("Location"))
+	subject := ""
+	if e == nil {
+		subject = path.Base(location.Path)
+	}
+	if subject == "" || subject == "." || subject == "/" {
+		return "", apiError{502, "identity_unavailable", "The created administrator account could not be identified."}
+	}
+	return subject, nil
+}
+
+func applySetupSettings(ctx context.Context, tx pgx.Tx, org string, body setupRequest) error {
+	var e error
+	if _, e = tx.Exec(ctx, `UPDATE app_config SET bootstrap_email=$1,public_url=$2,public_url_confirmed=true,default_language=$3`, body.Admin.Email, body.Organization.PublicURL, body.Organization.DefaultLanguage); e != nil {
+		return e
+	}
+	if _, e = tx.Exec(ctx, `UPDATE organizations SET name=$1 WHERE id=$2`, body.Organization.Name, org); e != nil {
+		return e
+	}
+	tag, e := tx.Exec(ctx, `UPDATE settings SET require_mfa=$1 WHERE organization_id=$2`, body.RequireMFA, org)
+	if e != nil {
+		return e
+	}
+	if tag.RowsAffected() != 1 {
+		return errors.New("organization settings were not updated")
+	}
+	if body.Privacy != nil {
+		raw, _ := json.Marshal(*body.Privacy)
+		if _, e = tx.Exec(ctx, `INSERT INTO privacy_settings(organization_id,configuration) VALUES($1,$2) ON CONFLICT(organization_id) DO UPDATE SET configuration=EXCLUDED.configuration,revision=privacy_settings.revision+1,updated_at=now()`, org, raw); e != nil {
+			return e
+		}
+	}
+	if _, e = tx.Exec(ctx, `DELETE FROM setup_sessions`); e != nil {
+		return e
+	}
+	if e = audit(ctx, tx, org, "setup", "setup.completed", org); e != nil {
+		return e
+	}
+	return nil
+}
+
+func (a *App) cleanupSetupIdentity(ctx context.Context, subject, email string, prior error) error {
+	// Cleanup needs a fresh deadline even when setup itself has timed out.
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+	// A failed commit can still have succeeded; then deleting the account would
+	// remove the instance administrator.
+	var committed bool
+	if a.db.QueryRow(cleanupCtx, "SELECT bootstrap_email=$1 FROM app_config", email).Scan(&committed) == nil && committed {
+		return nil
+	}
+	cleanup, e := a.identityAdmin(cleanupCtx)
+	status := 0
+	if e == nil {
+		status, _, _, e = cleanup.call("DELETE", "/users/"+url.PathEscape(subject), nil)
+	}
+	if e != nil || status != 204 {
+		return fmt.Errorf("%w (and the created identity account could not be removed)", prior)
+	}
+	return prior
+}
+
 func (a *App) completeSetup(ctx context.Context, body setupRequest) (err error) {
 	// Once started, completion runs to its end or undoes itself: a client that
 	// disconnected after the account was created cancelled the commit and the cleanup
@@ -491,114 +614,18 @@ func (a *App) completeSetup(ctx context.Context, body setupRequest) (err error) 
 	if e = setupLicense(ctx, tx, body.License); e != nil {
 		return e
 	}
-	admin, e := a.identityAdmin(ctx)
+	subject, e := a.createSetupIdentity(ctx, body)
 	if e != nil {
 		return e
-	}
-	// Never take over an account that already exists in the realm.
-	status, _, raw, e := admin.call("GET", "/users?email="+url.QueryEscape(body.Admin.Email)+"&exact=true", nil)
-	if e != nil {
-		return e
-	}
-	var existing []identityUser
-	if status != 200 || json.Unmarshal(raw, &existing) != nil {
-		return apiError{502, "identity_unavailable", "Could not query identity users."}
-	}
-	if len(existing) != 0 {
-		return apiError{409, "identity_exists", "An account with this e-mail address already exists."}
-	}
-	if body.SMTP != nil {
-		if status, _, _, e = admin.call("PUT", "", map[string]any{"smtpServer": body.SMTP.keycloak()}); e != nil {
-			return e
-		}
-		if status != 204 {
-			return apiError{502, "identity_unavailable", "Could not save the e-mail server settings."}
-		}
-	}
-	actions := []string{}
-	if body.AdminTOTP {
-		actions = append(actions, "CONFIGURE_TOTP")
-	}
-	status, header, raw, e := admin.call("POST", "/users", map[string]any{
-		"username": body.Admin.Email, "email": body.Admin.Email, "firstName": body.Admin.FirstName, "lastName": body.Admin.LastName,
-		"enabled": true, "emailVerified": true, "requiredActions": actions,
-		"credentials": []map[string]any{{"type": "password", "value": body.Admin.Password, "temporary": false}},
-	})
-	if e != nil {
-		return e
-	}
-	switch status {
-	case 201:
-	case 409:
-		return apiError{409, "identity_exists", "An account with this e-mail address already exists."}
-	case 400:
-		var refusal struct {
-			Description string `json:"error_description"`
-		}
-		_ = json.Unmarshal(raw, &refusal)
-		message := "The password does not satisfy the identity provider's password policy."
-		if d, ok := cleanText(refusal.Description, 300); ok {
-			message = d
-		}
-		return apiError{400, "password_rejected", message}
-	default:
-		return apiError{502, "identity_unavailable", "Could not create the administrator account."}
-	}
-	location, e := url.Parse(header.Get("Location"))
-	subject := ""
-	if e == nil {
-		subject = path.Base(location.Path)
-	}
-	if subject == "" || subject == "." || subject == "/" {
-		return apiError{502, "identity_unavailable", "The created administrator account could not be identified."}
 	}
 	// From here on, a failure must not leave an account behind: the next attempt
 	// would otherwise be refused as an existing identity.
 	defer func() {
 		if err != nil {
-			// A context of its own: the failure may be the completion's deadline itself.
-			cleanupCtx, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
-			defer cancelCleanup()
-			// A commit that failed from here may still have happened: then the account is
-			// the administrator, and deleting it would lock the instance out.
-			var committed bool
-			if a.db.QueryRow(cleanupCtx, `SELECT bootstrap_email=$1 FROM app_config`, body.Admin.Email).Scan(&committed) == nil && committed {
-				err = nil
-				return
-			}
-			cleanup, e := a.identityAdmin(cleanupCtx)
-			status := 0
-			if e == nil {
-				status, _, _, e = cleanup.call("DELETE", "/users/"+url.PathEscape(subject), nil)
-			}
-			if e != nil || status != 204 {
-				err = fmt.Errorf("%w (and the created identity account could not be removed)", err)
-			}
+			err = a.cleanupSetupIdentity(ctx, subject, body.Admin.Email, err)
 		}
 	}()
-	if _, e = tx.Exec(ctx, `UPDATE app_config SET bootstrap_email=$1,public_url=$2,public_url_confirmed=true,default_language=$3`, body.Admin.Email, body.Organization.PublicURL, body.Organization.DefaultLanguage); e != nil {
-		return e
-	}
-	if _, e = tx.Exec(ctx, `UPDATE organizations SET name=$1 WHERE id=$2`, body.Organization.Name, org); e != nil {
-		return e
-	}
-	tag, e := tx.Exec(ctx, `UPDATE settings SET require_mfa=$1 WHERE organization_id=$2`, body.RequireMFA, org)
-	if e != nil {
-		return e
-	}
-	if tag.RowsAffected() != 1 {
-		return errors.New("organization settings were not updated")
-	}
-	if body.Privacy != nil {
-		raw, _ := json.Marshal(*body.Privacy)
-		if _, e = tx.Exec(ctx, `INSERT INTO privacy_settings(organization_id,configuration) VALUES($1,$2) ON CONFLICT(organization_id) DO UPDATE SET configuration=EXCLUDED.configuration,revision=privacy_settings.revision+1,updated_at=now()`, org, raw); e != nil {
-			return e
-		}
-	}
-	if _, e = tx.Exec(ctx, `DELETE FROM setup_sessions`); e != nil {
-		return e
-	}
-	if e = audit(ctx, tx, org, "setup", "setup.completed", org); e != nil {
+	if e = applySetupSettings(ctx, tx, org, body); e != nil {
 		return e
 	}
 	return tx.Commit(ctx)

@@ -371,22 +371,25 @@ func (a *App) revealConversationContents(r *http.Request, tx pgx.Tx, s *Session,
 	return grant, nil
 }
 
-func (a *App) shadowConversation(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
-	if e := requireIndividual(r); e != nil {
-		return e
-	}
+type conversationDetailRequest struct {
+	key, device, where string
+	limit              int
+	args               []any
+}
+
+func parseConversationDetailRequest(r *http.Request) (conversationDetailRequest, error) {
 	q := r.URL.Query()
 	device := q.Get("device_id")
 	conversation, correlation, event, ok := splitConversationKey(q.Get("key"))
 	if !uuidPattern.MatchString(device) || !ok {
-		return bad("A device identity and a conversation key are required.")
+		return conversationDetailRequest{}, bad("A device identity and a conversation key are required.")
 	}
 	limit := conversationDefault
 	if raw := q.Get("limit"); raw != "" {
 		var e error
 		limit, e = strconv.Atoi(raw)
 		if e != nil || limit < 1 || limit > conversationMax {
-			return bad(fmt.Sprintf("Limit must be between 1 and %d.", conversationMax))
+			return conversationDetailRequest{}, bad(fmt.Sprintf("Limit must be between 1 and %d.", conversationMax))
 		}
 	}
 	args := []any{device}
@@ -410,17 +413,29 @@ func (a *App) shadowConversation(w http.ResponseWriter, r *http.Request, tx pgx.
 	}
 	if raw := q.Get("cursor"); raw != "" {
 		if len(raw) > 400 {
-			return bad(msgInvalidCursor)
+			return conversationDetailRequest{}, bad(msgInvalidCursor)
 		}
 		b, de := base64.RawURLEncoding.DecodeString(raw)
 		var c eventCursor
 		if de != nil || json.Unmarshal(b, &c) != nil || c.Time.IsZero() || !uuidPattern.MatchString(c.ID) {
-			return bad(msgInvalidCursor)
+			return conversationDetailRequest{}, bad(msgInvalidCursor)
 		}
 		args = append(args, c.Time, c.ID)
 		where += fmt.Sprintf(" AND (e.occurred_at,e.id)<($%d,$%d::uuid)", len(args)-1, len(args))
 	}
 	args = append(args, limit+1)
+	return conversationDetailRequest{key: q.Get("key"), device: device, where: where, limit: limit, args: args}, nil
+}
+
+func (a *App) shadowConversation(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
+	if e := requireIndividual(r); e != nil {
+		return e
+	}
+	request, e := parseConversationDetailRequest(r)
+	if e != nil {
+		return e
+	}
+	device, limit, args, where := request.device, request.limit, request.args, request.where
 	rows, e := tx.Query(r.Context(), `SELECT `+shadowProjection+shadowJoins+`WHERE `+where+
 		fmt.Sprintf(` ORDER BY e.occurred_at DESC,e.id DESC LIMIT $%d`, len(args)), args...)
 	if e != nil {
@@ -470,6 +485,6 @@ func (a *App) shadowConversation(w http.ResponseWriter, r *http.Request, tx pgx.
 	if e = tx.Commit(r.Context()); e != nil {
 		return e
 	}
-	reply(w, 200, map[string]any{"key": q.Get("key"), "device_id": device, "items": items, "older_cursor": older, "can_read_content": grant})
+	reply(w, 200, map[string]any{"key": request.key, "device_id": device, "items": items, "older_cursor": older, "can_read_content": grant})
 	return nil
 }

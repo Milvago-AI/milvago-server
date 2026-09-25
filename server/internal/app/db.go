@@ -35,63 +35,91 @@ func OpenDatabase(ctx context.Context, c Config) (*pgxpool.Pool, error) {
 	if _, e = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(726403210)`); e != nil {
 		return nil, e
 	}
+	if e = applyBaseDatabaseSchema(ctx, tx, c); e != nil {
+		return nil, e
+	}
+	if e = applyShadowDatabaseSchema(ctx, tx, c); e != nil {
+		return nil, e
+	}
+	if e = applyServiceDatabaseSchema(ctx, tx, c); e != nil {
+		return nil, e
+	}
+	if e = applyInstallerDatabaseSchema(ctx, tx, c); e != nil {
+		return nil, e
+	}
+	if e = applyFinalDatabaseGrants(ctx, tx, c); e != nil {
+		return nil, e
+	}
+	if e = tx.Commit(ctx); e != nil {
+		return nil, e
+	}
+	return OpenRuntimeDatabase(ctx, c)
+}
+
+func applyBaseDatabaseSchema(ctx context.Context, tx pgx.Tx, c Config) error {
+	var e error
 	var unsafeLookup bool
 	if e = tx.QueryRow(ctx, `SELECT rolcanlogin OR rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb FROM pg_roles WHERE rolname='milvago_lookup'`).Scan(&unsafeLookup); e != nil || unsafeLookup {
-		return nil, errors.New("milvago_lookup must exist as NOLOGIN, non-superuser, NOBYPASSRLS, NOCREATEROLE and NOCREATEDB")
+		return errors.New("milvago_lookup must exist as NOLOGIN, non-superuser, NOBYPASSRLS, NOCREATEROLE and NOCREATEDB")
 	}
 	if _, e = tx.Exec(ctx, migration); e != nil {
-		return nil, fmt.Errorf("migration: %w", e)
+		return fmt.Errorf("migration: %w", e)
 	}
 	if editionMigration != "" {
 		if _, e = tx.Exec(ctx, editionMigration); e != nil {
-			return nil, fmt.Errorf("edition migration: %w", e)
+			return fmt.Errorf("edition migration: %w", e)
 		}
 	}
 	var shadowApplied bool
 	if e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=2)`).Scan(&shadowApplied); e != nil {
-		return nil, e
+		return e
 	}
 	if !shadowApplied {
 		if _, e = tx.Exec(ctx, shadowMigration); e != nil {
-			return nil, fmt.Errorf("shadow migration: %w", e)
+			return fmt.Errorf("shadow migration: %w", e)
 		}
 		if _, e = tx.Exec(ctx, `INSERT INTO schema_migrations(version) VALUES(2)`); e != nil {
-			return nil, e
+			return e
 		}
 	}
 	if _, e = tx.Exec(ctx, `INSERT INTO organizations(name) SELECT $1 WHERE NOT EXISTS(SELECT 1 FROM organizations)`, c.OrganizationName); e != nil {
-		return nil, e
+		return e
 	}
 	if Edition == "community" {
 		var count int
 		if e = tx.QueryRow(ctx, `SELECT count(*) FROM organizations`).Scan(&count); e != nil {
-			return nil, e
+			return e
 		}
 		if count != 1 {
-			return nil, errors.New("Community cannot open a multi-organization database")
+			return errors.New("Community cannot open a multi-organization database")
 		}
 	}
 	if _, e = tx.Exec(ctx, `INSERT INTO app_config(organization_id,bootstrap_email,public_url) SELECT id,$1,$2 FROM organizations ORDER BY id LIMIT 1 ON CONFLICT(singleton) DO NOTHING`, c.BootstrapEmail, c.PublicURL); e != nil {
-		return nil, e
+		return e
 	}
 	if e = initializeEdition(ctx, tx); e != nil {
-		return nil, fmt.Errorf("edition initialization: %w", e)
+		return fmt.Errorf("edition initialization: %w", e)
 	}
+	return nil
+}
+
+func applyShadowDatabaseSchema(ctx context.Context, tx pgx.Tx, c Config) error {
+	var e error
 	if _, e = tx.Exec(ctx, `DO $$ DECLARE org uuid; BEGIN FOR org IN SELECT id FROM organizations LOOP PERFORM set_config('milvago.organization_id',org::text,true); INSERT INTO settings(organization_id) VALUES(org) ON CONFLICT DO NOTHING; INSERT INTO policies(organization_id) VALUES(org) ON CONFLICT DO NOTHING; INSERT INTO roles(organization_id,name,permissions,builtin) VALUES (org,'owner',ARRAY['overview.read','events.read','devices.read','devices.manage','members.read','members.manage','settings.manage','policy.manage','installers.manage','content.read','audit.read','roles.manage','organizations.manage','directory.manage'],true),(org,'admin',ARRAY['overview.read','events.read','devices.read','devices.manage','members.read','members.manage','settings.manage','policy.manage','installers.manage','content.read'],true),(org,'viewer',ARRAY['overview.read','events.read','devices.read'],true) ON CONFLICT (organization_id,name) DO UPDATE SET permissions=EXCLUDED.permissions WHERE roles.builtin; UPDATE memberships SET role='viewer' WHERE role='analyst'; END LOOP; PERFORM set_config('milvago.organization_id','',true); END $$`); e != nil {
-		return nil, e
+		return e
 	}
 	// Names of the files attached to a request. Applied here rather than in the base
 	// migration because shadow_events is created by the shadow migration, which runs
 	// once; this statement is idempotent and reaches databases created before it.
 	if _, e = tx.Exec(ctx, `ALTER TABLE shadow_events ADD COLUMN IF NOT EXISTS files jsonb NOT NULL DEFAULT '[]'::jsonb`); e != nil {
-		return nil, e
+		return e
 	}
 	// When an AI application was first observed on a device. Added here because the
 	// table is created by the edition migration, which existing databases already
 	// applied; without a first sighting, an inventory can only answer "now".
 	if Edition == "commercial" {
 		if _, e = tx.Exec(ctx, `ALTER TABLE tool_observations ADD COLUMN IF NOT EXISTS first_seen timestamptz NOT NULL DEFAULT now()`); e != nil {
-			return nil, e
+			return e
 		}
 		// The vocabulary of AI applications now comes from the signed catalog. A CHECK
 		// listing six names meant adding a tool required a migration, which is exactly
@@ -100,12 +128,12 @@ func OpenDatabase(ctx context.Context, c Config) (*pgxpool.Pool, error) {
 			ALTER TABLE tool_observations DROP CONSTRAINT IF EXISTS tool_observations_kind_check;
 			ALTER TABLE tool_observations ADD CONSTRAINT tool_observations_tool_check CHECK(tool ~ '^[a-z0-9][a-z0-9._-]{0,63}$');
 			ALTER TABLE tool_observations ADD CONSTRAINT tool_observations_kind_check CHECK(kind IN ('executable','process','installed','extension','port'))`); e != nil {
-			return nil, e
+			return e
 		}
 	}
 	// Profile a native record was collected from, on a shared machine.
 	if _, e = tx.Exec(ctx, `ALTER TABLE shadow_events ADD COLUMN IF NOT EXISTS "user" text NOT NULL DEFAULT ''`); e != nil {
-		return nil, e
+		return e
 	}
 	// The same account, as a per-organization digest that groups. The account
 	// itself is sealed under a key that includes the event identifier, so two
@@ -116,14 +144,14 @@ func OpenDatabase(ctx context.Context, c Config) (*pgxpool.Pool, error) {
 	// path. Records written before this column keep an empty digest and stay
 	// unattributed on the map — their sealed accounts are not re-digested.
 	if _, e = tx.Exec(ctx, `ALTER TABLE shadow_events ADD COLUMN IF NOT EXISTS user_key text NOT NULL DEFAULT ''`); e != nil {
-		return nil, e
+		return e
 	}
 	// The reasoning effort a provider was asked for. Kept in its own column rather
 	// than folded into the model: the two are separate settings on the provider
 	// side, and merging them would split one model into as many rows as it has
 	// effort levels in every count.
 	if _, e = tx.Exec(ctx, `ALTER TABLE shadow_events ADD COLUMN IF NOT EXISTS effort text NOT NULL DEFAULT ''`); e != nil {
-		return nil, e
+		return e
 	}
 	// Conversation reading groups records by thread and recovers the opening
 	// prompt, which carries no conversation identifier, through its correlation.
@@ -131,12 +159,12 @@ func OpenDatabase(ctx context.Context, c Config) (*pgxpool.Pool, error) {
 	// it would cost more than it serves. No column is added and no row changes.
 	if _, e = tx.Exec(ctx, `CREATE INDEX IF NOT EXISTS shadow_events_conversation ON shadow_events(organization_id,device_id,conversation_id,occurred_at) WHERE conversation_id<>'';
 		CREATE INDEX IF NOT EXISTS shadow_events_correlation ON shadow_events(organization_id,device_id,correlation_id) WHERE correlation_id<>''`); e != nil {
-		return nil, e
+		return e
 	}
 	// Retire the per-event delivery ledger: nothing has ever read or written it,
 	// and observability tracks its own deliveries in observability_deliveries.
 	if _, e = tx.Exec(ctx, `DROP TABLE IF EXISTS shadow_deliveries`); e != nil {
-		return nil, e
+		return e
 	}
 	// Retire the Shadow AI export destinations (now Administration → Observability)
 	// and, in Community, the sections this edition no longer offers. Without this,
@@ -169,7 +197,7 @@ func OpenDatabase(ctx context.Context, c Config) (*pgxpool.Pool, error) {
 		  END LOOP;
 		  PERFORM set_config('milvago.organization_id','',true);
 		END $mig$`); e != nil {
-		return nil, e
+		return e
 	}
 	// Signed updates are on by default in both editions, and the console only shows the
 	// Operations section under MILVAGO_DEBUG: a policy written when the channel was
@@ -190,32 +218,37 @@ func OpenDatabase(ctx context.Context, c Config) (*pgxpool.Pool, error) {
 		    INSERT INTO schema_migrations(version) VALUES(20260917) ON CONFLICT DO NOTHING;
 		  END IF;
 		END $updates$`); e != nil {
-		return nil, fmt.Errorf("automatic updates migration: %w", e)
+		return fmt.Errorf("automatic updates migration: %w", e)
 	}
+	return nil
+}
+
+func applyServiceDatabaseSchema(ctx context.Context, tx pgx.Tx, c Config) error {
+	var e error
 	role := pgx.Identifier{c.RuntimeRole}.Sanitize()
 	if e = initializeObservability(ctx, tx, role); e != nil {
-		return nil, e
+		return e
 	}
 	if e = initializeModelAccess(ctx, tx, role); e != nil {
-		return nil, e
+		return e
 	}
 	if e = initializeAPIKeys(ctx, tx, role); e != nil {
-		return nil, e
+		return e
 	}
 	if e = initializeDetection(ctx, tx, role); e != nil {
-		return nil, e
+		return e
 	}
 	if e = initializeDeviceGroups(ctx, tx, role); e != nil {
-		return nil, e
+		return e
 	}
 	if e = initializePublisherClient(ctx, tx, role); e != nil {
-		return nil, e
+		return e
 	}
 	if _, e = tx.Exec(ctx, privacyMigration); e != nil {
-		return nil, fmt.Errorf("privacy migration: %w", e)
+		return fmt.Errorf("privacy migration: %w", e)
 	}
 	if _, e = tx.Exec(ctx, `GRANT SELECT,INSERT,UPDATE,DELETE ON privacy_settings,identity_reveals,subject_views,aggregate_reports,privacy_audit_outbox TO `+role); e != nil {
-		return nil, e
+		return e
 	}
 	// Repairs the built-in roles, and it has to run AFTER the seed loop above, never
 	// before. That loop rewrites every built-in role from a SQL literal on every boot
@@ -227,10 +260,16 @@ func OpenDatabase(ctx context.Context, c Config) (*pgxpool.Pool, error) {
 	// what makes running it unconditionally on every boot correct.
 	// TestBuiltinRolePermissionsConverge is the guard on all of this.
 	if _, e = tx.Exec(ctx, `DO $$ DECLARE org uuid; BEGIN FOR org IN SELECT id FROM organizations LOOP PERFORM set_config('milvago.organization_id',org::text,true); INSERT INTO privacy_settings(organization_id) VALUES(org) ON CONFLICT DO NOTHING; UPDATE roles SET permissions=array_append(permissions,'reports.aggregate') WHERE name IN ('owner','admin','viewer') AND builtin AND NOT ('reports.aggregate'=ANY(permissions)); UPDATE roles SET permissions=permissions||ARRAY['identity.reveal','identity.erase'] WHERE name='owner' AND builtin AND NOT ('identity.reveal'=ANY(permissions)); UPDATE roles SET permissions=array_append(permissions,'content.purge') WHERE name='owner' AND builtin AND NOT ('content.purge'=ANY(permissions)); INSERT INTO roles(organization_id,name,permissions,builtin) VALUES(org,'reporter',ARRAY['overview.read','reports.aggregate'],true) ON CONFLICT DO NOTHING; END LOOP; PERFORM set_config('milvago.organization_id','',true); END $$`); e != nil {
-		return nil, e
+		return e
 	}
+	return nil
+}
+
+func applyInstallerDatabaseSchema(ctx context.Context, tx pgx.Tx, c Config) error {
+	var e error
+	role := pgx.Identifier{c.RuntimeRole}.Sanitize()
 	if e = initializeInstallers(ctx, tx, role); e != nil {
-		return nil, e
+		return e
 	}
 	// A deployment key is one durable credential per organization, not a package
 	// valid for thirty days and a thousand installations. The constraints written
@@ -253,7 +292,7 @@ func OpenDatabase(ctx context.Context, c Config) (*pgxpool.Pool, error) {
 		  END LOOP;
 		END $mig$;
 		ALTER TABLE installer_profiles ADD CONSTRAINT installer_profiles_platform_check CHECK(platform IS NULL OR platform IN ('windows','linux'))`); e != nil {
-		return nil, e
+		return e
 	}
 	// An installation belongs to the organization and to the identity the agent
 	// chose, not to the key that bought it. Keying it on the key would orphan every
@@ -267,7 +306,7 @@ func OpenDatabase(ctx context.Context, c Config) (*pgxpool.Pool, error) {
 		    ALTER TABLE installer_installations ADD PRIMARY KEY(organization_id,installation_id);
 		  END IF;
 		END $mig$`); e != nil {
-		return nil, e
+		return e
 	}
 	// The per-platform installation package is retired. Rows from that model still
 	// carry a live secret_hash, so leaving them unrevoked would let a package
@@ -286,7 +325,7 @@ func OpenDatabase(ctx context.Context, c Config) (*pgxpool.Pool, error) {
 		  END LOOP;
 		  PERFORM set_config('milvago.organization_id','',true);
 		END $mig$`); e != nil {
-		return nil, e
+		return e
 	}
 	// Make every per-tenant foreign key cascade from its parent so deleting an
 	// organization purges its rows across all tables in one statement. Runs after
@@ -335,14 +374,20 @@ BEGIN
     EXECUTE format('ALTER TABLE public.%I ADD CONSTRAINT %I FOREIGN KEY (%s) REFERENCES public.devices(%s) ON DELETE CASCADE',r.tbl,r.conname,r.cols,r.refcols);
   END LOOP;
 END $mig$`); e != nil {
-		return nil, fmt.Errorf("cascade migration: %w", e)
+		return fmt.Errorf("cascade migration: %w", e)
 	}
+	return nil
+}
+
+func applyFinalDatabaseGrants(ctx context.Context, tx pgx.Tx, c Config) error {
+	var e error
+	role := pgx.Identifier{c.RuntimeRole}.Sanitize()
 	if _, e = tx.Exec(ctx, `GRANT SELECT,INSERT,UPDATE,DELETE ON shadow_settings,shadow_device_overrides,collaborators,device_collaborators,shadow_events,shadow_content,shadow_saved_filters,device_association_requests TO `+role+`; GRANT USAGE ON SEQUENCE shadow_revision TO `+role+`; GRANT EXECUTE ON FUNCTION association_identity(bytea) TO `+role); e != nil {
-		return nil, e
+		return e
 	}
 	if grants := editionGrants(role); grants != "" {
 		if _, e = tx.Exec(ctx, grants); e != nil {
-			return nil, e
+			return e
 		}
 	}
 	// DELETE on audit exists for the hourly retention purge alone. Granting it
@@ -350,21 +395,18 @@ END $mig$`); e != nil {
 	// authority — UPDATE is never allowed, and DELETE only under a
 	// transaction-local flag with the 730-day floor engraved in the trigger.
 	if _, e = tx.Exec(ctx, `REVOKE CREATE ON SCHEMA public FROM PUBLIC; GRANT USAGE ON SCHEMA public TO `+role+`; GRANT SELECT,INSERT,UPDATE,DELETE ON users,sessions,login_attempts,setup_sessions,memberships,roles,settings,policies,enrollments,devices,events,ldap_directories TO `+role+`; GRANT SELECT,INSERT,UPDATE,DELETE ON organizations TO `+role+`; GRANT SELECT,UPDATE ON app_config TO `+role+`; GRANT SELECT,INSERT,DELETE ON audit TO `+role+`; GRANT EXECUTE ON FUNCTION enrollment_identity(bytea),device_identity(bytea),user_organizations(uuid),effective_access(uuid,uuid),subtree_members(uuid,uuid) TO `+role); e != nil {
-		return nil, e
+		return e
 	}
 	if e = initializeSharedRates(ctx, tx, role); e != nil {
-		return nil, e
+		return e
 	}
 	if _, e = tx.Exec(ctx, `CREATE TABLE IF NOT EXISTS runtime_maintenance (task text PRIMARY KEY CHECK(task IN ('minute','hour')), completed_bucket timestamptz NOT NULL); GRANT SELECT,INSERT,UPDATE ON runtime_maintenance TO `+role+`; GRANT SELECT ON schema_migrations TO `+role); e != nil {
-		return nil, e
+		return e
 	}
 	if _, e = tx.Exec(ctx, `INSERT INTO schema_migrations(version) VALUES($1) ON CONFLICT DO NOTHING`, runtimeSchemaVersion); e != nil {
-		return nil, e
+		return e
 	}
-	if e = tx.Commit(ctx); e != nil {
-		return nil, e
-	}
-	return OpenRuntimeDatabase(ctx, c)
+	return nil
 }
 
 // OpenRuntimeDatabase validates the runtime boundary and schema without DDL or

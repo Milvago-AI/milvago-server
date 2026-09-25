@@ -141,7 +141,6 @@ func TestDeploymentKeyAndBootstrap(t *testing.T) {
 }
 
 type installerBootstrapFixture struct {
-	ctx       context.Context
 	admin, db *pgxpool.Pool
 	app       *App
 	config    Config
@@ -194,13 +193,13 @@ func newInstallerBootstrapFixture(t *testing.T) installerBootstrapFixture {
 	if e = admin.QueryRow(ctx, `SELECT id FROM organizations LIMIT 1`).Scan(&org); e != nil {
 		t.Fatal(e)
 	}
-	f := installerBootstrapFixture{ctx: ctx, admin: admin, db: db, app: a, config: config, org: org}
+	f := installerBootstrapFixture{admin: admin, db: db, app: a, config: config, org: org}
 	f.owner, f.csrf = f.newSession(t, org, "owner")
 	return f
 }
 
 func (f installerBootstrapFixture) newSession(t *testing.T, tenant, role string) (*http.Cookie, string) {
-	ctx, admin := f.ctx, f.admin
+	ctx, admin := t.Context(), f.admin
 	t.Helper()
 	tx, e := tenantTx(ctx, admin, tenant)
 	if e != nil {
@@ -248,7 +247,7 @@ func (f installerBootstrapFixture) call(t *testing.T, method, path string, body 
 // The key exists because the organization exists, not because someone asked for a
 // package. Nothing in this test ever creates one.
 func (f installerBootstrapFixture) provision(t *testing.T, tenant string) InstallerProvision {
-	ctx, db, a := f.ctx, f.db, f.app
+	ctx, db, a := t.Context(), f.db, f.app
 	t.Helper()
 	tx, e := tenantTx(ctx, db, tenant)
 	if e != nil {
@@ -342,7 +341,7 @@ func (f installerBootstrapFixture) testPermissions(t *testing.T) {
 }
 
 func (f installerBootstrapFixture) testRetry(t *testing.T) {
-	ctx, db, org, owner, csrf := f.ctx, f.db, f.org, f.owner, f.csrf
+	ctx, db, org, owner, csrf := t.Context(), f.db, f.org, f.owner, f.csrf
 	var e error
 	f.setApproval(t, "automatic")
 	token := f.provision(t, org).BootstrapToken
@@ -389,7 +388,7 @@ func (f installerBootstrapFixture) testRetry(t *testing.T) {
 }
 
 func (f installerBootstrapFixture) testApproval(t *testing.T) {
-	ctx, db, org := f.ctx, f.db, f.org
+	ctx, db, org := t.Context(), f.db, f.org
 	var e error
 	f.setApproval(t, "manual")
 	token := f.provision(t, org).BootstrapToken
@@ -466,7 +465,7 @@ func (f installerBootstrapFixture) testNetwork(t *testing.T) {
 }
 
 func (f installerBootstrapFixture) testReinstallation(t *testing.T) {
-	ctx, admin, org, owner, csrf := f.ctx, f.admin, f.org, f.owner, f.csrf
+	ctx, admin, org, owner, csrf := t.Context(), f.admin, f.org, f.owner, f.csrf
 	f.setApproval(t, "manual")
 	token := f.provision(t, org).BootstrapToken
 	body := installerRequest("88888888-8888-4888-8888-888888888888")
@@ -511,7 +510,7 @@ func (f installerBootstrapFixture) testReinstallation(t *testing.T) {
 }
 
 func (f installerBootstrapFixture) testRotation(t *testing.T) {
-	ctx, a, org, owner, csrf := f.ctx, f.app, f.org, f.owner, f.csrf
+	ctx, a, org, owner, csrf := t.Context(), f.app, f.org, f.owner, f.csrf
 	var e error
 	before := f.provision(t, org).BootstrapToken
 	requireHTTP(t, f.call(t, "POST", "/api/deployment-key/rotate", map[string]any{}, owner, csrf, ""), 200)
@@ -559,7 +558,7 @@ func (f installerBootstrapFixture) testRotation(t *testing.T) {
 }
 
 func (f installerBootstrapFixture) testIsolation(t *testing.T) {
-	ctx, db := f.ctx, f.db
+	ctx, db := t.Context(), f.db
 	var e error
 	var count int
 	if e = db.QueryRow(ctx, `SELECT count(*) FROM installer_profiles`).Scan(&count); e != nil || count != 0 {
@@ -575,7 +574,7 @@ func (f installerBootstrapFixture) testIsolation(t *testing.T) {
 }
 
 func (f installerBootstrapFixture) assertChildIsolation(t *testing.T) {
-	ctx, db, a, org, owner, csrf := f.ctx, f.db, f.app, f.org, f.owner, f.csrf
+	ctx, db, a, org, owner, csrf := t.Context(), f.db, f.app, f.org, f.owner, f.csrf
 	var e error
 	w := f.call(t, "POST", "/api/organizations", map[string]any{"name": "Synthetic child organization", "parent_id": org}, owner, csrf, "")
 	requireHTTP(t, w, 201)
@@ -641,7 +640,7 @@ func (f installerBootstrapFixture) setNetworkEnrollment(t *testing.T, enrollment
 
 func (f installerBootstrapFixture) enrolNetworkDevice(t *testing.T, token, id string, domains []machineDomain) (int, string) {
 	t.Helper()
-	ctx, db, org := f.ctx, f.db, f.org
+	ctx, db, org := t.Context(), f.db, f.org
 	body := installerRequest(id)
 	body.MachineDomains = domains
 	w := f.call(t, "POST", "/v2/install", body, nil, "", token)

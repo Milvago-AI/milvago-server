@@ -193,6 +193,26 @@ var eventSources = []string{"browser", "native"}
 var nativeEventTools = []string{"claude-code", "codex", "claude-desktop", "claude-desktop-agent"}
 
 func validateV2(v *V2Event, now time.Time) error {
+	if e := validateEventDetector(v); e != nil {
+		return e
+	}
+	if e := validateEventIdentity(v, now); e != nil {
+		return e
+	}
+	if e := validateEventContent(v); e != nil {
+		return e
+	}
+	var e error
+	v.URL, e = normalizeEventURL(v.URL, v.Provider)
+	if e != nil {
+		return e
+	}
+	if v.Source == "native" && v.URL != "" {
+		return bad("Native records must not contain browser URLs.")
+	}
+	return nil
+}
+func validateEventDetector(v *V2Event) error {
 	// "presence" is the browser service worker reporting that a known platform was
 	// reached, with nothing read from the page. Accepting it here is server-only and
 	// backwards compatible; what a record of that kind may carry is decided in
@@ -217,6 +237,10 @@ func validateV2(v *V2Event, now time.Time) error {
 	if v.DecisionReason != "" && (!slices.Contains(eventDecisionReasons, v.DecisionReason) || v.PlatformID == "" || v.Action != "blocked" || v.Kind != "prompt") {
 		return bad("Invalid model decision metadata.")
 	}
+	return nil
+}
+
+func validateEventIdentity(v *V2Event, now time.Time) error {
 	if !uuidPattern.MatchString(v.ID) || v.OccurredAt.IsZero() || v.OccurredAt.After(now.Add(5*time.Minute)) || v.OccurredAt.Before(now.AddDate(-1, 0, 0)) || v.PolicyRevision < 1 {
 		return bad("Invalid event identity, time or policy revision.")
 	}
@@ -232,6 +256,10 @@ func validateV2(v *V2Event, now time.Time) error {
 	if v.Source == "native" && !slices.Contains(nativeEventTools, v.Tool) {
 		return bad("Native conversation collector is not supported.")
 	}
+	return nil
+}
+
+func validateEventContent(v *V2Event) error {
 	for _, s := range []string{v.Model, v.Effort, v.ConversationID, v.CorrelationID} {
 		if s != "" && !validMetadata(s, 200) {
 			return bad("Invalid optional metadata.")
@@ -259,16 +287,9 @@ func validateV2(v *V2Event, now time.Time) error {
 	if v.User != "" && !validOSUser(v.User) {
 		return bad("Invalid collected profile.")
 	}
-	var e error
-	v.URL, e = normalizeEventURL(v.URL, v.Provider)
-	if e != nil {
-		return e
-	}
-	if v.Source == "native" && v.URL != "" {
-		return bad("Native records must not contain browser URLs.")
-	}
 	return nil
 }
+
 func (a *App) v2Policy(w http.ResponseWriter, r *http.Request) {
 	if e := a.v2PolicyRequest(w, r); e != nil {
 		a.fail(w, e)
@@ -361,18 +382,9 @@ func (a *App) v2Complete(w http.ResponseWriter, r *http.Request) {
 // only the authenticated device's own events are reachable, content and counters are
 // out of reach entirely, and a replay changes nothing. The "fill only when empty"
 // shape follows the one already in service for invitations (invitations.go).
-func (a *App) v2CompleteRequest(w http.ResponseWriter, r *http.Request) error {
-	var body struct {
-		Completions []V2Completion `json:"completions"`
-	}
-	if e := decode(w, r, &body); e != nil {
-		return e
-	}
-	if len(body.Completions) < 1 || len(body.Completions) > 100 {
-		return bad("Submit between 1 and 100 completions.")
-	}
+func validateCompletions(completions []V2Completion) error {
 	seen := map[string]bool{}
-	for _, c := range body.Completions {
+	for _, c := range completions {
 		if !uuidPattern.MatchString(c.ID) || seen[c.ID] {
 			return bad("Completion identities must be valid and unique within a batch.")
 		}
@@ -390,6 +402,22 @@ func (a *App) v2CompleteRequest(w http.ResponseWriter, r *http.Request) error {
 		if c.Model == "" && c.Effort == "" && c.ConversationID == "" && c.BodyBytes == nil {
 			return bad("A completion must carry at least one observation.")
 		}
+	}
+	return nil
+}
+
+func (a *App) v2CompleteRequest(w http.ResponseWriter, r *http.Request) error {
+	var body struct {
+		Completions []V2Completion `json:"completions"`
+	}
+	if e := decode(w, r, &body); e != nil {
+		return e
+	}
+	if len(body.Completions) < 1 || len(body.Completions) > 100 {
+		return bad("Submit between 1 and 100 completions.")
+	}
+	if e := validateCompletions(body.Completions); e != nil {
+		return e
 	}
 	tx, org, device, e := a.deviceTx(r)
 	if e != nil {
@@ -423,6 +451,132 @@ func (a *App) v2CompleteRequest(w http.ResponseWriter, r *http.Request) error {
 	reply(w, 200, map[string]any{"applied_ids": applied})
 	return nil
 }
+func validateIngestEvents(events []V2Event, deviceKind string, now time.Time) ([]string, error) {
+	rejected := []string{}
+	seen := map[string]bool{}
+	for i := range events {
+		v := &events[i]
+		if !uuidPattern.MatchString(v.ID) || seen[v.ID] {
+			return nil, bad("Event identities must be valid and unique within a batch.")
+		}
+		seen[v.ID] = true
+		if v.Source == "native" && deviceKind != "native" {
+			return nil, forbidden()
+		}
+		if err := validateV2(v, now); err != nil {
+			var ae apiError
+			if !errors.As(err, &ae) || ae.status != http.StatusBadRequest {
+				return nil, err
+			}
+			rejected = append(rejected, v.ID)
+		}
+	}
+	return rejected, nil
+}
+
+func eventSensitivity(v V2Event, cfg ShadowSettings) string {
+	// Community has no usage sensitivity, so it stores an unknown value.
+	if Edition != "commercial" {
+		return "unknown"
+	}
+	sensitivity := "normal"
+	sensitiveCategories := cfg.Config.Classification.Browser
+	if v.Source == "native" && v.Tool != "claude-desktop" {
+		sensitiveCategories = cfg.Config.Classification.Coding
+	}
+	for _, label := range v.Labels {
+		if !slices.Contains(classificationTypes, label) && sensitivity != "sensitive" {
+			sensitivity = "unknown"
+		}
+		if slices.Contains(sensitiveCategories, label) {
+			sensitivity = "sensitive"
+		}
+	}
+	return sensitivity
+}
+
+type ingestBatchState struct {
+	org, device, deviceKind string
+	cfg                     ShadowSettings
+	retainedAfter           time.Time
+	aliasKey                []byte
+	catalogues              detectionEventBatch
+	writes                  pgx.Batch
+	accepted                []string
+}
+
+func (a *App) queueIngestEvent(r *http.Request, tx pgx.Tx, state *ingestBatchState, v V2Event) error {
+	if v.Source == "native" && state.deviceKind != "native" {
+		return forbidden()
+	}
+	hasContent := v.Prompt != nil || v.Response != nil
+	if hasContent && (!state.cfg.Config.Collection.StoreContent || v.PolicyRevision != state.cfg.Revision) {
+		return apiError{409, "content_policy_changed", "Refresh the policy and remove unauthorized queued content before retrying."}
+	}
+	if len(v.Files) > 0 && (!state.cfg.Config.Collection.StoreFileNames || v.PolicyRevision != state.cfg.Revision) {
+		return apiError{409, "content_policy_changed", "Refresh the policy and remove unauthorized queued file names before retrying."}
+	}
+	if v.OccurredAt.Before(state.retainedAfter) {
+		state.accepted = append(state.accepted, v.ID)
+		return nil
+	}
+	if e := state.catalogues.authorize(r.Context(), tx, &v); e != nil {
+		return e
+	}
+	return a.sealAndQueueIngestEvent(r, tx, state, v)
+}
+
+func (a *App) sealAndQueueIngestEvent(r *http.Request, tx pgx.Tx, state *ingestBatchState, v V2Event) error {
+	labels, _ := json.Marshal(v.Labels)
+	if v.Files == nil {
+		v.Files = []string{}
+	}
+	files, _ := json.Marshal(v.Files)
+	sensitivity := eventSensitivity(v, state.cfg)
+	// The digest is taken before sealing so the sealed value remains unlinkable.
+	userKey := ""
+	if v.User != "" {
+		if state.aliasKey == nil {
+			aliasKey, e := a.identityAliasKey(r.Context(), tx, state.org)
+			if e != nil {
+				return e
+			}
+			state.aliasKey = aliasKey
+		}
+		userKey = osAccountKey(state.aliasKey, v.User)
+	}
+	sealedUser, e := a.sealIdentity(state.org, "event-user:"+state.device+":"+v.ID, v.User)
+	if e != nil {
+		return e
+	}
+	v.User = sealedUser
+	var content []byte
+	if v.Prompt != nil || v.Response != nil {
+		plain, _ := json.Marshal(map[string]*string{"prompt": v.Prompt, "response": v.Response})
+		encrypted, e := a.sealShadow(state.org, "event:"+state.device+":"+v.ID, plain)
+		if e != nil {
+			return e
+		}
+		content = []byte(encrypted)
+	}
+	// Pipeline bounded writes on this transaction's connection. The CTE's
+	// RETURNING set keeps content insertion conditional on a NEW event, so a
+	// replay cannot recreate purged content or overwrite the original record.
+	// Association remains resolved at the event's timestamp under tenant RLS.
+	state.writes.Queue(`WITH inserted AS (
+ INSERT INTO shadow_events(organization_id,device_id,id,occurred_at,kind,provider,source,tool,model,effort,conversation_id,correlation_id,url,action,characters,labels,policy_revision,collaborator_id,sensitivity,platform_id,decision_reason,files,"user",user_key,detector,catalog_revision,input_tokens,output_tokens,body_bytes,characters_known)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
+  (SELECT collaborator_id FROM device_collaborators WHERE device_id=$2 AND bound_at<=$18::timestamptz AND expires_at>$18::timestamptz AND expires_at>now()),
+  $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
+ ON CONFLICT DO NOTHING RETURNING organization_id,device_id,id
+)
+INSERT INTO shadow_content(organization_id,device_id,event_id,encrypted,expires_at)
+ SELECT organization_id,device_id,id,$31::bytea,now()+make_interval(days=>$32)
+ FROM inserted WHERE $31::bytea IS NOT NULL`, state.org, state.device, v.ID, v.OccurredAt, v.Kind, v.Provider, v.Source, v.Tool, v.Model, v.Effort, v.ConversationID, v.CorrelationID, v.URL, v.Action, v.Characters, labels, v.PolicyRevision, v.OccurredAt, sensitivity, v.PlatformID, v.DecisionReason, files, v.User, userKey, v.Detector, v.CatalogRevision, v.InputTokens, v.OutputTokens, v.BodyBytes, v.CharactersKnown == nil || *v.CharactersKnown, content, state.cfg.Config.Collection.ContentRetentionDays)
+	state.accepted = append(state.accepted, v.ID)
+	return nil
+}
+
 func (a *App) v2IngestRequest(w http.ResponseWriter, r *http.Request) error {
 	var body struct {
 		Events []V2Event `json:"events"`
@@ -452,24 +606,9 @@ func (a *App) v2IngestRequest(w http.ResponseWriter, r *http.Request) error {
 	// Only authenticated, approved devices receive permanent per-event rejects.
 	// Policy, authorization and envelope errors never authorize queue deletion.
 	now := time.Now()
-	rejected := []string{}
-	seen := map[string]bool{}
-	for i := range body.Events {
-		v := &body.Events[i]
-		if !uuidPattern.MatchString(v.ID) || seen[v.ID] {
-			return bad("Event identities must be valid and unique within a batch.")
-		}
-		seen[v.ID] = true
-		if v.Source == "native" && deviceKind != "native" {
-			return forbidden()
-		}
-		if err := validateV2(v, now); err != nil {
-			var ae apiError
-			if !errors.As(err, &ae) || ae.status != http.StatusBadRequest {
-				return err
-			}
-			rejected = append(rejected, v.ID)
-		}
+	rejected, e := validateIngestEvents(body.Events, deviceKind, now)
+	if e != nil {
+		return e
 	}
 	if len(rejected) > 0 {
 		reply(w, http.StatusBadRequest, map[string]any{"error": "invalid_event", "message": "Remove only the identified invalid events before retrying.", "rejected_ids": rejected})
@@ -486,96 +625,17 @@ func (a *App) v2IngestRequest(w http.ResponseWriter, r *http.Request) error {
 		return e
 	}
 	retainedAfter := now.Add(-time.Duration(min(retentionDays, privacy.Config.IdentityDays)) * 24 * time.Hour)
-	accepted := make([]string, 0, len(body.Events))
-	catalogues := detectionEventBatch{}
-	writes := &pgx.Batch{}
-	// Read once for the batch: the alias key digests the OS accounts of every
-	// event that carries one.
-	var aliasKey []byte
-	for _, v := range body.Events {
-		if v.Source == "native" && deviceKind != "native" {
-			return forbidden()
-		}
-		hasContent := v.Prompt != nil || v.Response != nil
-		if hasContent && (!cfg.Config.Collection.StoreContent || v.PolicyRevision != cfg.Revision) {
-			return apiError{409, "content_policy_changed", "Refresh the policy and remove unauthorized queued content before retrying."}
-		}
-		if len(v.Files) > 0 && (!cfg.Config.Collection.StoreFileNames || v.PolicyRevision != cfg.Revision) {
-			return apiError{409, "content_policy_changed", "Refresh the policy and remove unauthorized queued file names before retrying."}
-		}
-		if v.OccurredAt.Before(retainedAfter) {
-			accepted = append(accepted, v.ID)
-			continue
-		}
-		if e = catalogues.authorize(r.Context(), tx, &v); e != nil {
-			return e
-		}
-		labels, _ := json.Marshal(v.Labels)
-		if v.Files == nil {
-			v.Files = []string{}
-		}
-		files, _ := json.Marshal(v.Files)
-		// Community has no usage sensitivity. Nothing determines it, so the stored
-		// value stays "unknown": claiming "normal" would assert an absence of
-		// sensitivity that this edition never evaluated.
-		sensitivity := "unknown"
-		if Edition == "commercial" {
-			sensitivity = "normal"
-			sensitiveCategories := cfg.Config.Classification.Browser
-			if v.Source == "native" && v.Tool != "claude-desktop" {
-				sensitiveCategories = cfg.Config.Classification.Coding
-			}
-			for _, label := range v.Labels {
-				if !slices.Contains(classificationTypes, label) && sensitivity != "sensitive" {
-					sensitivity = "unknown"
-				}
-				if slices.Contains(sensitiveCategories, label) {
-					sensitivity = "sensitive"
-				}
-			}
-		}
-		// The digest is taken before sealing: the sealed value is bound to this
-		// event, so nothing groupable can be derived from it afterwards.
-		userKey := ""
-		if v.User != "" {
-			if aliasKey == nil {
-				if aliasKey, e = a.identityAliasKey(r.Context(), tx, org); e != nil {
-					return e
-				}
-			}
-			userKey = osAccountKey(aliasKey, v.User)
-		}
-		v.User, e = a.sealIdentity(org, "event-user:"+device+":"+v.ID, v.User)
-		if e != nil {
-			return e
-		}
-		var content []byte
-		if v.Prompt != nil || v.Response != nil {
-			plain, _ := json.Marshal(map[string]*string{"prompt": v.Prompt, "response": v.Response})
-			encrypted, e := a.sealShadow(org, "event:"+device+":"+v.ID, plain)
-			if e != nil {
-				return e
-			}
-			content = []byte(encrypted)
-		}
-		// Pipeline bounded writes on this transaction's connection. The CTE's
-		// RETURNING set keeps content insertion conditional on a NEW event, so a
-		// replay cannot recreate purged content or overwrite the original record.
-		// Association remains resolved at the event's timestamp under tenant RLS.
-		writes.Queue(`WITH inserted AS (
- INSERT INTO shadow_events(organization_id,device_id,id,occurred_at,kind,provider,source,tool,model,effort,conversation_id,correlation_id,url,action,characters,labels,policy_revision,collaborator_id,sensitivity,platform_id,decision_reason,files,"user",user_key,detector,catalog_revision,input_tokens,output_tokens,body_bytes,characters_known)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
-  (SELECT collaborator_id FROM device_collaborators WHERE device_id=$2 AND bound_at<=$18::timestamptz AND expires_at>$18::timestamptz AND expires_at>now()),
-  $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
- ON CONFLICT DO NOTHING RETURNING organization_id,device_id,id
-)
-INSERT INTO shadow_content(organization_id,device_id,event_id,encrypted,expires_at)
- SELECT organization_id,device_id,id,$31::bytea,now()+make_interval(days=>$32)
- FROM inserted WHERE $31::bytea IS NOT NULL`, org, device, v.ID, v.OccurredAt, v.Kind, v.Provider, v.Source, v.Tool, v.Model, v.Effort, v.ConversationID, v.CorrelationID, v.URL, v.Action, v.Characters, labels, v.PolicyRevision, v.OccurredAt, sensitivity, v.PlatformID, v.DecisionReason, files, v.User, userKey, v.Detector, v.CatalogRevision, v.InputTokens, v.OutputTokens, v.BodyBytes, v.CharactersKnown == nil || *v.CharactersKnown, content, cfg.Config.Collection.ContentRetentionDays)
-		accepted = append(accepted, v.ID)
+	state := ingestBatchState{
+		org: org, device: device, deviceKind: deviceKind, cfg: cfg,
+		retainedAfter: retainedAfter, accepted: make([]string, 0, len(body.Events)),
 	}
-	if writes.Len() > 0 {
-		if e = tx.SendBatch(r.Context(), writes).Close(); e != nil {
+	for _, v := range body.Events {
+		if e = a.queueIngestEvent(r, tx, &state, v); e != nil {
+			return e
+		}
+	}
+	if state.writes.Len() > 0 {
+		if e = tx.SendBatch(r.Context(), &state.writes).Close(); e != nil {
 			return e
 		}
 	}
@@ -585,6 +645,6 @@ INSERT INTO shadow_content(organization_id,device_id,event_id,encrypted,expires_
 	if e = tx.Commit(r.Context()); e != nil {
 		return e
 	}
-	reply(w, 200, map[string]any{"accepted_ids": accepted})
+	reply(w, 200, map[string]any{"accepted_ids": state.accepted})
 	return nil
 }

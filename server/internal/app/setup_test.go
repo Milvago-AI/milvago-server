@@ -438,11 +438,16 @@ func (f *setupWizardFixture) testSetupConcurrentCompletion(t *testing.T) {
 }
 
 func (f *setupWizardFixture) testSetupChosenValues(t *testing.T) {
-	admin := f.admin
-	p := f.p
-	ctx := context.Background()
-	org := f.org
+	email := f.checkSetupDatabaseValues(t)
+	f.checkSetupPrivacyAndCompletion(t)
+	f.checkSetupProviderValues(t, email)
+	f.checkSetupAuditSecrets(t)
+}
 
+func (f *setupWizardFixture) checkSetupDatabaseValues(t *testing.T) string {
+	t.Helper()
+	admin, org := f.admin, f.org
+	ctx := context.Background()
 	var email, publicURL, language, name string
 	var confirmed, requireMFA bool
 	if e := admin.QueryRow(ctx, `SELECT bootstrap_email,public_url,public_url_confirmed,default_language FROM app_config`).Scan(&email, &publicURL, &confirmed, &language); e != nil {
@@ -455,6 +460,13 @@ func (f *setupWizardFixture) testSetupChosenValues(t *testing.T) {
 	if !slices.Contains([]string{"owner@example.test", "second@example.test"}, email) || publicURL != "https://milvago.example.test" || !confirmed || language != "en" || name != "Example organization" || !requireMFA {
 		t.Fatalf("values not applied: %s %s %v %s %s %v", email, publicURL, confirmed, language, name, requireMFA)
 	}
+	return email
+}
+
+func (f *setupWizardFixture) checkSetupPrivacyAndCompletion(t *testing.T) {
+	t.Helper()
+	admin, org := f.admin, f.org
+	ctx := context.Background()
 	var privacy []byte
 	if e := admin.QueryRow(ctx, `SELECT configuration FROM privacy_settings WHERE organization_id=$1`, org).Scan(&privacy); e != nil || !bytes.Contains(privacy, []byte(`"k_anonymity": 7`)) {
 		t.Fatalf("privacy defaults not applied: %s %v", privacy, e)
@@ -463,6 +475,11 @@ func (f *setupWizardFixture) testSetupChosenValues(t *testing.T) {
 	if e := admin.QueryRow(ctx, `SELECT (SELECT count(*) FROM setup_sessions),(SELECT count(*) FROM audit WHERE action='setup.completed' AND actor='setup')`).Scan(&sessions, &audits); e != nil || sessions != 0 || audits != 1 {
 		t.Fatalf("sessions=%d audits=%d %v", sessions, audits, e)
 	}
+}
+
+func (f *setupWizardFixture) checkSetupProviderValues(t *testing.T, email string) {
+	t.Helper()
+	p := f.p
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.smtp["host"] != "mail.example.test" || p.smtp["starttls"] != "true" || p.smtp["user"] != "mailer" {
@@ -473,6 +490,12 @@ func (f *setupWizardFixture) testSetupChosenValues(t *testing.T) {
 			t.Fatalf("administrator account not as chosen: %+v", *u)
 		}
 	}
+}
+
+func (f *setupWizardFixture) checkSetupAuditSecrets(t *testing.T) {
+	t.Helper()
+	admin := f.admin
+	ctx := context.Background()
 	var leaked int
 	if e := admin.QueryRow(ctx, `SELECT count(*) FROM audit WHERE details::text LIKE '%passphrase%' OR details::text LIKE '%synthetic-smtp-secret%'`).Scan(&leaked); e != nil || leaked != 0 {
 		t.Fatal("secret written to the audit trail", e)

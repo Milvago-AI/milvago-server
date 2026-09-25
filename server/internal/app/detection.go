@@ -226,20 +226,11 @@ func validateDetectionProvider(p DetectionProvider, ids, domains, assetHosts map
 	if p.ConversationPath != "" && (!detectionPath.MatchString(p.ConversationPath) || strings.Count(p.ConversationPath, "*") > 8) {
 		return bad("Invalid conversation path.")
 	}
-	for _, d := range append(append([]string{}, p.Domains...), p.Aliases...) {
-		if !domainPattern.MatchString(d) || len(d) > 253 || domains[d] {
-			return bad("Invalid or duplicate catalogue domain.")
-		}
-		domains[d] = true
+	if e := validateProviderDomains(p, domains); e != nil {
+		return e
 	}
-	// An asset host is a hostname like any other, named only once across the whole
-	// catalogue. That it is the domain or alias of NO provider is checked after the
-	// loop, once every provider has been declared.
-	for _, h := range p.AssetHosts {
-		if !domainPattern.MatchString(h) || len(h) > 253 || assetHosts[h] {
-			return bad("Invalid or duplicate asset host.")
-		}
-		assetHosts[h] = true
+	if e := validateProviderAssetHosts(p, assetHosts); e != nil {
+		return e
 	}
 	for _, s := range []string{p.DOM.Editor, p.DOM.Send, p.DOM.Response} {
 		if s != "" && !validMetadata(s, 512) {
@@ -252,26 +243,57 @@ func validateDetectionProvider(p DetectionProvider, ids, domains, assetHosts map
 	return nil
 }
 
+func validateProviderDomains(p DetectionProvider, domains map[string]bool) error {
+	for _, d := range append(append([]string{}, p.Domains...), p.Aliases...) {
+		if !domainPattern.MatchString(d) || len(d) > 253 || domains[d] {
+			return bad("Invalid or duplicate catalogue domain.")
+		}
+		domains[d] = true
+	}
+	return nil
+}
+
+func validateProviderAssetHosts(p DetectionProvider, assetHosts map[string]bool) error {
+	// Asset hosts must be unique across providers; covered-domain overlap is checked later.
+	for _, h := range p.AssetHosts {
+		if !domainPattern.MatchString(h) || len(h) > 253 || assetHosts[h] {
+			return bad("Invalid or duplicate asset host.")
+		}
+		assetHosts[h] = true
+	}
+	return nil
+}
+
 func validateDetectionNetwork(p DetectionProvider) error {
 	for _, n := range p.Network {
-		if !slices.Contains([]string{"POST", "PUT"}, n.Method) || !domainPattern.MatchString(n.Host) || (!slices.Contains(p.Domains, n.Host) && !slices.Contains(p.Aliases, n.Host)) || !detectionPath.MatchString(n.Path) || strings.Count(n.Path, "*") > 8 || !validDetectionJSONPath(n.TextPath) || !validDetectionTextPaths(n.TextPaths) || !validDetectionJSONPath(n.ModelPath) || !validDetectionJSONPath(n.EffortPath) || !validDetectionJSONPath(n.ConversationPath) {
-			return bad("Invalid network rule.")
+		if e := validateProviderNetworkRule(p, n); e != nil {
+			return e
 		}
-		if !validDetectionJSONPath(n.FilesPath) || len(n.JSONFields) > 4 || !slices.Contains([]string{"", "prompt", "file"}, n.Kind) {
-			return bad("Invalid network rule.")
-		}
-		for _, field := range n.JSONFields {
-			// A field name, not a path: unwrapping only ever happens at the root of
-			// the body, where a form places its fields. Same shape as a path
-			// segment -- real fields are mixed case (`imageAttachments`) -- and the
-			// three names that would reach the prototype are refused here just as
-			// they are in the engine.
-			if !detectionFieldName.MatchString(field) || slices.Contains([]string{"__proto__", "constructor", "prototype"}, field) {
-				return bad("Invalid JSON field name.")
-			}
-		}
-		if n.ConversationURLSegment != nil && (*n.ConversationURLSegment < 0 || *n.ConversationURLSegment > 16) {
-			return bad("Invalid conversation segment.")
+	}
+	return nil
+}
+
+func validateProviderNetworkRule(p DetectionProvider, n DetectionNetwork) error {
+	if !slices.Contains([]string{"POST", "PUT"}, n.Method) || !domainPattern.MatchString(n.Host) || (!slices.Contains(p.Domains, n.Host) && !slices.Contains(p.Aliases, n.Host)) || !detectionPath.MatchString(n.Path) || strings.Count(n.Path, "*") > 8 || !validDetectionJSONPath(n.TextPath) || !validDetectionTextPaths(n.TextPaths) || !validDetectionJSONPath(n.ModelPath) || !validDetectionJSONPath(n.EffortPath) || !validDetectionJSONPath(n.ConversationPath) {
+		return bad("Invalid network rule.")
+	}
+	if !validDetectionJSONPath(n.FilesPath) || len(n.JSONFields) > 4 || !slices.Contains([]string{"", "prompt", "file"}, n.Kind) {
+		return bad("Invalid network rule.")
+	}
+	if e := validateNetworkJSONFields(n.JSONFields); e != nil {
+		return e
+	}
+	if n.ConversationURLSegment != nil && (*n.ConversationURLSegment < 0 || *n.ConversationURLSegment > 16) {
+		return bad("Invalid conversation segment.")
+	}
+	return nil
+}
+
+func validateNetworkJSONFields(fields []string) error {
+	for _, field := range fields {
+		// Form fields are root names; prototype-related names must be rejected.
+		if !detectionFieldName.MatchString(field) || slices.Contains([]string{"__proto__", "constructor", "prototype"}, field) {
+			return bad("Invalid JSON field name.")
 		}
 	}
 	return nil
@@ -279,51 +301,67 @@ func validateDetectionNetwork(p DetectionProvider) error {
 
 func validateDetectionNative(c DetectionContent) error {
 	for _, n := range c.NativeTools {
-		if !slices.Contains([]string{"claude-code", "codex", "claude-desktop"}, n.ID) || !slices.Contains([]string{"windows", "linux"}, n.Platform) || !slices.Contains([]string{"otlp-v1", "claude-desktop-v1"}, n.Parser) || len(n.QualifiedVersions) > 128 || len(n.TextVersions) > 128 {
-			return bad("Unknown compiled native parser.")
+		if e := validateNativeTool(n); e != nil {
+			return e
 		}
-		for _, list := range [][]string{n.QualifiedVersions, n.TextVersions} {
-			for _, v := range list {
-				if len(v) > 64 || !detectionNativeVersion.MatchString(v) {
-					return bad("Invalid native version.")
-				}
+	}
+	return nil
+}
+
+func validateNativeTool(n DetectionNative) error {
+	if !slices.Contains([]string{"claude-code", "codex", "claude-desktop"}, n.ID) || !slices.Contains([]string{"windows", "linux"}, n.Platform) || !slices.Contains([]string{"otlp-v1", "claude-desktop-v1"}, n.Parser) || len(n.QualifiedVersions) > 128 || len(n.TextVersions) > 128 {
+		return bad("Unknown compiled native parser.")
+	}
+	if e := validateNativeVersions(n); e != nil {
+		return e
+	}
+	// No raw-text qualification has yet been demonstrated on a real managed tool.
+	if len(n.TextVersions) > 0 {
+		return apiError{409, "qualification_required", "Raw telemetry text requires a qualified engine release."}
+	}
+	return nil
+}
+
+func validateNativeVersions(n DetectionNative) error {
+	for _, list := range [][]string{n.QualifiedVersions, n.TextVersions} {
+		for _, v := range list {
+			if len(v) > 64 || !detectionNativeVersion.MatchString(v) {
+				return bad("Invalid native version.")
 			}
-		}
-		// No raw-text qualification has yet been demonstrated on a real managed tool.
-		if len(n.TextVersions) > 0 {
-			return apiError{409, "qualification_required", "Raw telemetry text requires a qualified engine release."}
 		}
 	}
 	return nil
 }
 
 func validateDetectionPlatforms(c DetectionContent) error {
-	// Known platforms are checked for internal consistency only. A domain appearing both
-	// here and in `providers` is NOT refused: gemini.google.com is a covered provider in
-	// Enterprise and is not one in Community, where presence is exactly what is asked for,
-	// and a published catalogue carries the same bytes to both. Refusing the overlap would
-	// make a document valid on one side and impossible on the other. The overlap is
-	// resolved where the catalogue is consumed instead -- a covered provider silences the
-	// presence path for that host, on the endpoint and again in detectionEventBatch.authorize.
+	// A known platform may overlap a covered provider; consumption resolves the overlap
+	// after the edition has narrowed its provider list.
 	if len(c.KnownPlatforms) > 256 {
 		return bad("Invalid known platform count.")
 	}
 	platformIDs, platformDomains := map[string]bool{}, map[string]bool{}
 	for _, p := range c.KnownPlatforms {
-		if !detectionID.MatchString(p.ID) || platformIDs[p.ID] || !validMetadata(p.Label, 100) || len(p.Domains) == 0 || len(p.Domains) > 8 || len(p.Paths) > 8 {
-			return bad("Invalid known platform.")
+		if e := validateKnownPlatform(p, platformIDs, platformDomains); e != nil {
+			return e
 		}
-		platformIDs[p.ID] = true
-		for _, d := range p.Domains {
-			if !domainPattern.MatchString(d) || len(d) > 253 || platformDomains[d] {
-				return bad("Invalid or duplicate known platform domain.")
-			}
-			platformDomains[d] = true
+	}
+	return nil
+}
+
+func validateKnownPlatform(p DetectionKnownPlatform, platformIDs, platformDomains map[string]bool) error {
+	if !detectionID.MatchString(p.ID) || platformIDs[p.ID] || !validMetadata(p.Label, 100) || len(p.Domains) == 0 || len(p.Domains) > 8 || len(p.Paths) > 8 {
+		return bad("Invalid known platform.")
+	}
+	platformIDs[p.ID] = true
+	for _, d := range p.Domains {
+		if !domainPattern.MatchString(d) || len(d) > 253 || platformDomains[d] {
+			return bad("Invalid or duplicate known platform domain.")
 		}
-		for _, path := range p.Paths {
-			if !detectionPath.MatchString(path) || strings.Count(path, "*") > 8 {
-				return bad("Invalid known platform path.")
-			}
+		platformDomains[d] = true
+	}
+	for _, path := range p.Paths {
+		if !detectionPath.MatchString(path) || strings.Count(path, "*") > 8 {
+			return bad("Invalid known platform path.")
 		}
 	}
 	return nil
@@ -765,7 +803,8 @@ func (a *App) acceptDetectorHealth(r *http.Request, tx pgx.Tx, org, device strin
 	if len(batches) > 8 {
 		return nil, bad("Too many detector batches.")
 	}
-	p, e := a.readPrivacy(r.Context(), tx, org)
+	ctx := r.Context()
+	p, e := a.readPrivacy(ctx, tx, org)
 	if e != nil {
 		return nil, e
 	}
@@ -775,31 +814,46 @@ func (a *App) acceptDetectorHealth(r *http.Request, tx pgx.Tx, org, device strin
 		if e := a.validateDetectorBatch(&b, now, p); e != nil {
 			return nil, e
 		}
-		raw, _ := json.Marshal(b)
-		tag, e := tx.Exec(r.Context(), `INSERT INTO detector_health(organization_id,device_id,id,payload) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, org, device, b.ID, raw)
+		inserted, e := persistDetectorHealthBatch(ctx, tx, org, device, b)
 		if e != nil {
 			return nil, e
 		}
-		if tag.RowsAffected() == 0 {
-			var identical bool
-			if e = tx.QueryRow(r.Context(), "SELECT payload=$4::jsonb FROM detector_health WHERE organization_id=$1 AND device_id=$2 AND id=$3", org, device, b.ID, raw).Scan(&identical); e != nil {
+		if inserted {
+			if e := persistDetectorCandidates(ctx, tx, org, b); e != nil {
 				return nil, e
-			}
-			if !identical {
-				return nil, bad("A health batch identity cannot change its payload.")
-			}
-		}
-		if tag.RowsAffected() > 0 {
-			for _, c := range b.Candidates {
-				_, e = tx.Exec(r.Context(), `INSERT INTO candidate_domains(organization_id,domain,count,first_seen,last_seen) VALUES($1,$2,$3,$4,$4) ON CONFLICT(organization_id,domain) DO UPDATE SET count=candidate_domains.count+excluded.count,last_seen=greatest(candidate_domains.last_seen,excluded.last_seen)`, org, c.Domain, c.Count, b.End)
-				if e != nil {
-					return nil, e
-				}
 			}
 		}
 		accepted = append(accepted, b.ID)
 	}
 	return accepted, nil
+}
+
+func persistDetectorHealthBatch(ctx context.Context, tx pgx.Tx, org, device string, b DetectorBatch) (bool, error) {
+	raw, _ := json.Marshal(b)
+	tag, e := tx.Exec(ctx, `INSERT INTO detector_health(organization_id,device_id,id,payload) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, org, device, b.ID, raw)
+	if e != nil {
+		return false, e
+	}
+	if tag.RowsAffected() == 0 {
+		var identical bool
+		if e = tx.QueryRow(ctx, "SELECT payload=$4::jsonb FROM detector_health WHERE organization_id=$1 AND device_id=$2 AND id=$3", org, device, b.ID, raw).Scan(&identical); e != nil {
+			return false, e
+		}
+		if !identical {
+			return false, bad("A health batch identity cannot change its payload.")
+		}
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+func persistDetectorCandidates(ctx context.Context, tx pgx.Tx, org string, b DetectorBatch) error {
+	for _, c := range b.Candidates {
+		_, e := tx.Exec(ctx, `INSERT INTO candidate_domains(organization_id,domain,count,first_seen,last_seen) VALUES($1,$2,$3,$4,$4) ON CONFLICT(organization_id,domain) DO UPDATE SET count=candidate_domains.count+excluded.count,last_seen=greatest(candidate_domains.last_seen,excluded.last_seen)`, org, c.Domain, c.Count, b.End)
+		if e != nil {
+			return e
+		}
+	}
+	return nil
 }
 
 // detectorSample is what one provider, under one catalogue revision, showed in
