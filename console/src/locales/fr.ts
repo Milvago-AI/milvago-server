@@ -1160,6 +1160,7 @@ export const fr: Record<TranslationKey, string> = {
   setupLicense: "Licence",
   license: "Licence",
   licenseEnterpriseHelp: "La licence est fournie par Milvago AI. Partagez l’identifiant d’instance ci-dessous lorsque vous en demandez une, puis collez-la ici pour continuer.",
+  licenseFreeCommunityOnly: "La licence gratuite lève uniquement les limites de Community. Elle ne débloque pas Enterprise, qui nécessite l’édition Enterprise et une licence distincte.",
   licenseInstanceId: "Identifiant d’instance",
   copyInstanceId: "Copier l’identifiant",
   licensePasteLabel: "Licence",

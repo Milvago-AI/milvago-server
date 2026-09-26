@@ -161,6 +161,7 @@ export function SetupPage({ status, language, chooseLanguage }: Readonly<{ statu
             <label className="checkbox-label"><input type="radio" name="license-choice" checked={licenseChoice === "request"} onChange={() => setLicenseChoice("request")} />{t("licenseChoiceRequest")}</label>
             <label className="checkbox-label"><input type="radio" name="license-choice" checked={licenseChoice === "none"} onChange={() => setLicenseChoice("none")} />{t("licenseChoiceNone")}</label>
           </div>
+          <p className="help">{t("licenseFreeCommunityOnly")}</p>
           {licenseChoice === "have" && (
             <Field label={t("licensePasteLabel")} help={t("licensePasteHelp")}>
               <textarea rows={6} value={license} onChange={e => setLicense(e.target.value)} />

@@ -1163,6 +1163,7 @@ export const ptBR: Record<TranslationKey, string> = {
   setupLicense: "Licença",
   license: "Licença",
   licenseEnterpriseHelp: "A licença é fornecida pela Milvago AI. Compartilhe o identificador da instância abaixo ao solicitá-la e depois cole-a aqui para continuar.",
+  licenseFreeCommunityOnly: "A licença gratuita remove apenas os limites da Community. Ela não desbloqueia a Enterprise, que exige a edição Enterprise e uma licença separada.",
   licenseInstanceId: "Identificador da instância",
   copyInstanceId: "Copiar identificador",
   licensePasteLabel: "Licença",

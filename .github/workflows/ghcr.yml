@@ -1,0 +1,64 @@
+name: Publish private Community image
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.repository == 'Milvago-AI/milvago-server' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require private source and package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(gh api "repos/$GITHUB_REPOSITORY" --jq .private)" = true
+          if visibility=$(gh api "orgs/$GITHUB_REPOSITORY_OWNER/packages/container/milvago-community-server" --jq .visibility 2>/dev/null); then
+            test "$visibility" = private
+          fi
+      - name: Build Community image
+        env:
+          IMAGE: ghcr.io/milvago-ai/milvago-community-server:sha-${{ github.sha }}
+        run: |
+          docker build --pull --no-cache -f deploy/Dockerfile \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            -t "$IMAGE" .
+          test "$(docker image inspect --format '{{.Config.User}}' "$IMAGE")" = 65532:65532
+      - name: Scan image before publishing
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          trivy-version: v0.74.0
+          image-ref: ghcr.io/milvago-ai/milvago-community-server:sha-${{ github.sha }}
+          scanners: vuln
+          severity: CRITICAL,HIGH,MEDIUM,LOW
+          exit-code: '1'
+      - name: Install cosign
+        uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
+        with:
+          cosign-release: v3.1.3
+      - name: Publish and sign private image
+        env:
+          IMAGE: ghcr.io/milvago-ai/milvago-community-server:sha-${{ github.sha }}
+          REGISTRY_TOKEN: ${{ github.token }}
+          COMMUNITY_COSIGN_PRIVATE_KEY: ${{ secrets.COMMUNITY_COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COMMUNITY_COSIGN_PASSWORD }}
+        run: |
+          test -n "$COMMUNITY_COSIGN_PRIVATE_KEY"
+          test -n "$COSIGN_PASSWORD"
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE"
+          digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE")
+          test -n "$digest"
+          cosign sign --key env://COMMUNITY_COSIGN_PRIVATE_KEY --tlog-upload=false --use-signing-config=false "$digest"
+          cosign verify --key cosign.pub --insecure-ignore-tlog=true "$digest"
+          printf 'Private Community image: %s\n' "$digest" >> "$GITHUB_STEP_SUMMARY"

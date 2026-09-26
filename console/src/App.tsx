@@ -2716,6 +2716,7 @@ function LicensePanel() {
     <Card className="settings-panel" title={t("license")} description={t("licenseDescription")} flush>
       <ErrorNotice error={mutation.error} />
       <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 14 }}>
+        {session.edition === "community" && <p className="help">{t("licenseFreeCommunityOnly")}</p>}
         <dl className="dl">
           <dt>{t("status")}</dt>
           <dd><Badge tone={licenseStateTone[license.state]}>{stateLabels[license.state]}</Badge></dd>

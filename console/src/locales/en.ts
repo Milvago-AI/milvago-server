@@ -1162,6 +1162,7 @@ export const en = {
   setupLicense: "License",
   license: "License",
   licenseEnterpriseHelp: "The license is provided by Milvago AI. Share the instance identifier below when you request one, then paste it here to continue.",
+  licenseFreeCommunityOnly: "The free license lifts only Community limits. It does not unlock Enterprise, which requires the Enterprise edition and a separate license.",
   licenseInstanceId: "Instance identifier",
   copyInstanceId: "Copy instance ID",
   licensePasteLabel: "License",
