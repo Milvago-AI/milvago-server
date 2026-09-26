@@ -443,6 +443,30 @@ if [[ ! -e "$root/.env" ]]; then
     "$NODE_IMAGE" node scripts/local-init.mjs
 fi
 
+# Existing configurations may predate the first-run setup token.
+run_docker run --rm --network none --user 0 \
+  -v "$root/.env:/run/milvago.env:rw,z" "$NODE_IMAGE" node -e '
+const fs = require("node:fs");
+const { randomBytes } = require("node:crypto");
+const path = "/run/milvago.env";
+const content = fs.readFileSync(path, "utf8");
+const matches = [...content.matchAll(/^MILVAGO_SETUP_TOKEN=([^\r\n]*)/gm)];
+if (matches.length > 1) throw new Error("Duplicate MILVAGO_SETUP_TOKEN entries in .env");
+if (matches.length === 1 && matches[0][1]) {
+  if (!/^[A-Za-z0-9_-]{32,}$/.test(matches[0][1])) {
+    throw new Error("MILVAGO_SETUP_TOKEN is invalid in .env");
+  }
+} else {
+  const token = randomBytes(32).toString("base64url");
+  const updated = matches.length === 1
+    ? content.replace(/^MILVAGO_SETUP_TOKEN=[^\r\n]*/m, "MILVAGO_SETUP_TOKEN=" + token)
+    : content + (content.endsWith("\n") ? "" : "\n") + "MILVAGO_SETUP_TOKEN=" + token + "\n";
+  fs.writeFileSync(path, updated);
+  console.log("Generated the missing setup token in .env.");
+}
+fs.chmodSync(path, 0o600);
+' || fail 'Cannot ensure MILVAGO_SETUP_TOKEN in .env.'
+
 override="$root/.local/generated/compose.private.yaml"
 cat > "$override" <<EOF
 services:
@@ -561,7 +585,7 @@ while IFS= read -r env_line || [[ -n "$env_line" ]]; do
       ;;
   esac
 done < "$root/.env"
-[[ "$setup_token" =~ ^[A-Za-z0-9_-]+$ ]] ||
+[[ "$setup_token" =~ ^[A-Za-z0-9_-]{32,}$ ]] ||
   fail 'MILVAGO_SETUP_TOKEN is missing or invalid in .env.'
 
 printf '\nOpen http://%s:4020 for initial setup.\n' "$host_ip"
