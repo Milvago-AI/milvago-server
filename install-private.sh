@@ -524,7 +524,7 @@ services:
       - /data:uid=65532,gid=65532
       - /config:uid=65532,gid=65532
     cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
+    cap_add: [NET_BIND_SERVICE]
     ports:
       - "$host_ip:4020:8080"
     volumes:
@@ -617,6 +617,33 @@ run_docker run --rm --network "container:$identity_id" --user "$(id -u):$(id -g)
 });
 ' || fail 'Keycloak could not be configured for the LAN address.'
 run_docker "${compose[@]}" up -d --no-build
+gateway_id=$(run_docker "${compose[@]}" ps -q gateway)
+if [[ -z "$gateway_id" ]]; then
+  run_docker "${compose[@]}" logs --tail 40 gateway >&2 || true
+  fail 'The Caddy gateway did not start.'
+fi
+printf 'Waiting for the Community gateway to become ready...\n'
+if ! run_docker run --rm --network host -e "MILVAGO_APP_URL=http://$host_ip:4020" "$NODE_IMAGE" node -e '
+(async () => {
+  for (let attempt = 0; attempt < 45; attempt++) {
+    try {
+      const response = await fetch(process.env.MILVAGO_APP_URL + "/readyz", {
+        signal: AbortSignal.timeout(2000),
+      });
+      if (response.status === 200) return;
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error("Community did not become ready at the LAN address");
+})().catch((error) => {
+  console.error("Error: " + error.message);
+  process.exitCode = 1;
+});
+' ; then
+  run_docker "${compose[@]}" ps >&2 || true
+  run_docker "${compose[@]}" logs --tail 40 gateway >&2 || true
+  fail 'The Community gateway did not become ready. Check the application container logs.'
+fi
 printf '\nOpen http://%s:4020 for initial setup.\n' "$host_ip"
 printf 'Find the setup token and generated secrets in %s/.env (owner-only).\n' "$root"
 printf 'If the page is unreachable, allow TCP port 4020 through the host firewall.\n'

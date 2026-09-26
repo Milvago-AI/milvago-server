@@ -35,7 +35,9 @@ the console URL and the path to the owner-readable `.env` file at the end.
 Caddy forwards `/realms`, `/admin`, `/resources` and `/js` to Keycloak; the
 application and Keycloak have no direct host port in this installation. Only
 TCP port 4020 is needed through the host firewall. No secret value is printed.
-Database and Mailpit ports remain on loopback.
+Database and Mailpit ports remain on loopback. The installer waits for
+`/readyz` through the published Caddy port before reporting success; if the
+gateway fails, it prints its recent logs.
 HTTP on a LAN is intended for trusted test networks; use an HTTPS reverse
 proxy or gateway for broader access.
 
