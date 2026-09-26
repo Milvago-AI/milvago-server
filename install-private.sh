@@ -432,7 +432,7 @@ UPDATE_PUBLIC_KEY='14ER8eA7zpdlVLLgL+7CPce5eka1Eqmp8Tmz2mUJxmg='
 cat > "$root/.local/generated/fetch-agent-release.mjs" <<'NODE'
 import { createHash, createPublicKey, verify } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const root = '/work';
@@ -500,9 +500,11 @@ try {
     requireValue(lstatSync(target).isDirectory() && !lstatSync(target).isSymbolicLink(),
       'Community installer directory is not a regular directory');
   } else mkdirSync(target, { recursive: true });
+  chmodSync(target, 0o755);
   for (const name of wanted.filter(name => name !== 'release-public-key.txt')) {
     const next = join(target, '.' + name + '.next');
     copyFileSync(join(unpacked, name), next);
+    chmodSync(next, 0o644);
     renameSync(next, join(target, name));
   }
   console.log('Verified Community agent 0.5.51 for Windows and Linux.');
