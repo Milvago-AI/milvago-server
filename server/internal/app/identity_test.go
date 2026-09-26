@@ -517,6 +517,28 @@ type identityScenarioFixture struct {
 	adminRoleCSRF    string
 }
 
+func (f *identityScenarioFixture) followMFA(t *testing.T, w *httptest.ResponseRecorder) (*http.Cookie, string) {
+	t.Helper()
+	requireHTTP(t, w, 302)
+	location, e := url.Parse(w.Header().Get("Location"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	q := location.Query()
+	if q.Get("acr_values") != "2" || q.Get("max_age") != "" || q.Get("prompt") != "" || q.Get("state") == "" {
+		t.Fatalf("MFA continuation must reuse the password session and request only level two: %s", location.RawQuery)
+	}
+	f.identity.nonce = q.Get("nonce")
+	f.identity.challenge = q.Get("code_challenge")
+	for _, cookie := range w.Result().Cookies() {
+		if cookie.Name == cookieName("login") && cookie.Value != "" && cookie.MaxAge > 0 {
+			return cookie, q.Get("state")
+		}
+	}
+	t.Fatal("MFA continuation did not bind the new login attempt")
+	return nil, ""
+}
+
 func (f *identityScenarioFixture) testIdentitySettings(t *testing.T) {
 	owner := f.owner
 
@@ -719,13 +741,12 @@ func (f *identityScenarioFixture) testCredentialMFA(t *testing.T) {
 	cookie, state, _ := f.beginLogin(t, "/auth/login")
 	w := f.finishLogin(cookie, state, "")
 	requireHTTP(t, w, 302)
-	if !strings.HasPrefix(w.Header().Get("Location"), "/auth/login?mfa=1") {
-		t.Fatalf("configured OTP was not required at login: %s", w.Header().Get("Location"))
-	}
-	cookie, state, _ = f.beginLogin(t, "/auth/login?mfa=1")
+	cookie, state = f.followMFA(t, w)
 	requireHTTP(t, f.finishLogin(cookie, state, ""), 403)
+	cookie, state, _ = f.beginLogin(t, "/auth/login")
+	w = f.finishLogin(cookie, state, "")
+	cookie, state = f.followMFA(t, w)
 	p.acr = "2"
-	cookie, state, _ = f.beginLogin(t, "/auth/login?mfa=1")
 	requireHTTP(t, f.finishLogin(cookie, state, ""), 302)
 }
 
@@ -1264,28 +1285,10 @@ func (f *identityScenarioFixture) requireLandingOrgMFA(t *testing.T) string {
 func (f *identityScenarioFixture) testLocalMFAGate(t *testing.T, gated string) {
 	beginLogin := f.beginLogin
 	finishLogin := f.finishLogin
-	admin := f.admin
-	ctx := context.Background()
-	user := f.user
 	cookie, state, _ := beginLogin(t, "/auth/login")
 	w := finishLogin(cookie, state, "")
 	requireHTTP(t, w, 302)
-	if !strings.HasPrefix(w.Header().Get("Location"), "/auth/login?mfa=1") {
-		// Say which organization the session actually landed in, and whether the
-		// bootstrap grant was still unconsumed: those are the two things that
-		// decide the branch taken here, and a bare "got /" names neither.
-		// Name what the decision actually depended on: which organization the
-		// gate was set on, how many the account can land in, and the account's
-		// identity type, which never substitutes for verified MFA evidence.
-		var affiliations int
-		_ = admin.QueryRow(ctx, `SELECT count(*) FROM user_organizations($1)`, user).Scan(&affiliations)
-		var kind, stored string
-		_ = admin.QueryRow(ctx, `SELECT identity_type FROM users WHERE id=$1`, user).Scan(&kind)
-		_ = admin.QueryRow(ctx, `SELECT require_mfa::text FROM settings WHERE organization_id=$1`, gated).Scan(&stored)
-		t.Fatalf("an mfa-required organization must redirect to step-up, got %s (gate set on %s, stored require_mfa=%s, the account can land in %d organizations, identity=%s)", w.Header().Get("Location"), gated, stored, affiliations, kind)
-	}
-
-	cookie, state, _ = beginLogin(t, "/auth/login?mfa=1")
+	cookie, state = f.followMFA(t, w)
 	requireHTTP(t, finishLogin(cookie, state, ""), 403)
 
 }
@@ -1320,10 +1323,7 @@ func (f *identityScenarioFixture) testLinkedMFAGate(t *testing.T) *http.Cookie {
 	cookie, state, _ := beginLogin(t, "/auth/login")
 	w := finishLogin(cookie, state, "")
 	requireHTTP(t, w, 302)
-	if !strings.HasPrefix(w.Header().Get("Location"), "/auth/login?mfa=1") {
-		t.Fatal("linked account bypassed MFA", w.Body.String())
-	}
-	cookie, state, _ = beginLogin(t, "/auth/login?mfa=1")
+	cookie, state = f.followMFA(t, w)
 	requireHTTP(t, finishLogin(cookie, state, ""), 403)
 	p.acr = "2"
 	ssoCookie, _ := login(t, "sso-subject", "sso@example.test")

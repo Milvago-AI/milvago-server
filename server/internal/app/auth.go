@@ -130,31 +130,39 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	if handled {
 		return
 	}
-	stepUp := r.URL.Query().Get("mfa") == "1"
-	state, binding, nonce, verifier := randomToken(), randomToken(), randomToken(), oauth2.GenerateVerifier()
-	_, e := a.db.Exec(r.Context(), `INSERT INTO login_attempts(state_hash,binding_hash,verifier,nonce,expires_at,step_up) VALUES($1,$2,$3,$4,now()+interval '10 minutes',$5)`, hash(state), hash(binding), verifier, nonce, stepUp)
-	if e != nil {
-		a.fail(w, e)
-		return
-	}
-	a.cookie(w, a.cookieName("login"), binding, 600)
 	language := r.URL.Query().Get("lang")
 	if !slices.Contains(consoleLanguages, language) {
-		if e = a.db.QueryRow(r.Context(), sqlDefaultLanguage).Scan(&language); e != nil {
+		if e := a.db.QueryRow(r.Context(), sqlDefaultLanguage).Scan(&language); e != nil {
 			a.fail(w, e)
 			return
 		}
 	}
+	if e := a.startOIDCLogin(w, r, language, kcAction, r.URL.Query().Get("mfa") == "1", true); e != nil {
+		a.fail(w, e)
+	}
+}
+
+func (a *App) startOIDCLogin(w http.ResponseWriter, r *http.Request, language, kcAction string, stepUp, fresh bool) error {
+	state, binding, nonce, verifier := randomToken(), randomToken(), randomToken(), oauth2.GenerateVerifier()
+	_, e := a.db.Exec(r.Context(), `INSERT INTO login_attempts(state_hash,binding_hash,verifier,nonce,expires_at,step_up) VALUES($1,$2,$3,$4,now()+interval '10 minutes',$5)`, hash(state), hash(binding), verifier, nonce, stepUp)
+	if e != nil {
+		return e
+	}
+	a.cookie(w, a.cookieName("login"), binding, 600)
 	opts := []oauth2.AuthCodeOption{oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("ui_locales", language)}
 	if stepUp {
-		// Step up to the OTP level of the browser flow; Keycloak enrols a TOTP
-		// when the account has none yet.
-		opts = append(opts, oauth2.SetAuthURLParam("acr_values", "2"), oauth2.SetAuthURLParam("max_age", "0"), oauth2.SetAuthURLParam("prompt", "login"))
+		// A login continuation reuses the password already proved at level one.
+		// Explicit step-up for a sensitive action also forces fresh credentials.
+		opts = append(opts, oauth2.SetAuthURLParam("acr_values", "2"))
+		if fresh {
+			opts = append(opts, oauth2.SetAuthURLParam("max_age", "0"), oauth2.SetAuthURLParam("prompt", "login"))
+		}
 	}
 	if kcAction != "" {
 		opts = append(opts, oauth2.SetAuthURLParam("kc_action", kcAction))
 	}
 	http.Redirect(w, r, a.oauth.AuthCodeURL(state, opts...), http.StatusFound)
+	return nil
 }
 
 type loginAttempt struct {
@@ -331,19 +339,13 @@ func (a *App) establishLoginAccount(ctx context.Context, tx pgx.Tx, id *oidc.IDT
 	return user, org, nil
 }
 
-func loginVerifiedAt(mfa, stepUp bool, authTime int64) *time.Time {
+func loginVerifiedAt(mfa bool, authTime int64) *time.Time {
 	var verifiedAt *time.Time
 	if mfa && authTime > 0 {
 		t := time.Unix(authTime, 0)
 		if !t.After(time.Now().Add(30 * time.Second)) {
 			verifiedAt = &t
 		}
-	}
-	// A step-up carries prompt=login and max_age=0; the configured identity
-	// realm enforces fresh level-two authentication even without auth_time.
-	if verifiedAt == nil && mfa && stepUp {
-		now := time.Now()
-		verifiedAt = &now
 	}
 	return verifiedAt
 }
@@ -369,7 +371,7 @@ func (a *App) createLoginSession(ctx context.Context, tx pgx.Tx, org, user strin
 	}
 	encrypted := a.config.SessionCipher.Seal(nonceBytes, nonceBytes, tokens, digest)
 	expiry := time.Now().Add(8 * time.Hour)
-	verifiedAt := loginVerifiedAt(mfa, flow.attempt.stepUp, flow.claims.AuthTime)
+	verifiedAt := loginVerifiedAt(mfa, flow.claims.AuthTime)
 	if _, e = tx.Exec(ctx, "INSERT INTO sessions(token_hash,user_id,organization_id,csrf_token,encrypted_tokens,mfa,expires_at,identity_expires_at,oidc_nonce,mfa_verified_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)", digest, user, org, csrf, encrypted, mfa, expiry, flow.id.Expiry, flow.attempt.nonce, verifiedAt); e != nil {
 		return "", time.Time{}, e
 	}
@@ -417,8 +419,10 @@ func (a *App) completeLogin(w http.ResponseWriter, r *http.Request, ctx context.
 		if e = tx.QueryRow(ctx, sqlDefaultLanguage).Scan(&language); e != nil {
 			return e
 		}
-		http.Redirect(w, r, "/auth/login?mfa=1&lang="+url.QueryEscape(language), http.StatusFound)
-		return nil
+		if e = tx.Rollback(ctx); e != nil {
+			return e
+		}
+		return a.startOIDCLogin(w, r, language, "", true, false)
 	}
 	session, expiry, e := a.createLoginSession(ctx, tx, org, user, flow, mfa)
 	if e != nil {
