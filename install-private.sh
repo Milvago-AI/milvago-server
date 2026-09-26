@@ -394,7 +394,7 @@ fi
 
 if [[ -z "$registry_token" ]]; then
   [[ -r /dev/tty ]] || fail 'Set GHCR_TOKEN when no interactive terminal is available.'
-  read -r -s -p 'GitHub classic token (read:packages): ' registry_token </dev/tty
+  read -r -s -p 'GitHub classic token (repo, read:packages): ' registry_token </dev/tty
   printf '\n' >&2
 fi
 [[ "$registry_token" =~ ^[A-Za-z0-9_]+$ ]] || fail 'GitHub token is required.'
@@ -424,7 +424,100 @@ process.stdout.write("ghcr.io/milvago-ai/milvago-community-server@" + published[
 [[ "$latest_image" =~ ^ghcr[.]io/milvago-ai/milvago-community-server@sha256:[a-f0-9]{64}$ ]] ||
   fail 'GitHub Packages returned an invalid image digest.'
 IMAGE=$latest_image
-unset latest_image registry_token
+unset latest_image
+UPDATE_PUBLIC_KEY='14ER8eA7zpdlVLLgL+7CPce5eka1Eqmp8Tmz2mUJxmg='
+cat > "$root/.local/generated/fetch-agent-release.mjs" <<'NODE'
+import { createHash, createPublicKey, verify } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const root = '/work';
+const target = join(root, '.local/installers');
+const expectedArchive = 'd3f03490d14d921edaf907fbc14de85dbbd5dfae92248e70478d7b611e3fe390';
+const expected = {
+  windows: { name: 'milvago-community-0.5.51-windows.msi', size: 5824512, sha256: '83041474374d90f1e399053e5e3f05a4a32511a2848345064ad98702637db07c', format: 'msi' },
+  linux: { name: 'milvago-community-0.5.51-linux.tar.gz', size: 5548553, sha256: '14a134fd987139f41a66d780021c6ff1f971e9aacefa528621611d9b5c347188', format: 'binary' },
+};
+const digest = bytes => createHash('sha256').update(bytes).digest('hex');
+const requireValue = (condition, message) => { if (!condition) throw Error(message); };
+let stage;
+try {
+  const token = readFileSync(0, 'utf8').trim();
+  requireValue(/^[A-Za-z0-9_]+$/.test(token), 'GitHub token is missing');
+  const response = await fetch('https://api.github.com/repos/Milvago-AI/milvago-agent/releases/assets/591307586', {
+    headers: { Authorization: 'Bearer ' + token, Accept: 'application/octet-stream', 'X-GitHub-Api-Version': '2022-11-28' },
+    redirect: 'manual',
+  });
+  let archiveResponse = response;
+  if (response.status === 302 || response.status === 307) {
+    const redirect = new URL(response.headers.get('location'));
+    requireValue(redirect.protocol === 'https:' && redirect.hostname === 'release-assets.githubusercontent.com',
+      'Unexpected Community agent release redirect');
+    archiveResponse = await fetch(redirect, { redirect: 'error' });
+  }
+  requireValue(archiveResponse.ok, 'Private Community agent release returned HTTP ' + archiveResponse.status);
+  const archive = Buffer.from(await archiveResponse.arrayBuffer());
+  requireValue(archive.length < 32 * 1024 * 1024 && digest(archive) === expectedArchive,
+    'Community agent archive digest does not match the pinned release');
+  stage = mkdtempSync(join(root, '.local/generated/agent-release-'));
+  const archivePath = join(stage, 'release.tar.gz');
+  const unpacked = join(stage, 'contents');
+  mkdirSync(unpacked);
+  writeFileSync(archivePath, archive, { mode: 0o600 });
+  const tar = spawnSync('tar', ['-xzf', archivePath, '--no-same-owner', '-C', unpacked], { stdio: 'pipe' });
+  requireValue(tar.status === 0, 'Community agent archive could not be extracted');
+  const files = readdirSync(unpacked).sort();
+  const wanted = ['community-linux-update.json', 'community-linux.json', 'community-windows-update.json',
+    'community-windows.json', expected.linux.name, expected.windows.name, 'release-public-key.txt'].sort();
+  requireValue(JSON.stringify(files) === JSON.stringify(wanted), 'Community agent archive contains unexpected files');
+  const publicKey = readFileSync(join(unpacked, 'release-public-key.txt'), 'utf8').trim();
+  requireValue(publicKey === process.env.MILVAGO_UPDATE_PUBLIC_KEY, 'Community update key differs from the pinned key');
+  const key = createPublicKey({
+    key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), Buffer.from(publicKey, 'base64')]),
+    format: 'der', type: 'spki',
+  });
+  for (const [platform, item] of Object.entries(expected)) {
+    const artifact = readFileSync(join(unpacked, item.name));
+    const manifest = JSON.parse(readFileSync(join(unpacked, 'community-' + platform + '.json'), 'utf8'));
+    const envelope = JSON.parse(readFileSync(join(unpacked, 'community-' + platform + '-update.json'), 'utf8'));
+    const payload = Buffer.from(envelope.payload, 'base64');
+    const release = JSON.parse(payload);
+    requireValue(artifact.length === item.size && digest(artifact) === item.sha256 &&
+      manifest.version === '0.5.51' && manifest.artifact === item.name &&
+      manifest.size === item.size && manifest.sha256 === item.sha256,
+      'Community ' + platform + ' artifact verification failed');
+    requireValue(verify(null, payload, key, Buffer.from(envelope.signature, 'base64')) &&
+      release.version === '0.5.51' && release.edition === 'community' && release.platform === platform &&
+      release.format === item.format && release.sha256 === item.sha256 && release.size === item.size &&
+      Date.parse(release.expires_at) > Date.now(),
+      'Community ' + platform + ' update signature or release has expired');
+  }
+  if (existsSync(target)) {
+    requireValue(lstatSync(target).isDirectory() && !lstatSync(target).isSymbolicLink(),
+      'Community installer directory is not a regular directory');
+  } else mkdirSync(target, { recursive: true });
+  for (const name of wanted.filter(name => name !== 'release-public-key.txt')) {
+    const next = join(target, '.' + name + '.next');
+    copyFileSync(join(unpacked, name), next);
+    renameSync(next, join(target, name));
+  }
+  console.log('Verified Community agent 0.5.51 for Windows and Linux.');
+} catch (error) {
+  console.error('Error: ' + error.message);
+  process.exitCode = 1;
+} finally {
+  if (stage) rmSync(stage, { recursive: true, force: true });
+}
+NODE
+printf 'Fetching and verifying the private Community agents...\n'
+printf '%s' "$registry_token" |
+  run_docker run --rm -i --user "$(id -u):$(id -g)" \
+    -v "$root:/work:z" -w /work \
+    -e "MILVAGO_UPDATE_PUBLIC_KEY=$UPDATE_PUBLIC_KEY" \
+    "$NODE_IMAGE" node .local/generated/fetch-agent-release.mjs ||
+  fail 'The signed Community agent release could not be prepared. Check access to the private milvago-agent repository.'
+unset registry_token
 if (( docker_as_root )); then
   as_root chown "$(id -u):$(id -g)" "$auth_dir/config.json"
 fi
@@ -513,6 +606,8 @@ services:
     environment:
       APP_URL: http://$host_ip:4020
       OIDC_ISSUER: http://$host_ip:4020/realms/milvago
+      MILVAGO_INSTALLER_DIRECTORY: /installers
+      MILVAGO_UPDATE_PUBLIC_KEY: $UPDATE_PUBLIC_KEY
     ports: !override []
     volumes:
       - ./.local/installers:/installers:ro,z

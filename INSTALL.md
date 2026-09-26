@@ -12,7 +12,7 @@ When no complete checkout is present, the script downloads the pinned private Co
 server source into `$HOME/milvago-community`. Set `MILVAGO_DIR` to another absolute
 path if needed. A standalone install needs a GitHub personal access token (classic)
 with `repo` and `read:packages`, plus access to the private repository and package.
-From a complete checkout, only `read:packages` is needed. Each run selects the latest
+From a complete checkout, `repo` and `read:packages` are still needed to fetch the private agent release. Each run selects the latest
 published Community image, verifies its signature and replaces the application container
 when it changes. The checkout, local configuration and database are preserved. The GitHub
 token is never stored there.
@@ -28,8 +28,7 @@ pinned Node container when needed, then starts PostgreSQL, Keycloak, Mailpit, th
 Community server and Caddy. The token is never written to the repository. A later run preserves the
 local configuration and database.
 
-The image contains the server and console only. It does not serve an agent, browser
-extension or installer. The script detects a private IPv4 address (or accepts
+The base image contains the server and console only. The private installer also downloads the pinned Community 0.5.51 Windows and Linux agent bundle from the private agent repository, checks its SHA-256 and signed update manifests, and mounts the verified files read-only so the console can provide the agent downloads. The base image does not host a browser extension. The script detects a private IPv4 address (or accepts
 `MILVAGO_HOST_IP`), binds Caddy to port 4020 on that address, and prints
 the console URL and the path to the owner-readable `.env` file at the end.
 Caddy forwards `/realms`, `/admin`, `/resources` and `/js` to Keycloak; the
@@ -101,8 +100,7 @@ application URL uses HTTPS.
 
 ## Endpoint agent and browser extension
 
-They live in their own repository. The image built here serves no extension (`/ext/*`
-answers `503 extension_unconfigured`) and no installer.
+They live in their own repository. An image built from this source alone serves no extension (`/ext/*` answers `503 extension_unconfigured`) and no installer. The private installation script fetches and mounts the signed Community agent bundle separately.
 
 ## Running the tests
 
