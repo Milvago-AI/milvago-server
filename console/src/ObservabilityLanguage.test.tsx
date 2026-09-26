@@ -308,9 +308,10 @@ describe("Instance language", () => {
   });
   it("completes two setup steps and preserves unrelated settings", async () => {
     window.location.hash = "#overview"; let saved = false;
+    const localSettings = { ...settings, public_url: window.location.origin };
     const fetchMock = serve(base, (url, init) => {
-      if (url === "/api/settings" && init?.method === "PUT") { saved = true; return reply({ ...settings, default_language: "en" }); }
-      if (url === "/api/settings") return reply({ ...settings, public_url_confirmed: saved });
+      if (url === "/api/settings" && init?.method === "PUT") { saved = true; return reply({ ...localSettings, default_language: "en" }); }
+      if (url === "/api/settings") return reply({ ...localSettings, public_url_confirmed: saved });
       if (url === "/api/session") return reply({ ...base, default_language: saved ? "en" : "fr" });
     });
     render(<App />); const user = userEvent.setup();
@@ -318,10 +319,10 @@ describe("Instance language", () => {
     const dialog = screen.getByRole("dialog");
     await user.selectOptions(within(dialog).getByRole("combobox", { name: /Langue par défaut de l’instance/ }), "en");
     await user.click(within(dialog).getByRole("button", { name: "Suivant" }));
-    expect(within(dialog).getByRole("textbox", { name: "Nom de l’organisation" })).toHaveValue(settings.name);
+    expect(within(dialog).getByRole("textbox", { name: "Nom de l’organisation" })).toHaveValue(localSettings.name);
     await user.click(within(dialog).getByRole("button", { name: "Terminer l’installation" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(fetchMock).toHaveBeenCalledWith("/api/settings", expect.objectContaining({ method: "PUT", body: JSON.stringify({ name: settings.name, public_url: settings.public_url, default_language: "en", event_retention_days: 90 }) }));
+    expect(fetchMock).toHaveBeenCalledWith("/api/settings", expect.objectContaining({ method: "PUT", body: JSON.stringify({ name: localSettings.name, public_url: localSettings.public_url, default_language: "en", event_retention_days: 90 }) }));
     expect(screen.queryByRole("button", { name: "Configure" })).not.toBeInTheDocument();
     expect(localStorage.getItem("milvago.language")).toBeNull();
   });

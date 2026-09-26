@@ -405,6 +405,7 @@ func (f *setupWizardFixture) testSetupConcurrentCompletion(t *testing.T) {
 	defer adminIssuer()()
 	cookie, csrf := open(t)
 	codes := make([]int, 2)
+	responses := make([]string, 2)
 	var wg sync.WaitGroup
 	for i := range codes {
 		wg.Add(1)
@@ -414,10 +415,16 @@ func (f *setupWizardFixture) testSetupConcurrentCompletion(t *testing.T) {
 			if i == 1 {
 				body.Admin.Email = "second@example.test"
 			}
-			codes[i] = call("POST", "/api/setup/complete", body, cookie, csrf, origin).Code
+			response := call("POST", "/api/setup/complete", body, cookie, csrf, origin)
+			codes[i], responses[i] = response.Code, response.Body.String()
 		}()
 	}
 	wg.Wait()
+	for i, code := range codes {
+		if code == 200 && !strings.Contains(responses[i], "https://milvago.example.test/auth/login?mfa=1") {
+			t.Fatalf("setup login did not use the confirmed public origin: %s", responses[i])
+		}
+	}
 	slices.Sort(codes)
 	// The loser finds its session consumed (401) or setup closed (404).
 	if codes[0] != 200 || (codes[1] != 401 && codes[1] != 404) {

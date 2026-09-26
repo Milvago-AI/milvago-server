@@ -74,7 +74,7 @@ it('walks every step and sends the choices once', async () => {
   await userEvent.click(screen.getByLabelText('Require multi-factor authentication for every member'));
   await next();
   await userEvent.type(screen.getByLabelText('Organization name'), 'Example organization');
-  expect((screen.getByLabelText('Public agent URL') as HTMLInputElement).value).toBe('https://milvago.example.test');
+  expect((screen.getByLabelText('Public Milvago URL') as HTMLInputElement).value).toBe('https://milvago.example.test');
   await next();
   await userEvent.click(screen.getByLabelText('Configure an e-mail server now'));
   expect(screen.getByText('Test recipient (administrator e-mail): owner@example.test')).toBeTruthy();

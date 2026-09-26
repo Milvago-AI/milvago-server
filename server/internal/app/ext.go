@@ -23,9 +23,8 @@ import (
 // publicOrigin returns the agent-facing HTTP or HTTPS origin advertised to devices
 // (enrollment server_url, installer ServerURL, extension update.xml codebase).
 // Source of truth is the instance-level app_config.public_url setting, editable
-// in Administration; it falls back to the immutable APP_URL env origin when the
-// setting is empty or (defensively) not a valid bare origin. This value is
-// deliberately distinct from APP_URL, which stays bound to OIDC/CSRF/cookies.
+// in Administration; it falls back to APP_URL when the setting is empty or
+// invalid. Browser identity and agent delivery use the same confirmed origin.
 // rowQuerier is a pool or an open transaction. A handler holding its request
 // transaction reads through it: taking a second pool connection while holding the
 // first let ten concurrent requests exhaust a ten-connection pool and stall every

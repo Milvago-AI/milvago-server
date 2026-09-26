@@ -32,7 +32,7 @@ func (a *App) startDeviceAssociation(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, e)
 		return
 	}
-	reply(w, 200, map[string]any{"verification_url": a.config.AppURL + "/auth/device?token=" + token, "expires_at": expiry})
+	reply(w, 200, map[string]any{"verification_url": a.browserOrigin() + "/auth/device?token=" + token, "expires_at": expiry})
 }
 
 var associationPage = template.Must(template.New("association").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Milvago installation association</title><main><h1>Associate this installation</h1><p>Organization: {{.Organization}}</p><p>Installation: {{.Hostname}}</p><p><strong>Continue only if this is your own machine and you started the association from it yourself.</strong> If someone sent you this link, close this page.</p><p> Your verified identity will identify new activity for eight hours. This does not create console membership.</p><form method="post" action="/auth/device"><input type="hidden" name="token" value="{{.Token}}"><input type="hidden" name="confirmation" value="{{.Confirmation}}"><button type="submit">Continue with identity provider</button></form></main></html>`))
@@ -47,6 +47,10 @@ func (a *App) deviceAssociationRequest(w http.ResponseWriter, r *http.Request) e
 	if e := a.checkPublicRequest(r, "device-association", 120, 1200); e != nil {
 		return e
 	}
+	identity, e := a.currentOIDC(r.Context())
+	if e != nil {
+		return e
+	}
 	token := r.URL.Query().Get("token")
 	if r.Method == "POST" {
 		r.Body = http.MaxBytesReader(w, r.Body, 4096)
@@ -55,7 +59,7 @@ func (a *App) deviceAssociationRequest(w http.ResponseWriter, r *http.Request) e
 		}
 		token = r.PostForm.Get("token")
 		c, e := r.Cookie(a.cookieName("association"))
-		if e != nil || r.Header.Get("Origin") != a.config.AppURL || !equal(c.Value, r.PostForm.Get("confirmation")) {
+		if e != nil || r.Header.Get("Origin") != a.browserOrigin() || !equal(c.Value, r.PostForm.Get("confirmation")) {
 			return forbidden()
 		}
 		a.cookie(w, a.cookieName("association"), "", -1)
@@ -88,7 +92,7 @@ func (a *App) deviceAssociationRequest(w http.ResponseWriter, r *http.Request) e
 		// A no-referrer navigation gives browser form POSTs an opaque Origin.
 		// Send only the origin, never the one-use association token in the URL.
 		w.Header().Set("Referrer-Policy", "strict-origin")
-		identityURL, _ := url.Parse(a.oauth.Endpoint.AuthURL)
+		identityURL, _ := url.Parse(identity.oauth.Endpoint.AuthURL)
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; form-action 'self' "+identityURL.Scheme+"://"+identityURL.Host+"; base-uri 'none'; frame-ancestors 'none'")
 		confirmation := randomToken()
 		a.cookie(w, a.cookieName("association"), confirmation, 600)
@@ -103,7 +107,7 @@ func (a *App) deviceAssociationRequest(w http.ResponseWriter, r *http.Request) e
 		return e
 	}
 	a.cookie(w, a.cookieName("login"), binding, 600)
-	http.Redirect(w, r, a.oauth.AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("prompt", "select_account")), 302)
+	http.Redirect(w, r, identity.oauth.AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("prompt", "select_account")), 302)
 	return nil
 }
 

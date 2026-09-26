@@ -107,7 +107,7 @@ func (a *App) setupStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) setupOrigin(r *http.Request) error {
-	if r.Header.Get("Origin") != a.config.AppURL {
+	if r.Header.Get("Origin") != a.browserOrigin() {
 		return forbidden()
 	}
 	return nil
@@ -142,7 +142,7 @@ func (a *App) setupSession(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, e)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: cookieName("setup"), Value: id, Path: "/api/setup", HttpOnly: true, Secure: a.config.SecureCookies, SameSite: http.SameSiteStrictMode, MaxAge: int(setupSessionTTL.Seconds())})
+	http.SetCookie(w, &http.Cookie{Name: cookieName("setup"), Value: id, Path: "/api/setup", HttpOnly: true, Secure: a.browserSecure(), SameSite: http.SameSiteStrictMode, MaxAge: int(setupSessionTTL.Seconds())})
 	reply(w, 200, map[string]string{"csrf": csrf})
 }
 
@@ -490,7 +490,7 @@ func (a *App) setupComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.forgetLicense()
-	http.SetCookie(w, &http.Cookie{Name: cookieName("setup"), Value: "", Path: "/api/setup", HttpOnly: true, Secure: a.config.SecureCookies, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: cookieName("setup"), Value: "", Path: "/api/setup", HttpOnly: true, Secure: a.browserSecure(), SameSite: http.SameSiteStrictMode, MaxAge: -1})
 	// With a second factor chosen, the first sign-in asks for the OTP level at once:
 	// password and TOTP enrolment in one pass, instead of a password-only session
 	// that the MFA requirement would immediately send back to authenticate again.
@@ -498,7 +498,7 @@ func (a *App) setupComplete(w http.ResponseWriter, r *http.Request) {
 	if body.AdminTOTP || body.RequireMFA {
 		login += "?mfa=1"
 	}
-	reply(w, 200, map[string]string{"login": login})
+	reply(w, 200, map[string]string{"login": body.Organization.PublicURL + login})
 }
 
 func prepareSetupIdentity(ctx context.Context, admin *identityAdmin, body setupRequest) error {
@@ -671,6 +671,9 @@ func (a *App) completeSetup(ctx context.Context, body setupRequest) (err error) 
 			err = a.cleanupSetupIdentity(ctx, subject, body.Admin.Email, err)
 		}
 	}()
+	if e = a.syncPublicIdentity(ctx, body.Organization.PublicURL); e != nil {
+		return e
+	}
 	if e = applySetupSettings(ctx, tx, org, body); e != nil {
 		return e
 	}

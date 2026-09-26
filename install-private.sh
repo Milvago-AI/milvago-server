@@ -208,8 +208,13 @@ detect_host_ip() {
 }
 
 host_ip=$(detect_host_ip)
+public_origin=${MILVAGO_PUBLIC_URL:-http://$host_ip:4020}
+valid_public_origin() {
+  [[ "$1" =~ ^https?://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?$ ]]
+}
+valid_public_origin "$public_origin" || fail "MILVAGO_PUBLIC_URL must be a bare HTTP or HTTPS origin."
 
-base_tools=(uname dirname mktemp id mkdir mv rm cat env chown chmod ln)
+base_tools=(uname dirname mktemp id mkdir mv rm cat env chown chmod ln sleep)
 missing_tools=()
 for tool in "${base_tools[@]}"; do
   command -v "$tool" >/dev/null 2>&1 || missing_tools+=("$tool")
@@ -566,22 +571,42 @@ if (matches.length === 1 && matches[0][1]) {
 fs.chmodSync(path, 0o600);
 ' || fail 'Cannot ensure MILVAGO_SETUP_TOKEN in .env.'
 
+cd "$root"
+database_id=$(run_docker compose -f compose.yaml ps -a -q database || true)
+stored_origin=""
+if [[ -n "$database_id" ]]; then
+  run_docker start "$database_id" >/dev/null
+  for attempt in {1..30}; do
+    if run_docker exec "$database_id" pg_isready -U postgres >/dev/null 2>&1; then break; fi
+    sleep 1
+  done
+  stored_origin=$(run_docker exec "$database_id" \
+    psql -U postgres -d milvago -At -c \
+    "SELECT public_url FROM app_config WHERE singleton AND public_url_confirmed" 2>/dev/null || true)
+fi
+if [[ -n "$stored_origin" ]]; then
+  valid_public_origin "$stored_origin" || fail "The stored public URL is invalid."
+  public_origin=$stored_origin
+fi
 caddyfile="$root/.local/generated/Caddyfile.private"
 cat > "$caddyfile" <<EOF
 {
   admin off
   auto_https off
+  servers {
+    trusted_proxies static private_ranges
+    trusted_proxies_strict
+  }
 }
 :8080 {
-  @identity path /realms /realms/* /resources /resources/* /js /js/* /admin /admin/*
+  @private_identity path /admin /admin/* /realms/master /realms/master/*
+  handle @private_identity {
+    respond 404
+  }
+  @identity path /realms /realms/* /resources /resources/* /js /js/*
   handle @identity {
     reverse_proxy identity:8080 {
       header_up -Forwarded
-      header_up Host $host_ip:4020
-      header_up X-Forwarded-For {remote_host}
-      header_up X-Forwarded-Host $host_ip:4020
-      header_up X-Forwarded-Proto http
-      header_up X-Forwarded-Port 4020
       header_up -X-Forwarded-Prefix
     }
   }
@@ -599,7 +624,7 @@ services:
       - ./deploy/postgres-init.sh:/docker-entrypoint-initdb.d/10-milvago.sh:ro,z
   identity:
     environment:
-      KC_HOSTNAME: http://$host_ip:4020
+      KC_HOSTNAME: $public_origin
       KC_PROXY_HEADERS: xforwarded
     ports: !override []
     volumes:
@@ -609,8 +634,9 @@ services:
     build: !reset null
     image: $IMAGE
     environment:
-      APP_URL: http://$host_ip:4020
-      OIDC_ISSUER: http://$host_ip:4020/realms/milvago
+      APP_URL: $public_origin
+      PUBLIC_URL: $public_origin
+      OIDC_ISSUER: $public_origin/realms/milvago
       MILVAGO_INSTALLER_DIRECTORY: /installers
       MILVAGO_UPDATE_PUBLIC_KEY: $UPDATE_PUBLIC_KEY
     ports: !override []
@@ -655,9 +681,9 @@ run_docker "${compose[@]}" pull application gateway
 run_docker "${compose[@]}" up -d database identity
 identity_id=$(run_docker "${compose[@]}" ps -q identity)
 [[ -n "$identity_id" ]] || fail 'The identity container did not start.'
-printf 'Configuring Keycloak redirects and password recovery for http://%s:4020...\n' "$host_ip"
+printf 'Configuring Keycloak redirects and password recovery for %s...\n' "$public_origin"
 run_docker run --rm --network "container:$identity_id" --user "$(id -u):$(id -g)" \
-  -v "$root/.env:/run/milvago.env:ro,z" -e "MILVAGO_APP_URL=http://$host_ip:4020" \
+  -v "$root/.env:/run/milvago.env:ro,z" -e "MILVAGO_APP_URL=$public_origin" \
   "$NODE_IMAGE" node -e '
 (async () => {
   const fs = require("node:fs");
@@ -714,6 +740,13 @@ run_docker run --rm --network "container:$identity_id" --user "$(id -u):$(id -g)
   const realmResponse = await fetch(base + "/admin/realms/milvago", { headers });
   if (!realmResponse.ok) throw new Error("Keycloak realm lookup returned HTTP " + realmResponse.status);
   const realm = await realmResponse.json();
+  realm.attributes = { ...realm.attributes, frontendUrl: appURL };
+  const realmUpdate = await fetch(base + "/admin/realms/milvago", {
+    method: "PUT",
+    headers: { ...headers, "Content-Type": "application/json" },
+    body: JSON.stringify(realm),
+  });
+  if (!realmUpdate.ok) throw new Error("Keycloak realm URL update returned HTTP " + realmUpdate.status);
   const resetPath = base + "/admin/realms/milvago/authentication/flows/" +
     encodeURIComponent(realm.resetCredentialsFlow || "reset credentials") + "/executions";
   const readReset = async () => {
@@ -766,6 +799,6 @@ if ! run_docker run --rm --network host -e "MILVAGO_APP_URL=http://$host_ip:4020
   run_docker "${compose[@]}" logs --tail 40 gateway >&2 || true
   fail 'The Community gateway did not become ready. Check the application container logs.'
 fi
-printf '\nOpen http://%s:4020 for initial setup.\n' "$host_ip"
+printf '\nOpen %s for initial setup.\n' "$public_origin"
 printf 'Find the setup token and generated secrets in %s/.env (owner-only).\n' "$root"
 printf 'If the page is unreachable, allow TCP port 4020 through the host firewall.\n'

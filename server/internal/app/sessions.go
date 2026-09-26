@@ -79,8 +79,12 @@ func (a *App) refreshSession(ctx context.Context, tx pgx.Tx, s *Session, encrypt
 	}
 	token := stored.Token
 	token.Expiry = time.Now().Add(-time.Minute)
-	oidcCtx := oidc.ClientContext(ctx, a.oidcClient)
-	fresh, e := a.oauth.TokenSource(oidcCtx, &token).Token()
+	identity := a.publicOIDC.Load()
+	if identity == nil {
+		return apiError{503, "identity_unavailable", "Identity configuration is unavailable."}
+	}
+	oidcCtx := oidc.ClientContext(ctx, identity.client)
+	fresh, e := identity.oauth.TokenSource(oidcCtx, &token).Token()
 	if e != nil {
 		var response *oauth2.RetrieveError
 		if errors.As(e, &response) && response.ErrorCode == "invalid_grant" {
@@ -92,15 +96,15 @@ func (a *App) refreshSession(ctx context.Context, tx pgx.Tx, s *Session, encrypt
 	if !ok {
 		return a.invalidateSession(ctx, tx, s)
 	}
-	identity, e := a.verifier.Verify(oidcCtx, raw)
-	if e != nil || identity.Subject != s.Subject || (identity.Nonce != "" && !equal(identity.Nonce, nonce)) {
+	verified, e := identity.verifier.Verify(oidcCtx, raw)
+	if e != nil || verified.Subject != s.Subject || (verified.Nonce != "" && !equal(verified.Nonce, nonce)) {
 		return a.invalidateSession(ctx, tx, s)
 	}
 	var claims refreshedSessionClaims
-	if identity.Claims(&claims) != nil || !claims.Verified || claims.Email == "" {
+	if verified.Claims(&claims) != nil || !claims.Verified || claims.Email == "" {
 		return a.invalidateSession(ctx, tx, s)
 	}
-	return a.storeRefreshedSession(ctx, tx, s, fresh, raw, identity, claims)
+	return a.storeRefreshedSession(ctx, tx, s, fresh, raw, verified, claims)
 }
 
 func (a *App) storeRefreshedSession(ctx context.Context, tx pgx.Tx, s *Session, fresh *oauth2.Token, raw string, identity *oidc.IDToken, claims refreshedSessionClaims) error {
@@ -151,7 +155,7 @@ func (a *App) loadSession(r *http.Request, opaque string) (*Session, error) {
 	if e != nil {
 		return nil, apiError{401, "unauthenticated", "Sign in to continue."}
 	}
-	if r.Method != "GET" && (r.Header.Get("Origin") != a.config.AppURL || !equal(r.Header.Get("X-CSRF-Token"), s.CSRF)) {
+	if r.Method != "GET" && (r.Header.Get("Origin") != a.browserOrigin() || !equal(r.Header.Get("X-CSRF-Token"), s.CSRF)) {
 		return nil, apiError{403, "csrf_failed", "The request origin or CSRF token is invalid."}
 	}
 	if identityExpiry.Before(time.Now().Add(30*time.Second)) && r.URL.Path != "/auth/logout" {

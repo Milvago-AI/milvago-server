@@ -15,7 +15,7 @@ const keycloakUsersPath = "/users/"
 
 // identityAdmin is a short-lived client for the Keycloak admin REST API,
 // authenticated with the management service account. Requests go through
-// a.oidcClient so the public issuer host is rewritten to the internal address.
+// the internal identity address when one is configured.
 type identityAdmin struct {
 	// reset drops the cached service-account token when the provider refuses it
 	// (restart, key rotation), so the next call asks for a fresh one.
@@ -93,26 +93,34 @@ func (a *App) identityAdmin(ctx context.Context) (*identityAdmin, error) {
 	if len(parts) != 2 || parts[0] != "realms" {
 		return nil, apiError{503, "identity_admin_unavailable", "Keycloak realm URL is required for identity administration."}
 	}
-	base := issuer.Scheme + "://" + issuer.Host + "/admin/realms/" + url.PathEscape(parts[1])
+	baseOrigin := issuer.Scheme + "://" + issuer.Host
+	client := a.oidcClient
+	tokenURL := a.oauth.Endpoint.TokenURL
+	if a.config.InternalOIDC != "" {
+		baseOrigin = a.config.InternalOIDC
+		client = &http.Client{Timeout: 15 * time.Second}
+		tokenURL = baseOrigin + issuer.Path + "/protocol/openid-connect/token"
+	}
+	base := baseOrigin + "/admin/realms/" + url.PathEscape(parts[1])
 	// The service-account token is reused until shortly before it expires: one grant
 	// per call let any member drive three identity-provider requests per profile read
 	// (audit of 2026-09-24). Keyed on what it was granted for, so a changed
 	// configuration never reuses another account's token.
-	cacheKey := a.config.AdminClientID + "\x00" + a.config.AdminClientSecret + "\x00" + a.oauth.Endpoint.TokenURL
+	cacheKey := a.config.AdminClientID + "\x00" + a.config.AdminClientSecret + "\x00" + tokenURL
 	a.adminToken.Lock()
 	if a.adminToken.key == cacheKey && time.Now().Before(a.adminToken.until) {
 		cached := a.adminToken.value
 		a.adminToken.Unlock()
-		return &identityAdmin{reset: a.forgetAdminToken, client: a.oidcClient, token: cached, base: base}, nil
+		return &identityAdmin{reset: a.forgetAdminToken, client: client, token: cached, base: base}, nil
 	}
 	a.adminToken.Unlock()
 	form := url.Values{"grant_type": {"client_credentials"}, "client_id": {a.config.AdminClientID}, "client_secret": {a.config.AdminClientSecret}}
-	request, e := http.NewRequestWithContext(ctx, "POST", a.oauth.Endpoint.TokenURL, strings.NewReader(form.Encode()))
+	request, e := http.NewRequestWithContext(ctx, "POST", tokenURL, strings.NewReader(form.Encode()))
 	if e != nil {
 		return nil, e
 	}
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	response, e := a.oidcClient.Do(request)
+	response, e := client.Do(request)
 	if e != nil {
 		return nil, apiError{502, "identity_unavailable", "Could not contact identity administration."}
 	}
@@ -131,7 +139,7 @@ func (a *App) identityAdmin(ctx context.Context) (*identityAdmin, error) {
 		a.adminToken.key, a.adminToken.value, a.adminToken.until = cacheKey, token.AccessToken, time.Now().Add(life)
 		a.adminToken.Unlock()
 	}
-	return &identityAdmin{reset: a.forgetAdminToken, client: a.oidcClient, token: token.AccessToken, base: base}, nil
+	return &identityAdmin{reset: a.forgetAdminToken, client: client, token: token.AccessToken, base: base}, nil
 }
 
 func (a *App) forgetAdminToken() {

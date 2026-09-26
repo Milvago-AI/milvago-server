@@ -82,15 +82,17 @@ type testIdentity struct {
 	// names, so a test can prove what a per-client sweep changed.
 	clients map[string]*fakeClient
 	// The realm's smtpServer as last written through the admin API.
-	smtp map[string]string
+	smtp            map[string]string
+	realmAttributes map[string]string
 }
 
 type fakeClient struct {
-	ClientID          string
-	Default, Optional []string
-	Consent           bool
-	Mappers           []map[string]any
-	Attributes        map[string]string
+	ClientID                 string
+	Default, Optional        []string
+	Consent                  bool
+	Mappers                  []map[string]any
+	Attributes               map[string]string
+	RedirectURIs, WebOrigins []string
 }
 
 // fakeUser is a minimal Keycloak UserRepresentation held by the fake identity
@@ -135,7 +137,8 @@ func identityProvider(t *testing.T) *testIdentity {
 	}
 	p := &testIdentity{key: key, email: "admin@example.test", subject: "test-owner", audience: "test-console", expiry: time.Now().Add(time.Hour), verified: true,
 		users:      map[string]*fakeUser{"invited-subject": {ID: "invited-subject", Username: "invitee", Email: "invitee@example.test"}},
-		components: map[string]map[string]any{}}
+		components: map[string]map[string]any{},
+		clients:    map[string]*fakeClient{"console": {ClientID: "test-console", Attributes: map[string]string{}}}}
 	p.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { p.serveHTTP(t, w, r) }))
 	t.Cleanup(p.server.Close)
 	return p
@@ -155,7 +158,10 @@ func (p *testIdentity) serveHTTP(t *testing.T, w http.ResponseWriter, r *http.Re
 		// The realm representation itself, without a trailing slash, which is where
 		// Keycloak publishes the realm's internal identifier. A component needs it
 		// as its parent, so this is not decoration.
-		reply(w, 200, map[string]string{"id": "realm-test", "realm": "test"})
+		p.mu.Lock()
+		realm := map[string]any{"id": "realm-test", "realm": "test", "attributes": p.realmAttributes, "smtpServer": p.smtp}
+		p.mu.Unlock()
+		reply(w, 200, realm)
 	case strings.HasPrefix(r.URL.Path, "/admin/realms/test/"):
 		p.admin(w, r)
 	default:
@@ -190,13 +196,19 @@ func (p *testIdentity) serveRealmUpdate(w http.ResponseWriter, r *http.Request) 
 	// A partial realm update; the setup wizard only ever sends smtpServer.
 	var realm struct {
 		SMTPServer map[string]string `json:"smtpServer"`
+		Attributes map[string]string `json:"attributes"`
 	}
 	if json.NewDecoder(r.Body).Decode(&realm) != nil {
 		w.WriteHeader(400)
 		return
 	}
 	p.mu.Lock()
-	p.smtp = realm.SMTPServer
+	if realm.SMTPServer != nil {
+		p.smtp = realm.SMTPServer
+	}
+	if realm.Attributes != nil {
+		p.realmAttributes = realm.Attributes
+	}
 	p.mu.Unlock()
 	w.WriteHeader(204)
 }

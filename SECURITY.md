@@ -25,8 +25,8 @@ repository's reports.
 
 Findings that we treat as expected behavior rather than vulnerabilities:
 
-- a cleartext `APP_URL` outside loopback refusing sign-in (this is the HTTPS requirement
-  doing its job)
+- an HTTP public URL on a private test network when the operator has explicitly selected it;
+  production operators should terminate HTTPS at a trusted reverse proxy
 - the absence of Enterprise capabilities in this edition
 - results obtained by first granting yourself administrative rights on the instance
 

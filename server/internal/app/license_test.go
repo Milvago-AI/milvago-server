@@ -265,6 +265,7 @@ func newLicenseIntegrationFixture(t *testing.T) *licenseIntegrationFixture {
 		var session struct{ CSRF string }
 		_ = json.Unmarshal(w.Body.Bytes(), &session)
 		body := validSetupRequest()
+		body.Organization.PublicURL = origin
 		body.License = license
 		a.config.Issuer = p.server.URL + "/realms/test"
 		defer func() { a.config.Issuer = p.server.URL }()

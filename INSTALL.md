@@ -31,14 +31,20 @@ local configuration and database.
 The base image contains the server and console only. The private installer also downloads the pinned Community 0.5.51 Windows and Linux agent bundle from the private agent repository, checks its SHA-256 and signed update manifests, and mounts the verified files read-only so the console can provide the agent downloads. The base image does not host a browser extension. The script detects a private IPv4 address (or accepts
 `MILVAGO_HOST_IP`), binds Caddy to port 4020 on that address, and prints
 the console URL and the path to the owner-readable `.env` file at the end.
-Caddy forwards `/realms`, `/admin`, `/resources` and `/js` to Keycloak; the
-application and Keycloak have no direct host port in this installation. Only
+Caddy forwards the public realm, resources and JavaScript assets to Keycloak.
+It returns 404 for `/admin` and `/realms/master`; the Keycloak administrator API
+is reachable only from the internal container network. The application and Keycloak
+have no direct host port in this installation. Only
 TCP port 4020 is needed through the host firewall. No secret value is printed.
 Database and Mailpit ports remain on loopback. The installer waits for
 `/readyz` through the published Caddy port before reporting success; if the
 gateway fails, it prints its recent logs.
 HTTP on a LAN is intended for trusted test networks; use an HTTPS reverse
-proxy or gateway for broader access.
+proxy or gateway for broader access. Before the first run behind HTTPS, set
+`MILVAGO_PUBLIC_URL=https://console.example.test` for the installer. The front
+proxy must preserve the Host header and send `X-Forwarded-Proto: https`. A later
+change in Administration > Settings updates the console redirect and Keycloak
+through its private API; already enrolled agents retain their prior URL.
 
 ## Build from source
 

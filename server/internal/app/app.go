@@ -45,6 +45,8 @@ type App struct {
 	mcpVerifier   *oidc.IDTokenVerifier
 	oidcClient    *http.Client
 	logoutURL     string
+	publicOIDC    atomic.Pointer[identityRuntime]
+	publicOIDCMu  sync.Mutex
 	metrics       *appMetrics
 	metricsOnce   sync.Once
 	exportMetrics exportMetricSnapshot
@@ -384,7 +386,7 @@ func (a *App) Handler() http.Handler {
 		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
-		if a.config.SecureCookies {
+		if a.browserSecure() {
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000")
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/auth/") || strings.HasPrefix(r.URL.Path, "/v1/") || strings.HasPrefix(r.URL.Path, "/v2/") || strings.HasPrefix(r.URL.Path, "/v3/") || r.URL.Path == mcpPath || isProbePath(r.URL.Path) || isMetricsPath(r.URL.Path) {
@@ -589,6 +591,9 @@ func (a *App) routeCredential(w http.ResponseWriter, r *http.Request, mode crede
 	if mode == accessKey {
 		w.Header().Set("WWW-Authenticate", a.bearerChallenge(r))
 		return nil, nil, apiKeyUnauthorized()
+	}
+	if _, err := a.currentOIDC(r.Context()); err != nil {
+		return nil, nil, err
 	}
 	c, e := r.Cookie(a.cookieName("session"))
 	if e != nil {

@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
@@ -39,39 +38,16 @@ func (t oidcTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(q)
 }
 func (a *App) initOIDC(ctx context.Context) error {
-	client := &http.Client{Timeout: 15 * time.Second}
-	if a.config.InternalOIDC != "" {
-		public, _ := url.Parse(a.config.Issuer)
-		internal, e := url.Parse(a.config.InternalOIDC)
-		if e != nil || internal.Host == "" || (internal.Scheme != "http" && internal.Scheme != "https") || internal.User != nil || internal.Path != "" {
-			return errors.New("invalid OIDC_INTERNAL_URL")
-		}
-		client.Transport = oidcTransport{public, internal, http.DefaultTransport}
+	state, err := a.currentOIDC(ctx)
+	if err != nil {
+		return err
 	}
-	a.oidcClient = client
-	ctx = oidc.ClientContext(ctx, client)
-	provider, e := oidc.NewProvider(ctx, a.config.Issuer)
-	if e != nil {
-		return fmt.Errorf("OIDC discovery: %w", e)
-	}
-	a.oauth = oauth2.Config{ClientID: a.config.ClientID, ClientSecret: a.config.ClientSecret, Endpoint: provider.Endpoint(), RedirectURL: a.config.AppURL + "/auth/callback", Scopes: []string{oidc.ScopeOpenID, "profile", "email"}}
-	var discovery struct {
-		Logout string `json:"end_session_endpoint"`
-	}
-	if e = provider.Claims(&discovery); e != nil {
-		return e
-	}
-	a.logoutURL = discovery.Logout
-	a.verifier = provider.VerifierContext(oidc.ClientContext(context.Background(), client), &oidc.Config{ClientID: a.config.ClientID, SupportedSigningAlgs: []string{oidc.RS256}})
-	// The second verifier, for the MCP endpoint: another audience -- the endpoint as
-	// an OAuth resource -- on the same keys and the same rotation. Built here, once,
-	// because a verifier built per request fetches JWKS per request. A no-op in
-	// Community, where the endpoint does not exist.
-	a.initMCPVerifier(provider)
+	a.oidcClient, a.oauth, a.verifier, a.logoutURL = state.client, state.oauth, state.verifier, state.logoutURL
+	a.initMCPVerifier(state.provider)
 	return nil
 }
 func (a *App) cookie(w http.ResponseWriter, name, value string, maxAge int) {
-	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/", HttpOnly: true, Secure: a.config.SecureCookies, SameSite: http.SameSiteLaxMode, MaxAge: maxAge})
+	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/", HttpOnly: true, Secure: a.browserSecure(), SameSite: http.SameSiteLaxMode, MaxAge: maxAge})
 }
 func cookieName(kind string) string { return "milvago_" + Edition + "_" + kind }
 
@@ -80,7 +56,7 @@ func cookieName(kind string) string { return "milvago_" + Edition + "_" + kind }
 // otherwise let such a host plant its own login binding or session (login CSRF into
 // an attacker's account). Plain HTTP cannot use the prefix.
 func (a *App) cookieName(kind string) string {
-	if a.config.SecureCookies {
+	if a.browserSecure() {
 		return "__Host-" + cookieName(kind)
 	}
 	return cookieName(kind)
@@ -111,7 +87,11 @@ func (a *App) loginProfileAction(w http.ResponseWriter, r *http.Request) (string
 	}
 	if action == "manage_mfa" {
 		// Keycloak owns credential management; only the configured issuer receives this redirect.
-		accountURL := strings.TrimRight(a.config.Issuer, "/") + "/account/account-security/signing-in"
+		accountIssuer := a.publicOIDC.Load().issuer
+		if !strings.Contains(accountIssuer, "/realms/") {
+			accountIssuer = a.config.Issuer
+		}
+		accountURL := strings.TrimRight(accountIssuer, "/") + "/account/account-security/signing-in"
 		if language := r.URL.Query().Get("lang"); slices.Contains(consoleLanguages, language) {
 			accountURL += "?" + url.Values{"kc_locale": {language}}.Encode()
 		}
@@ -123,6 +103,10 @@ func (a *App) loginProfileAction(w http.ResponseWriter, r *http.Request) (string
 
 func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	if err := a.checkPublicRequest(r, "login", 120, 1200); err != nil {
+		a.fail(w, err)
+		return
+	}
+	if _, err := a.currentOIDC(r.Context()); err != nil {
 		a.fail(w, err)
 		return
 	}
@@ -143,6 +127,10 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) startOIDCLogin(w http.ResponseWriter, r *http.Request, language, kcAction string, stepUp, fresh bool) error {
+	identity, err := a.currentOIDC(r.Context())
+	if err != nil {
+		return err
+	}
 	state, binding, nonce, verifier := randomToken(), randomToken(), randomToken(), oauth2.GenerateVerifier()
 	_, e := a.db.Exec(r.Context(), `INSERT INTO login_attempts(state_hash,binding_hash,verifier,nonce,expires_at,step_up) VALUES($1,$2,$3,$4,now()+interval '10 minutes',$5)`, hash(state), hash(binding), verifier, nonce, stepUp)
 	if e != nil {
@@ -161,7 +149,7 @@ func (a *App) startOIDCLogin(w http.ResponseWriter, r *http.Request, language, k
 	if kcAction != "" {
 		opts = append(opts, oauth2.SetAuthURLParam("kc_action", kcAction))
 	}
-	http.Redirect(w, r, a.oauth.AuthCodeURL(state, opts...), http.StatusFound)
+	http.Redirect(w, r, identity.oauth.AuthCodeURL(state, opts...), http.StatusFound)
 	return nil
 }
 
@@ -196,9 +184,9 @@ func (a *App) consumeLoginAttempt(w http.ResponseWriter, r *http.Request) (login
 	return attempt, nil
 }
 
-func (a *App) verifyLoginToken(ctx context.Context, code string, attempt loginAttempt) (*oauth2.Token, *oidc.IDToken, string, loginClaims, error) {
+func (a *App) verifyLoginToken(ctx context.Context, identity *identityRuntime, code string, attempt loginAttempt) (*oauth2.Token, *oidc.IDToken, string, loginClaims, error) {
 	var claims loginClaims
-	token, e := a.oauth.Exchange(ctx, code, oauth2.VerifierOption(attempt.verifier))
+	token, e := identity.oauth.Exchange(ctx, code, oauth2.VerifierOption(attempt.verifier))
 	if e != nil {
 		return nil, nil, "", claims, apiError{401, "identity_failed", "Identity provider rejected the authorization code."}
 	}
@@ -206,7 +194,7 @@ func (a *App) verifyLoginToken(ctx context.Context, code string, attempt loginAt
 	if !ok {
 		return nil, nil, "", claims, apiError{401, "identity_failed", "Identity token is missing."}
 	}
-	id, e := a.verifier.Verify(ctx, raw)
+	id, e := identity.verifier.Verify(ctx, raw)
 	if e != nil || !equal(id.Nonce, attempt.nonce) {
 		return nil, nil, "", claims, apiError{401, "identity_failed", "Identity token validation failed."}
 	}
@@ -438,13 +426,22 @@ func (a *App) completeLogin(w http.ResponseWriter, r *http.Request, ctx context.
 }
 
 func (a *App) callback(w http.ResponseWriter, r *http.Request) {
+	if _, err := a.currentOIDC(r.Context()); err != nil {
+		a.fail(w, err)
+		return
+	}
 	attempt, e := a.consumeLoginAttempt(w, r)
 	if e != nil {
 		a.fail(w, e)
 		return
 	}
-	ctx := oidc.ClientContext(r.Context(), a.oidcClient)
-	token, id, raw, claims, e := a.verifyLoginToken(ctx, r.URL.Query().Get("code"), attempt)
+	identity, e := a.currentOIDC(r.Context())
+	if e != nil {
+		a.fail(w, e)
+		return
+	}
+	ctx := oidc.ClientContext(r.Context(), identity.client)
+	token, id, raw, claims, e := a.verifyLoginToken(ctx, identity, r.URL.Query().Get("code"), attempt)
 	if e != nil {
 		a.fail(w, e)
 		return
@@ -483,14 +480,18 @@ func (a *App) logout(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Sessi
 		return e
 	}
 	a.cookie(w, a.cookieName("session"), "", -1)
-	target := a.config.AppURL + "/"
-	if a.logoutURL != "" {
-		u, e := url.Parse(a.logoutURL)
+	identity, err := a.currentOIDC(r.Context())
+	if err != nil {
+		return err
+	}
+	target := identity.origin + "/"
+	if identity.logoutURL != "" {
+		u, e := url.Parse(identity.logoutURL)
 		if e != nil {
 			return e
 		}
 		q := u.Query()
-		q.Set("post_logout_redirect_uri", a.config.AppURL+"/")
+		q.Set("post_logout_redirect_uri", identity.origin+"/")
 		if idToken != "" {
 			q.Set("id_token_hint", idToken)
 		} else {

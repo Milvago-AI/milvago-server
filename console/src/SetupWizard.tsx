@@ -21,10 +21,14 @@ export function SetupWizard({ initial, close }: Readonly<{ initial: Settings; cl
     event.preventDefault();
     if (step === 1) { setStep(2); return; }
     try {
-      await mutation.run("/api/settings", "PUT", {
+      const updated = await mutation.run<Settings>("/api/settings", "PUT", {
         name, public_url: url, default_language: language,
         event_retention_days: initial.event_retention_days,
       });
+      if (updated?.public_url && updated.public_url !== globalThis.location.origin) {
+        globalThis.location.assign(updated.public_url + "/auth/login");
+        return;
+      }
       await refreshSession();
       window.dispatchEvent(new CustomEvent("milvago:settings"));
       close();

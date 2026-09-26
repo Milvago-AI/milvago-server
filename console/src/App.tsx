@@ -2562,6 +2562,10 @@ function SettingsEditor({ initial }: Readonly<{ initial: Settings }>) {
         setBaseline(JSON.stringify(settings));
       }
       setSaved(true);
+      if (updated?.public_url && updated.public_url !== globalThis.location.origin) {
+        globalThis.location.assign(updated.public_url + "/auth/login");
+        return;
+      }
       window.dispatchEvent(new CustomEvent("milvago:settings"));
       await refreshSession();
     } catch {

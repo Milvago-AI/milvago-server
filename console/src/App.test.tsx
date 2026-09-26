@@ -302,7 +302,7 @@ describe('Console workflows', () => {
     render(<App />); const user = userEvent.setup();
     await user.click(await screen.findByRole('button', { name: /Télécharger l’agent/ }));
     const dialog = await screen.findByRole('dialog');
-    expect(await within(dialog).findByRole('alert')).toHaveTextContent('URL publique de l’agent non confirmée');
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('URL publique de Milvago non confirmée');
     expect(within(dialog).queryByRole('button', { name: 'Windows MSI' })).not.toBeInTheDocument();
     expect(within(dialog).getByRole('link', { name: 'Configurer' })).toHaveAttribute('href', '#settings');
   });

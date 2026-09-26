@@ -323,11 +323,16 @@ func applyDefaultLanguage(state *instanceSettings, language *string) error {
 	return nil
 }
 
-func updatePublicURL(r *http.Request, tx pgx.Tx, state *instanceSettings, raw string) error {
+func (a *App) updatePublicURL(r *http.Request, tx pgx.Tx, state *instanceSettings, raw string) error {
 	desired := strings.TrimRight(strings.TrimSpace(raw), "/")
 	if state.Editable {
 		if !validOrigin(desired) {
 			return bad("Public URL must be an HTTP or HTTPS origin.")
+		}
+		if desired != state.URL {
+			if e := a.syncPublicIdentity(r.Context(), desired); e != nil {
+				return e
+			}
 		}
 		if _, e := tx.Exec(r.Context(), "UPDATE app_config SET public_url=$1,public_url_confirmed=true,default_language=$2", desired, state.Language); e != nil {
 			return e
@@ -354,7 +359,7 @@ func (a *App) updateInstanceSettings(r *http.Request, tx pgx.Tx, s *Session, bod
 	if e := applyDefaultLanguage(&state, body.DefaultLanguage); e != nil {
 		return state, e
 	}
-	if e := updatePublicURL(r, tx, &state, body.PublicURL); e != nil {
+	if e := a.updatePublicURL(r, tx, &state, body.PublicURL); e != nil {
 		return state, e
 	}
 	return state, nil

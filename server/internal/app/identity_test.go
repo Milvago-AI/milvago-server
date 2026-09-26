@@ -86,6 +86,8 @@ func (p *testIdentity) adminClientScopes(w http.ResponseWriter, r *http.Request,
 		w.WriteHeader(204)
 	case path == "/clients" && r.Method == "GET":
 		p.listClients(w, r)
+	case strings.HasPrefix(path, "/clients/") && r.Method == "PUT" && !strings.Contains(path, "-client-scopes/"):
+		p.updateConsoleClient(w, r, strings.TrimPrefix(path, "/clients/"))
 	case strings.HasPrefix(path, "/clients/") && strings.Contains(path, "-client-scopes/") && (r.Method == "PUT" || r.Method == "DELETE"):
 		p.moveClientScope(w, r, strings.TrimPrefix(path, "/clients/"))
 	default:
@@ -113,6 +115,25 @@ func (p *testIdentity) adminComponents(w http.ResponseWriter, r *http.Request, p
 // The following helpers assume p.mu is already held by admin() above.
 
 // listClients pages the fake clients by id, the way Keycloak pages by first/max.
+func (p *testIdentity) updateConsoleClient(w http.ResponseWriter, r *http.Request, id string) {
+	client := p.clients[id]
+	if client == nil {
+		http.NotFound(w, r)
+		return
+	}
+	var incoming struct {
+		RedirectURIs []string          `json:"redirectUris"`
+		WebOrigins   []string          `json:"webOrigins"`
+		Attributes   map[string]string `json:"attributes"`
+	}
+	if json.NewDecoder(r.Body).Decode(&incoming) != nil {
+		w.WriteHeader(400)
+		return
+	}
+	client.RedirectURIs, client.WebOrigins, client.Attributes = incoming.RedirectURIs, incoming.WebOrigins, incoming.Attributes
+	w.WriteHeader(204)
+}
+
 func (p *testIdentity) listClients(w http.ResponseWriter, r *http.Request) {
 	ids := make([]string, 0, len(p.clients))
 	for id := range p.clients {
@@ -124,7 +145,7 @@ func (p *testIdentity) listClients(w http.ResponseWriter, r *http.Request) {
 		out := []map[string]any{}
 		for _, id := range ids {
 			if c := p.clients[id]; c.ClientID == wanted {
-				out = append(out, map[string]any{"id": id, "clientId": c.ClientID, "consentRequired": c.Consent, "enabled": true, "standardFlowEnabled": true, "protocolMappers": c.Mappers, "attributes": c.Attributes})
+				out = append(out, map[string]any{"id": id, "clientId": c.ClientID, "consentRequired": c.Consent, "enabled": true, "standardFlowEnabled": true, "protocolMappers": c.Mappers, "attributes": c.Attributes, "redirectUris": c.RedirectURIs, "webOrigins": c.WebOrigins})
 			}
 		}
 		reply(w, 200, out)
