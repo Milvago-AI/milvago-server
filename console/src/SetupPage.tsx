@@ -8,8 +8,9 @@ import { Button, copyToClipboard, ErrorNotice, Field, Icon, Notice, languages, u
 import type { Language } from "./ui";
 
 // First-run setup wizard, shown instead of the entry page while the instance has no
-// administrator. Everything stays in memory -- the password included, never in any
-// browser storage -- until the last step sends it once to POST /api/setup/complete.
+// administrator. The password stays in memory until completion; a pasted license
+// is verified at step two and submitted again at completion. Neither is stored in
+// the browser.
 export type SetupStatus = { pending: boolean; ready: boolean; edition: Session["edition"]; privacy_defaults?: PrivacyConfig; instance_id?: string };
 type SMTP = { host: string; port: number; from: string; from_name: string; security: "none" | "starttls" | "tls"; username: string; password: string };
 type LicenseChoice = "have" | "request" | "none";
@@ -86,6 +87,13 @@ export function SetupPage({ status, language, chooseLanguage }: Readonly<{ statu
     // "continue without one" and an unsent request are both valid ways to leave this step.
     if (step === 2 && (commercial || licenseChoice === "have") && !license.trim()) {
       setError(new ApiError(400, "invalid_request", t("licenseRequiredToContinue")));
+      return;
+    }
+    if (step === 2 && effectiveLicense) {
+      await run(async () => {
+        await request("/api/setup/license-check", { method: "POST", csrf, body: { license: effectiveLicense } });
+        setStep(3);
+      });
       return;
     }
     if (step === 4 && admin.password !== confirmation) { setError(new ApiError(400, "invalid_request", t("setupPasswordsDiffer"))); return; }

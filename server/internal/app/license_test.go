@@ -167,6 +167,7 @@ func testLicenseStatusWithoutGrant(t *testing.T, now time.Time) {
 func TestLicenseIntegration(t *testing.T) {
 	f := newLicenseIntegrationFixture(t)
 	t.Run("the wizard shows the instance identifier", f.testLicenseWizardInstance)
+	t.Run("licence check verifies before setup without saving", f.testLicenseCheck)
 	t.Run("a licence for another instance is refused before any account exists", f.testLicenseWrongInstance)
 	if Edition == "commercial" {
 		t.Run("Enterprise setup needs an Enterprise licence", f.testLicenseEnterpriseSetup)
@@ -366,6 +367,49 @@ func (f *licenseIntegrationFixture) testLicenseWizardInstance(t *testing.T) {
 	}
 }
 
+func (f *licenseIntegrationFixture) testLicenseCheck(t *testing.T) {
+	opened := f.call("POST", "/api/setup/session", map[string]string{"token": "synthetic-setup-token-of-sufficient-length"}, nil, "")
+	requireHTTP(t, opened, 200)
+	var session struct{ CSRF string }
+	if e := json.Unmarshal(opened.Body.Bytes(), &session); e != nil || session.CSRF == "" {
+		t.Fatal("setup session missing CSRF", e)
+	}
+	cookies := opened.Result().Cookies()
+	check := func(raw string, cookies []*http.Cookie, csrf string) *httptest.ResponseRecorder {
+		return f.call("POST", "/api/setup/license-check", map[string]string{"license": raw}, cookies, csrf)
+	}
+	requireHTTP(t, check("invalid", nil, ""), 401)
+	requireHTTP(t, check("invalid", cookies, "wrong-csrf"), 401)
+	invalid := check("invalid", cookies, session.CSRF)
+	requireHTTP(t, invalid, 400)
+	if !strings.Contains(invalid.Body.String(), "license_invalid") {
+		t.Fatal("invalid licence error missing")
+	}
+	wrong := signLicense(t, f.key, jose.EdDSA, testLicense("enterprise", testInstance, f.year, 0))
+	requireHTTP(t, check(wrong, cookies, session.CSRF), 400)
+	valid := f.free
+	if Edition == "commercial" {
+		wrongEdition := check(f.free, cookies, session.CSRF)
+		requireHTTP(t, wrongEdition, 400)
+		if !strings.Contains(wrongEdition.Body.String(), "license_community_on_enterprise") {
+			t.Fatal("wrong edition error missing")
+		}
+		valid = f.enterprise(f.year, 2)
+	}
+	accepted := check(valid, cookies, session.CSRF)
+	requireHTTP(t, accepted, 200)
+	if strings.Contains(accepted.Body.String(), valid) {
+		t.Fatal("license text reflected in check response")
+	}
+	var stored string
+	if e := f.admin.QueryRow(context.Background(), `SELECT license FROM app_config`).Scan(&stored); e != nil || stored != "" {
+		t.Fatal("licence check changed stored licence", e)
+	}
+	if len(f.p.users) != 1 {
+		t.Fatal("licence check created an account")
+	}
+}
+
 func (f *licenseIntegrationFixture) testLicenseWrongInstance(t *testing.T) {
 	complete := f.complete
 	p := f.p
@@ -401,6 +445,7 @@ func (f *licenseIntegrationFixture) testLicenseSetupClosed(t *testing.T) {
 		t.Fatal("instance identifier public after setup:", w.Body.String())
 	}
 	requireHTTP(t, call("POST", "/api/setup/license-request", map[string]string{"email": "owner@example.test"}, nil, ""), 404)
+	requireHTTP(t, call("POST", "/api/setup/license-check", map[string]string{"license": f.free}, nil, ""), 404)
 }
 
 func (f *licenseIntegrationFixture) testLicenseCommunityRestricted(t *testing.T) {

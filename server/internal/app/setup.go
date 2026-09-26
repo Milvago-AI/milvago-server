@@ -45,6 +45,7 @@ var errSetupClosed = apiError{404, "not_found", "Not found."}
 func (a *App) registerSetupRoutes() {
 	a.mux.HandleFunc("GET /api/setup", a.setupStatus)
 	a.mux.HandleFunc("POST /api/setup/session", a.setupSession)
+	a.mux.HandleFunc("POST /api/setup/license-check", a.setupLicenseCheck)
 	a.mux.HandleFunc("POST /api/setup/smtp-test", a.setupSMTPTest)
 	a.mux.HandleFunc("POST /api/setup/complete", a.setupComplete)
 }
@@ -181,6 +182,35 @@ func (a *App) setupGuard(w http.ResponseWriter, r *http.Request, operation strin
 		}
 	}
 	return true
+}
+
+// setupLicenseCheck verifies a pasted licence before the wizard advances. It uses
+// the same setup session and verifier as completion, without storing the licence.
+func (a *App) setupLicenseCheck(w http.ResponseWriter, r *http.Request) {
+	if !a.setupGuard(w, r, "setup-license-check") {
+		return
+	}
+	var body struct {
+		License string `json:"license"`
+	}
+	if e := decode(w, r, &body); e != nil {
+		a.fail(w, e)
+		return
+	}
+	if strings.TrimSpace(body.License) == "" {
+		a.fail(w, errLicenseMissing)
+		return
+	}
+	var instance string
+	if e := a.db.QueryRow(r.Context(), `SELECT instance_id FROM publisher_client_state`).Scan(&instance); e != nil {
+		a.fail(w, e)
+		return
+	}
+	if _, e := verifyLicense(body.License, instance); e != nil {
+		a.fail(w, e)
+		return
+	}
+	reply(w, 200, map[string]bool{"valid": true})
 }
 
 // setupSMTP is the mail server the realm will use for invitations.

@@ -168,11 +168,42 @@ it('sends an empty licence when Community continues without one', async () => {
   expect(body.license).toBe('');
 }, 20_000);
 
+it('shows an invalid licence at step two and stays there until corrected', async () => {
+  const checks: string[] = [];
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === '/api/setup/session') return reply({ csrf: 'setup-csrf' });
+    if (url === '/api/setup/license-check') {
+      const license = JSON.parse(String(init?.body)).license as string;
+      checks.push(license);
+      return license === 'valid-test-license'
+        ? reply({ valid: true })
+        : reply({ error: 'license_invalid', message: 'This licence is not valid for this instance.' }, 400);
+    }
+    return reply({ error: 'unexpected_request' }, 404);
+  });
+  show();
+  await userEvent.type(screen.getByLabelText('Setup token'), 'synthetic-token');
+  await next();
+  await userEvent.click(screen.getByLabelText('I have a license'));
+  await userEvent.type(screen.getByLabelText('License'), 'bad-license');
+  await next();
+  expect(await screen.findByText('This license is not valid.')).toBeTruthy();
+  expect(screen.queryByLabelText('Instance default language')).toBeNull();
+  expect(checks).toEqual(['bad-license']);
+  await userEvent.clear(screen.getByLabelText('License'));
+  await userEvent.type(screen.getByLabelText('License'), 'valid-test-license');
+  await next();
+  expect(await screen.findByLabelText('Instance default language')).toBeTruthy();
+  expect(checks).toEqual(['bad-license', 'valid-test-license']);
+}, 20_000);
+
 it('sends the pasted licence when Community has one', async () => {
   const calls: { url: string; init?: RequestInit }[] = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const url = String(input); calls.push({ url, init });
     if (url === '/api/setup/session') return reply({ csrf: 'setup-csrf' });
+    if (url === '/api/setup/license-check') return reply({ valid: true });
     if (url === '/api/setup/complete') return reply({ login: '/auth/login' });
     return reply({ error: 'unexpected_request' }, 404);
   });
@@ -184,4 +215,7 @@ it('sends the pasted licence when Community has one', async () => {
   await next();
   const body = await finishAfterLicenseStep(calls);
   expect(body.license).toBe('FAKE-LICENSE-TOKEN');
+  const check = calls.find(c => c.url === '/api/setup/license-check')?.init;
+  expect(JSON.parse(String(check?.body))).toEqual({ license: 'FAKE-LICENSE-TOKEN' });
+  expect((check?.headers as Record<string, string>)['X-CSRF-Token']).toBe('setup-csrf');
 }, 20_000);

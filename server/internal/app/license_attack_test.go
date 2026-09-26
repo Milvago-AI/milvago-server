@@ -23,7 +23,7 @@ func TestLicenseGateFollowsTheMux(t *testing.T) {
 	ok := func(http.ResponseWriter, *http.Request) {}
 	for _, p := range []string{
 		"GET /api/session", "POST /api/session/organization", "PUT /api/license", "POST /api/license/request",
-		"GET /api/bootstrap", "GET /api/setup", "POST /api/setup/complete", "GET /api/members",
+		"GET /api/bootstrap", "GET /api/setup", "POST /api/setup/complete", "POST /api/setup/license-check", "GET /api/members",
 		"GET /api/roles/{name}/members", "PUT /api/roles/{name}", "GET /api/shadow/events/{id}",
 		"GET /auth/login", "GET /auth/callback", "GET /auth/device", "POST /auth/device", "POST /v1/enroll",
 		"GET /v2/update/artifact/{sha256}", "POST /v2/install", "GET /v3/policy", "GET /ext/milvago.crx",
@@ -42,6 +42,7 @@ func TestLicenseGateFollowsTheMux(t *testing.T) {
 		{"GET", "/api/bootstrap", false},
 		{"GET", "/api/setup", false},
 		{"POST", "/api/setup/complete", false},
+		{"POST", "/api/setup/license-check", false},
 		{"GET", "/auth/login", false},
 		{"GET", "/auth/callback", false},
 		{"GET", "/", false},
@@ -115,12 +116,12 @@ func TestLicenseForgery(t *testing.T) {
 		"x5u to an attacker certificate": compact(attacker, map[string]any{"alg": "EdDSA", "x5u": "https://attacker.example.test/cert.pem"}, payload),
 		"jku to an attacker key set":     compact(attacker, map[string]any{"alg": "EdDSA", "jku": "https://attacker.example.test/jwks.json"}, payload),
 		// Signed with the real key: an unknown critical header is refused all the same.
-		"unknown crit header":           compact(key, map[string]any{"alg": "EdDSA", "crit": []string{"x-unlimited"}, "x-unlimited": true}, payload),
-		"alg spelled otherwise":         compact(key, map[string]any{"alg": "Ed25519"}, payload),
-		"JWS JSON serialization":        string(jsonSerialization),
-		"extra segment":                 valid + "." + parts[2],
-		"empty extra segment":           valid + ".",
-		"missing signature":             parts[0] + "." + parts[1] + ".",
+		"unknown crit header":            compact(key, map[string]any{"alg": "EdDSA", "crit": []string{"x-unlimited"}, "x-unlimited": true}, payload),
+		"alg spelled otherwise":          compact(key, map[string]any{"alg": "Ed25519"}, payload),
+		"JWS JSON serialization":         string(jsonSerialization),
+		"extra segment":                  valid + "." + parts[2],
+		"empty extra segment":            valid + ".",
+		"missing signature":              parts[0] + "." + parts[1] + ".",
 		"quota rewritten, old signature": parts[0] + "." + enc([]byte(unlimited)) + "." + parts[2],
 		// Duplicate keys only matter to a signer; the issuer marshals a struct, so it
 		// never emits them (licensing/main_test.go, TestClaimsCannotBeInjected).
