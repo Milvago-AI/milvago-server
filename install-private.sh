@@ -471,6 +471,19 @@ EOF
 
 cd "$root"
 compose=(compose -f compose.yaml -f "$override")
+realm_file=${MILVAGO_REALM_FILE:-$root/.local/generated/realm.json}
+if [[ "$realm_file" != /* ]]; then realm_file="$root/${realm_file#./}"; fi
+[[ -f "$realm_file" && ! -L "$realm_file" ]] || fail 'The Keycloak realm file is missing or is a symlink.'
+# Keycloak runs as uid 1000 with gid 0. The realm contains client secrets, so
+# grant its container group read access without making it world-readable.
+run_docker run --rm --network none --user 0 \
+  -v "$realm_file:/run/milvago-realm.json:rw,z" "$NODE_IMAGE" node -e '
+const fs = require("node:fs");
+const path = "/run/milvago-realm.json";
+const { uid } = fs.statSync(path);
+fs.chownSync(path, uid, 0);
+fs.chmodSync(path, 0o640);
+' || fail 'Cannot grant Keycloak read access to realm.json.'
 run_docker "${compose[@]}" config --quiet || fail 'The private-image Compose configuration is invalid.'
 printf 'Pulling the verified image and starting Community...\n'
 run_docker "${compose[@]}" pull application
@@ -495,17 +508,27 @@ run_docker run --rm --network "container:$identity_id" --user "$(id -u):$(id -g)
     password,
   });
   let tokenResponse;
+  let lastStatus = "unreachable";
   for (let attempt = 0; attempt < 60; attempt++) {
     try {
       tokenResponse = await fetch(base + "/realms/master/protocol/openid-connect/token", {
         method: "POST",
         body: form,
       });
-      if (tokenResponse.ok || tokenResponse.status === 400 || tokenResponse.status === 401) break;
-    } catch {}
+      if (tokenResponse.ok) break;
+      lastStatus = "HTTP " + tokenResponse.status;
+      if (tokenResponse.status === 400 || tokenResponse.status === 401) {
+        const response = await tokenResponse.json().catch(() => ({}));
+        throw new Error("Keycloak administrator login rejected (" + lastStatus +
+          (typeof response.error === "string" ? ", " + response.error : "") + ")");
+      }
+    } catch (error) {
+      if (error.message.startsWith("Keycloak administrator login rejected")) throw error;
+    }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-  if (!tokenResponse?.ok) throw new Error("Keycloak administrator login failed");
+  if (!tokenResponse?.ok) throw new Error("Keycloak did not become ready (" + lastStatus +
+    "). Check the identity container logs.");
   const accessToken = (await tokenResponse.json()).access_token;
   const headers = { Authorization: "Bearer " + accessToken, Accept: "application/json" };
   const clientsResponse = await fetch(base + "/admin/realms/milvago/clients?clientId=milvago-console", { headers });
