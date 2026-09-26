@@ -1134,7 +1134,7 @@ export const fr: Record<TranslationKey, string> = {
   setupPasswordsDiffer: "Les deux mots de passe diffèrent.",
   setupSecurity: "Sécurité",
   setupAdminTOTP: "Enrôler une application d’authentification à la première connexion",
-  setupAdminTOTPHelp: "Recommandé : ce compte détient toutes les permissions.",
+  setupAdminTOTPHelp: "Après l’enrôlement, ce compte doit utiliser son application d’authentification à chaque connexion.",
   setupRequireMFA: "Exiger l’authentification multifacteur pour tous les membres",
   setupRequireMFAHelp: "Les membres qui se connectent par mot de passe doivent utiliser un second facteur. Les identités d’un fournisseur externe s’appuient sur le sien.",
   setupEmailServer: "Serveur e-mail",

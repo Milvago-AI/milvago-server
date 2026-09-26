@@ -1136,7 +1136,7 @@ export const en = {
   setupPasswordsDiffer: "The two passwords differ.",
   setupSecurity: "Security",
   setupAdminTOTP: "Enrol an authenticator app at the first sign-in",
-  setupAdminTOTPHelp: "Recommended: this account holds every permission.",
+  setupAdminTOTPHelp: "After enrolment, this account must use its authenticator at every sign-in.",
   setupRequireMFA: "Require multi-factor authentication for every member",
   setupRequireMFAHelp: "Members who sign in with a password need a second factor. Identities from an external identity provider rely on its own.",
   setupEmailServer: "E-mail server",

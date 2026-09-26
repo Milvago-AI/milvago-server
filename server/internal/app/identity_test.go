@@ -489,6 +489,8 @@ func testIdentitySubsystem(t *testing.T, f subsystemFixture) {
 
 	t.Run("organization creation requires prior mfa", scenario.testOrganizationCreationMFA)
 
+	t.Run("configured account requires mfa on login", scenario.testCredentialMFA)
+
 	t.Run("organization mfa gate on login", scenario.testOrganizationLoginMFA)
 }
 
@@ -690,6 +692,43 @@ func (f *identityScenarioFixture) testUninvitedIdentity(t *testing.T) {
 	}
 }
 
+func (f *identityScenarioFixture) testCredentialMFA(t *testing.T) {
+	p := f.identity
+	ctx := context.Background()
+	setTenant(t, f.admin, f.org)
+	var policyRequired bool
+	if e := f.admin.QueryRow(ctx, "SELECT require_mfa FROM settings WHERE organization_id=$1", f.org).Scan(&policyRequired); e != nil || policyRequired {
+		t.Fatalf("credential test needs an organization without mandatory MFA: %v", e)
+	}
+	p.mu.Lock()
+	oldUser, existed := p.users["test-owner"]
+	p.users["test-owner"] = &fakeUser{ID: "test-owner", Email: "admin@example.test", OTP: true}
+	p.mu.Unlock()
+	oldACR := p.acr
+	t.Cleanup(func() {
+		p.mu.Lock()
+		if existed {
+			p.users["test-owner"] = oldUser
+		} else {
+			delete(p.users, "test-owner")
+		}
+		p.mu.Unlock()
+		p.acr = oldACR
+	})
+	p.acr = ""
+	cookie, state, _ := f.beginLogin(t, "/auth/login")
+	w := f.finishLogin(cookie, state, "")
+	requireHTTP(t, w, 302)
+	if !strings.HasPrefix(w.Header().Get("Location"), "/auth/login?mfa=1") {
+		t.Fatalf("configured OTP was not required at login: %s", w.Header().Get("Location"))
+	}
+	cookie, state, _ = f.beginLogin(t, "/auth/login?mfa=1")
+	requireHTTP(t, f.finishLogin(cookie, state, ""), 403)
+	p.acr = "2"
+	cookie, state, _ = f.beginLogin(t, "/auth/login?mfa=1")
+	requireHTTP(t, f.finishLogin(cookie, state, ""), 302)
+}
+
 func (f *identityScenarioFixture) testIdentityAdminUnavailable(t *testing.T) {
 	beginLogin := f.beginLogin
 	finishLogin := f.finishLogin
@@ -701,7 +740,7 @@ func (f *identityScenarioFixture) testIdentityAdminUnavailable(t *testing.T) {
 	a.config.AdminClientID, a.config.AdminClientSecret = "", ""
 	defer func() { a.config.AdminClientID, a.config.AdminClientSecret = savedID, savedSecret }()
 	cookie, state, _ := beginLogin(t, "/auth/login")
-	requireHTTP(t, finishLogin(cookie, state, ""), 302)
+	requireHTTP(t, finishLogin(cookie, state, ""), 503)
 	var stored string
 	if e := admin.QueryRow(ctx, `SELECT identity_type FROM users WHERE subject='test-owner'`).Scan(&stored); e != nil || stored != "local" {
 		t.Fatal("identity type changed despite administration being unavailable", e)

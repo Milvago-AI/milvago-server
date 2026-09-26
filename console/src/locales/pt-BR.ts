@@ -1137,7 +1137,7 @@ export const ptBR: Record<TranslationKey, string> = {
   setupPasswordsDiffer: "As senhas não coincidem.",
   setupSecurity: "Segurança",
   setupAdminTOTP: "Inscrever um aplicativo de autenticação no primeiro login",
-  setupAdminTOTPHelp: "Recomendado: esta conta tem todas as permissões.",
+  setupAdminTOTPHelp: "Após a configuração, esta conta deve usar o aplicativo autenticador em cada acesso.",
   setupRequireMFA: "Exigir autenticação de duplo fator de todos os membros",
   setupRequireMFAHelp: "Os membros que fazem login com senha precisam de um segundo fator. As identidades de um provedor de identidade externo dependem do seu próprio.",
   setupEmailServer: "Servidor de e-mail",

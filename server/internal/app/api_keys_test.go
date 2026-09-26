@@ -1204,16 +1204,16 @@ func testAPIKeyIdentityWithdrawal(t *testing.T, s *apiKeyTestState) {
 
 	// 2. Configured and reachable, account in good standing: still nothing.
 	a.config.AdminClientID, a.config.AdminClientSecret = "test-management", "test-secret"
-	a.config.Issuer = oldIssuer + "/realms/test"
+	a.config.Issuer = p.server.URL + "/realms/test"
 	a.revokeWithdrawnIdentities(ctx)
 	want(t, key("GET", "/api/overview", nil, secret), 200)
 
 	// 3. Provider reachable but refusing, which is what a wrong realm or a
 	//    revoked service account looks like. Errors are not verdicts.
-	a.config.Issuer = oldIssuer + "/realms/absent"
+	a.config.Issuer = p.server.URL + "/realms/absent"
 	a.revokeWithdrawnIdentities(ctx)
 	want(t, key("GET", "/api/overview", nil, secret), 200)
-	a.config.Issuer = oldIssuer + "/realms/test"
+	a.config.Issuer = p.server.URL + "/realms/test"
 
 	// 4. Disabled in the directory: the realistic offboarding action.
 	p.setUserDisabled(subject, true)

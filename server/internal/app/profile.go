@@ -1,7 +1,6 @@
 package app
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"slices"
@@ -62,19 +61,8 @@ func (a *App) profile(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Sess
 		if u, e := admin.user(r.Context(), s.Subject); e == nil && u != nil {
 			first, last = strings.TrimSpace(u.FirstName), strings.TrimSpace(u.LastName)
 		}
-		if status, _, raw, e := admin.call(r.Context(), "GET", "/users/"+url.PathEscape(s.Subject)+"/credentials", nil); e == nil && status == 200 {
-			var credentials []struct {
-				Type string `json:"type"`
-			}
-			if json.Unmarshal(raw, &credentials) == nil {
-				configured := false
-				for _, c := range credentials {
-					if c.Type == "otp" {
-						configured = true
-					}
-				}
-				mfaConfigured = configured
-			}
+		if configured, e := admin.hasOTP(r.Context(), s.Subject); e == nil {
+			mfaConfigured = configured
 		}
 	}
 	reply(w, 200, map[string]any{

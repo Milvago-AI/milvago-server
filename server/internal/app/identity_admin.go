@@ -38,6 +38,33 @@ type identityUser struct {
 	Enabled *bool `json:"enabled"`
 }
 
+// hasOTP reads the current Keycloak credential list. A missing or unreadable list
+// cannot prove that a password-only login is safe.
+func (admin *identityAdmin) hasOTP(ctx context.Context, subject string) (bool, error) {
+	status, _, raw, err := admin.call(ctx, "GET", "/users/"+url.PathEscape(subject)+"/credentials", nil)
+	if err != nil {
+		return false, err
+	}
+	if status != http.StatusOK {
+		return false, apiError{503, "identity_admin_unavailable", "Could not verify the account MFA configuration."}
+	}
+	var credentials []struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(raw, &credentials); err != nil {
+		return false, err
+	}
+	if credentials == nil {
+		return false, apiError{503, "identity_admin_unavailable", "Could not verify the account MFA configuration."}
+	}
+	for _, credential := range credentials {
+		if credential.Type == "otp" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // withdrawn reports whether the identity provider has stopped honouring this
 // account: deleted (no user at all) or explicitly disabled. A nil receiver is the
 // deleted case; a nil Enabled is an unknown, which is not a withdrawal.

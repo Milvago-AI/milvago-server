@@ -398,6 +398,17 @@ func (a *App) completeLogin(w http.ResponseWriter, r *http.Request, ctx context.
 	if e = tx.QueryRow(ctx, "SELECT require_mfa FROM settings WHERE organization_id=$1", org).Scan(&requireMFA); e != nil {
 		return e
 	}
+	if !requireMFA && !mfa {
+		admin, err := a.identityAdmin(ctx)
+		if err != nil {
+			return apiError{503, "identity_admin_unavailable", "Could not verify the account MFA configuration."}
+		}
+		requireMFA, err = admin.hasOTP(ctx, flow.id.Subject)
+		if err != nil {
+			a.log.Warn("identity credential lookup failed", "error", err)
+			return apiError{503, "identity_admin_unavailable", "Could not verify the account MFA configuration."}
+		}
+	}
 	if requireMFA && !mfa {
 		if flow.attempt.stepUp {
 			return apiError{403, "mfa_required", "Multi-factor authentication is required for this organization."}

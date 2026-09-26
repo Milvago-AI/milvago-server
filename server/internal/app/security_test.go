@@ -309,7 +309,7 @@ func newSecurityFixture(t *testing.T) *securityFixture {
 	p := identityProvider(t)
 	block, _ := aes.NewCipher(make([]byte, 32))
 	gcm, _ := cipher.NewGCM(block)
-	c := Config{DatabaseURL: runtimeURL, MigrationURL: migrationURL, RuntimeRole: "milvago_runtime", OrganizationName: "Test organization", BootstrapEmail: "admin@example.test", AppURL: "http://localhost:4020", Issuer: p.server.URL, ClientID: "test-console", ClientSecret: "test-client-secret", SessionCipher: gcm, ContentKeys: testContentKeys(), ContentVersion: 1, SigningKey: ed25519.NewKeyFromSeed(make([]byte, 32))}
+	c := Config{DatabaseURL: runtimeURL, MigrationURL: migrationURL, RuntimeRole: "milvago_runtime", OrganizationName: "Test organization", BootstrapEmail: "admin@example.test", AppURL: "http://localhost:4020", Issuer: p.server.URL, ClientID: "test-console", ClientSecret: "test-client-secret", AdminClientID: "test-management", AdminClientSecret: "test-secret", SessionCipher: gcm, ContentKeys: testContentKeys(), ContentVersion: 1, SigningKey: ed25519.NewKeyFromSeed(make([]byte, 32))}
 	db, e := OpenDatabase(ctx, c)
 	if e != nil {
 		t.Fatal(e)
@@ -330,6 +330,8 @@ func newSecurityFixture(t *testing.T) *securityFixture {
 	if e != nil {
 		t.Fatal(e)
 	}
+	// The fake OIDC issuer is root-based; administration uses the realm path.
+	a.config.Issuer = p.server.URL + "/realms/test"
 	return &securityFixture{a: a, admin: admin, db: db, p: p, config: c, gcm: gcm, migrationURL: migrationURL}
 }
 
@@ -611,23 +613,20 @@ func (f *securityFixture) testExclusiveBarrier(t *testing.T) {
 
 func (f *securityFixture) testMFAAndInvitationFailure(t *testing.T) {
 	call := f.call
-	p := f.p
 	admin := f.admin
 	a := f.a
 	c := f.config
 	sessionCookie := f.sessionCookie
 	session := f.session
 	ctx := context.Background()
+	oldID, oldSecret := a.config.AdminClientID, a.config.AdminClientSecret
+	t.Cleanup(func() { a.config.AdminClientID, a.config.AdminClientSecret = oldID, oldSecret })
 	requireHTTP(t, call("PUT", "/api/settings", map[string]any{"name": "Test organization", "event_retention_days": 30, "require_mfa": true}, sessionCookie, session.CSRF, c.AppURL, ""), 400)
 	body := map[string]string{"email": "invitee@example.test", "role": "viewer"}
+	a.config.AdminClientID, a.config.AdminClientSecret = "", ""
 	requireHTTP(t, call("POST", "/api/members/invitations", body, sessionCookie, session.CSRF, c.AppURL, ""), 503)
-	a.config.AdminClientID = "test-management"
-	a.config.AdminClientSecret = "test-secret"
-	a.config.Issuer = p.server.URL + "/realms/test"
+	a.config.AdminClientID, a.config.AdminClientSecret = oldID, oldSecret
 	requireHTTP(t, call("POST", "/api/members/invitations", body, sessionCookie, session.CSRF, c.AppURL, ""), 502)
-	a.config.Issuer = c.Issuer
-	a.config.AdminClientID = ""
-	a.config.AdminClientSecret = ""
 	var count int
 	if e := admin.QueryRow(ctx, `SELECT count(*) FROM users WHERE subject='invited-subject'`).Scan(&count); e != nil || count != 0 {
 		t.Fatal("failed SMTP created a local member")
