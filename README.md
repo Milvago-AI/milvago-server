@@ -106,7 +106,12 @@ docker compose up -d --build    # PostgreSQL, Keycloak, Mailpit and Milvago
 
 Open **http://localhost:4020**, enter the `MILVAGO_SETUP_TOKEN` from `.env`, and the wizard
 walks you through the first administrator, second factor, organization, mail server and
-privacy defaults. Details in [INSTALL.md](INSTALL.md).
+privacy defaults. Details in [INSTALL.md](INSTALL.md). To use the currently private GHCR image instead of
+building from source, copy `install-private.sh` to a Linux host and run it from any
+directory. It fetches a pinned Community checkout when needed and installs missing
+Docker packages through the supported distribution's package manager. A standalone
+install needs access to the private repository and package, with a classic GitHub
+token scoped to `repo` and `read:packages`.
 
 ## Community and Enterprise
 

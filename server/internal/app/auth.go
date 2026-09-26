@@ -78,7 +78,7 @@ func cookieName(kind string) string { return "milvago_" + Edition + "_" + kind }
 // Over HTTPS the session and login cookies carry the __Host- prefix: the browser then
 // refuses one set by a sibling subdomain or with a Domain attribute, which would
 // otherwise let such a host plant its own login binding or session (login CSRF into
-// an attacker's account). Plain HTTP (local development) cannot use the prefix.
+// an attacker's account). Plain HTTP cannot use the prefix.
 func (a *App) cookieName(kind string) string {
 	if a.config.SecureCookies {
 		return "__Host-" + cookieName(kind)

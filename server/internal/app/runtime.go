@@ -78,7 +78,7 @@ func (a *App) initBackgroundIdentity() error {
 		return nil
 	}
 	public, e := url.Parse(a.config.Issuer)
-	if e != nil || public.Host == "" || !secureURL(public) {
+	if e != nil || public.Host == "" || !webURL(public) {
 		return errors.New("invalid background OIDC issuer")
 	}
 	client := &http.Client{Timeout: 15 * time.Second}

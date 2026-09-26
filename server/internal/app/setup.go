@@ -405,7 +405,7 @@ func (s *setupRequest) validate() error {
 	}
 	s.Organization.PublicURL = strings.TrimRight(strings.TrimSpace(s.Organization.PublicURL), "/")
 	if !validOrigin(s.Organization.PublicURL) {
-		return bad("Public URL must be an HTTPS origin (HTTP permitted only on explicit loopback).")
+		return bad("Public URL must be an HTTP or HTTPS origin.")
 	}
 	if !slices.Contains(consoleLanguages, s.Organization.DefaultLanguage) {
 		return bad("Default language must be one of fr, en, es, pt-BR.")

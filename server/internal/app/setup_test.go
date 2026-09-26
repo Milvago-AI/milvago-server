@@ -42,7 +42,6 @@ func TestSetupRequestValidation(t *testing.T) {
 		"short password":          func(s *setupRequest) { s.Admin.Password = "short" },
 		"password is the address": func(s *setupRequest) { s.Admin.Password = "OWNER@example.test" },
 		"script URL":              func(s *setupRequest) { s.Organization.PublicURL = "javascript:alert(1)" },
-		"plain HTTP remote URL":   func(s *setupRequest) { s.Organization.PublicURL = "http://milvago.example.test" },
 		"URL with a path":         func(s *setupRequest) { s.Organization.PublicURL = "https://milvago.example.test/x" },
 		"unknown language":        func(s *setupRequest) { s.Organization.DefaultLanguage = "de" },
 		"empty organization":      func(s *setupRequest) { s.Organization.Name = "" },

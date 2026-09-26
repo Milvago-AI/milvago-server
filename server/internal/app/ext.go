@@ -20,7 +20,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// publicOrigin returns the agent-facing HTTPS origin advertised to devices
+// publicOrigin returns the agent-facing HTTP or HTTPS origin advertised to devices
 // (enrollment server_url, installer ServerURL, extension update.xml codebase).
 // Source of truth is the instance-level app_config.public_url setting, editable
 // in Administration; it falls back to the immutable APP_URL env origin when the

@@ -213,8 +213,8 @@ func validateRequiredConfig(c *Config) error {
 
 func validateOriginConfig(c *Config) error {
 	u, e := url.Parse(c.AppURL)
-	if c.AppURL != "" && (e != nil || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil || !secureURL(u)) {
-		return errors.New("APP_URL must be an HTTPS origin (HTTP permitted only on explicit loopback)")
+	if c.AppURL != "" && (e != nil || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil || !webURL(u)) {
+		return errors.New("APP_URL must be an HTTP or HTTPS origin")
 	}
 	c.SecureCookies = u.Scheme == "https"
 	c.PublicURL = strings.TrimRight(os.Getenv("PUBLIC_URL"), "/")
@@ -222,11 +222,11 @@ func validateOriginConfig(c *Config) error {
 		c.PublicURL = c.AppURL
 	}
 	if c.PublicURL != "" && !validOrigin(c.PublicURL) {
-		return errors.New("PUBLIC_URL must be an HTTPS origin (HTTP permitted only on explicit loopback)")
+		return errors.New("PUBLIC_URL must be an HTTP or HTTPS origin")
 	}
 	u, e = url.Parse(c.Issuer)
-	if c.Issuer != "" && (e != nil || u.Host == "" || u.User != nil || !secureURL(u)) {
-		return errors.New("OIDC_ISSUER must use HTTPS or explicit loopback")
+	if c.Issuer != "" && (e != nil || u.Host == "" || u.User != nil || !webURL(u)) {
+		return errors.New("OIDC_ISSUER must use HTTP or HTTPS")
 	}
 	if !regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`).MatchString(c.RuntimeRole) {
 		return errors.New("invalid DB_RUNTIME_ROLE")
@@ -303,8 +303,12 @@ func secureURL(u *url.URL) bool {
 	return u.Scheme == "https" || (u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1"))
 }
 
-// validOrigin reports whether raw is a bare HTTPS origin (or explicit loopback
-// HTTP): scheme + host only, no path, query, fragment or userinfo. Used for both
+func webURL(u *url.URL) bool {
+	return u.Scheme == "http" || u.Scheme == "https"
+}
+
+// validOrigin reports whether raw is a bare HTTP or HTTPS origin:
+// scheme + host only, no path, query, fragment or userinfo. Used for both
 // the APP_URL/PUBLIC_URL env values and the admin-editable public_url setting.
 func validOrigin(raw string) bool {
 	// Reject any query/fragment/whitespace/control byte outright (covers CRLF
@@ -315,7 +319,7 @@ func validOrigin(raw string) bool {
 	}
 	u, e := url.Parse(raw)
 	return e == nil && u.Opaque == "" && u.Host != "" && u.Path == "" && u.RawQuery == "" &&
-		!u.ForceQuery && u.Fragment == "" && u.User == nil && secureURL(u)
+		!u.ForceQuery && u.Fragment == "" && u.User == nil && webURL(u)
 }
 func env(k, d string) string {
 	if v := os.Getenv(k); v != "" {

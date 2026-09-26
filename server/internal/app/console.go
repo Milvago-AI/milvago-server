@@ -327,7 +327,7 @@ func updatePublicURL(r *http.Request, tx pgx.Tx, state *instanceSettings, raw st
 	desired := strings.TrimRight(strings.TrimSpace(raw), "/")
 	if state.Editable {
 		if !validOrigin(desired) {
-			return bad("Public URL must be an HTTPS origin (HTTP permitted only on explicit loopback).")
+			return bad("Public URL must be an HTTP or HTTPS origin.")
 		}
 		if _, e := tx.Exec(r.Context(), "UPDATE app_config SET public_url=$1,public_url_confirmed=true,default_language=$2", desired, state.Language); e != nil {
 			return e

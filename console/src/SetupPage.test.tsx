@@ -72,7 +72,7 @@ it('walks every step and sends the choices once', async () => {
   await userEvent.click(screen.getByLabelText('Require multi-factor authentication for every member'));
   await next();
   await userEvent.type(screen.getByLabelText('Organization name'), 'Example organization');
-  expect((screen.getByLabelText('Public agent HTTPS URL') as HTMLInputElement).value).toBe('https://milvago.example.test');
+  expect((screen.getByLabelText('Public agent URL') as HTMLInputElement).value).toBe('https://milvago.example.test');
   await next();
   await next();
   // Privacy step: the team claim is left to Administration > Privacy.

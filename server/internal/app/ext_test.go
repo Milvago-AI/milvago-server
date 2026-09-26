@@ -10,6 +10,8 @@ func TestValidOrigin(t *testing.T) {
 		"https://console.milvago.example",
 		"https://console.milvago.example:8443",
 		"http://localhost:4020",
+		"http://192.168.1.10:4020",
+		"http://console.milvago.example",
 		"http://127.0.0.1:4020",
 		"http://[::1]:4020",
 	}
@@ -20,7 +22,6 @@ func TestValidOrigin(t *testing.T) {
 	}
 	invalid := []string{
 		"",
-		"http://evil.example",             // http non-loopback
 		"https://x/path",                  // path
 		"https://x?q=1",                   // query
 		"https://x#frag",                  // fragment
@@ -39,6 +40,21 @@ func TestValidOrigin(t *testing.T) {
 		if validOrigin(v) {
 			t.Errorf("expected invalid: %q", v)
 		}
+	}
+}
+
+func TestHTTPRemoteConfig(t *testing.T) {
+	t.Setenv("PUBLIC_URL", "http://192.168.1.10:4020")
+	config := Config{
+		AppURL:      "http://192.168.1.10:4020",
+		Issuer:      "http://192.168.1.10:4080/realms/milvago",
+		RuntimeRole: "milvago_runtime",
+	}
+	if err := validateOriginConfig(&config); err != nil {
+		t.Fatal(err)
+	}
+	if config.SecureCookies {
+		t.Fatal("HTTP configuration cannot set Secure cookies")
 	}
 }
 
