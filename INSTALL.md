@@ -32,7 +32,7 @@ The image contains the server and console only. It does not serve an agent, brow
 extension or installer. The script detects a private IPv4 address (or accepts
 `MILVAGO_HOST_IP`), binds Caddy to port 4020 on that address, and prints
 the console URL and the path to the owner-readable `.env` file at the end.
-Caddy forwards `/realms/milvago`, `/resources` and `/js` to Keycloak; the
+Caddy forwards `/realms`, `/admin`, `/resources` and `/js` to Keycloak; the
 application and Keycloak have no direct host port in this installation. Only
 TCP port 4020 is needed through the host firewall. No secret value is printed.
 Database and Mailpit ports remain on loopback.

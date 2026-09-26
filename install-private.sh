@@ -475,7 +475,7 @@ cat > "$caddyfile" <<EOF
   auto_https off
 }
 :8080 {
-  @identity path /realms/milvago /realms/milvago/* /resources/* /js/*
+  @identity path /realms /realms/* /resources /resources/* /js /js/* /admin /admin/*
   handle @identity {
     reverse_proxy identity:8080 {
       header_up -Forwarded
