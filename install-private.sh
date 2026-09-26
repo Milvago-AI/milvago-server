@@ -576,20 +576,7 @@ run_docker run --rm --network "container:$identity_id" --user "$(id -u):$(id -g)
 });
 ' || fail 'Keycloak could not be configured for the LAN address.'
 run_docker "${compose[@]}" up -d --no-build
-setup_token=''
-while IFS= read -r env_line || [[ -n "$env_line" ]]; do
-  case "$env_line" in
-    MILVAGO_SETUP_TOKEN=*)
-      setup_token=${env_line#MILVAGO_SETUP_TOKEN=}
-      break
-      ;;
-  esac
-done < "$root/.env"
-[[ "$setup_token" =~ ^[A-Za-z0-9_-]{32,}$ ]] ||
-  fail 'MILVAGO_SETUP_TOKEN is missing or invalid in .env.'
-
 printf '\nOpen http://%s:4020 for initial setup.\n' "$host_ip"
-printf 'MILVAGO_SETUP_TOKEN: %s\n' "$setup_token"
-unset setup_token
 printf 'Identity URL: http://%s:4080\n' "$host_ip"
+printf 'Find the setup token and generated secrets in %s/.env (owner-only).\n' "$root"
 printf 'If the page is unreachable, allow TCP ports 4020 and 4080 through the host firewall.\n'

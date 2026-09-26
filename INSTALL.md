@@ -31,8 +31,9 @@ local configuration and database.
 The image contains the server and console only. It does not serve an agent, browser
 extension or installer. The script detects a private IPv4 address (or accepts
 `MILVAGO_HOST_IP`), binds the console and identity ports to that address, and prints
-the console URL and `MILVAGO_SETUP_TOKEN` at the end. Database and Mailpit ports remain
-on loopback. HTTP on a LAN is intended for trusted test networks; use an HTTPS reverse
+the console URL and the path to the owner-readable `.env` file at the end. No
+secret value is printed. Database and Mailpit ports remain on loopback.
+HTTP on a LAN is intended for trusted test networks; use an HTTPS reverse
 proxy or gateway for broader access.
 
 ## Build from source
@@ -55,8 +56,14 @@ It writes, once and only if they are absent:
 - `.local/generated/realm.json` — the identity realm to import, with no user account in it
 - `MILVAGO_SETUP_TOKEN` in `.env` — the one-time token that opens the setup wizard
 
-Nothing here is a default credential: a second run preserves what exists rather than
-regenerating it, so restarting never invalidates sessions or sealed content.
+The Keycloak bootstrap username is `bootstrap-admin`; its
+`IDENTITY_ADMIN_PASSWORD` is generated from 32 random bytes. `SESSION_KEY` and
+`CONTENT_KEYS` are separate random encryption roots. This stack has no
+`ENCRYPTION_KEY` setting. Read their values and `MILVAGO_SETUP_TOKEN` only in the
+owner-readable `.env` file.
+
+A second run preserves these values rather than regenerating them, so restarting
+never invalidates sessions or sealed content.
 
 ## 2. Start the stack
 
