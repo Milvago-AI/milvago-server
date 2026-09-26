@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+const keycloakUsersPath = "/users/"
+
 // identityAdmin is a short-lived client for the Keycloak admin REST API,
 // authenticated with the management service account. Requests go through
 // a.oidcClient so the public issuer host is rewritten to the internal address.
@@ -41,7 +43,7 @@ type identityUser struct {
 // hasOTP reads the current Keycloak credential list. A missing or unreadable list
 // cannot prove that a password-only login is safe.
 func (admin *identityAdmin) hasOTP(ctx context.Context, subject string) (bool, error) {
-	status, _, raw, err := admin.call(ctx, "GET", "/users/"+url.PathEscape(subject)+"/credentials", nil)
+	status, _, raw, err := admin.call(ctx, "GET", keycloakUsersPath+url.PathEscape(subject)+"/credentials", nil)
 	if err != nil {
 		return false, err
 	}
@@ -174,7 +176,7 @@ func (c *identityAdmin) call(ctx context.Context, method, path string, body any)
 
 // user fetches one Keycloak account by ID; (nil, nil) when it does not exist.
 func (c *identityAdmin) user(ctx context.Context, subject string) (*identityUser, error) {
-	status, _, raw, e := c.call(ctx, "GET", "/users/"+url.PathEscape(subject), nil)
+	status, _, raw, e := c.call(ctx, "GET", keycloakUsersPath+url.PathEscape(subject), nil)
 	if e != nil {
 		return nil, e
 	}
@@ -210,7 +212,7 @@ func (c *identityAdmin) identityType(ctx context.Context, u *identityUser) (stri
 	if u.FederationLink != "" {
 		return "ldap", nil
 	}
-	status, _, raw, e := c.call(ctx, "GET", "/users/"+url.PathEscape(u.ID)+"/federated-identity", nil)
+	status, _, raw, e := c.call(ctx, "GET", keycloakUsersPath+url.PathEscape(u.ID)+"/federated-identity", nil)
 	if e != nil {
 		return "", e
 	}

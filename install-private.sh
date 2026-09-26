@@ -10,15 +10,17 @@ APT_KEY_SHA256='1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570
 RPM_KEY_SHA256='e6c650e0700b1bf4868b693b30761b926844befc8a0acb7ac0dd9b1faf1b7423'
 
 fail() { printf 'Error: %s\n' "$*" >&2; exit 1; }
-need() { command -v "$1" >/dev/null 2>&1 || fail "Required command is missing: $1"; }
+need() { local command_name=$1; command -v "$command_name" >/dev/null 2>&1 || fail "Required command is missing: $command_name"; }
 as_root() {
   if (( EUID == 0 )); then "$@"; else sudo "$@"; fi
 }
 fetch() {
+  local url=$1
+  local destination=$2
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$1" -o "$2"
+    curl -fsSL "$url" -o "$destination"
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$2" "$1"
+    wget -qO "$destination" "$url"
   else
     fail 'curl or wget is required to add the official Docker repository.'
   fi
@@ -224,7 +226,8 @@ cleanup() {
 }
 trap cleanup EXIT
 complete_checkout() {
-  [[ -f "$1/compose.yaml" && -f "$1/scripts/local-init.mjs" && -f "$1/cosign.pub" ]]
+  local checkout=$1
+  [[ -f "$checkout/compose.yaml" && -f "$checkout/scripts/local-init.mjs" && -f "$checkout/cosign.pub" ]]
 }
 script_root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 if [[ -n "${MILVAGO_DIR:-}" ]]; then
