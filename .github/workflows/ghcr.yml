@@ -37,7 +37,7 @@ jobs:
       - name: Scan image before publishing
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
-          trivy-version: v0.74.0
+          version: v0.74.0
           image-ref: ghcr.io/milvago-ai/milvago-community-server:sha-${{ github.sha }}
           scanners: vuln
           severity: CRITICAL,HIGH,MEDIUM,LOW
