@@ -55,7 +55,7 @@ it('removes a proven revealed projection at expiry before a slow replacement arr
  render(wrap(<Projection/>));
  expect(await screen.findByText('Synthetic revealed identity')).toBeInTheDocument();
  await waitFor(()=>expect(screen.queryByText('Synthetic revealed identity')).not.toBeInTheDocument(),{timeout:2000});
- expect(fetcher).toHaveBeenCalledTimes(2);
+ await waitFor(()=>expect(fetcher).toHaveBeenCalledTimes(2));
 });
 
 it('discards revealed projections on revocation notification before refetch completion',async()=>{
