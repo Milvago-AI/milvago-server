@@ -318,6 +318,7 @@ output.notice{margin-top:1em}
 .empty .button{margin-top:8px}
 .loading{display:flex;align-items:center;justify-content:center;gap:12px;min-height:200px;font-size:13px;color:var(--text-2)}
 .spinner{width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--text);border-radius:50%;animation:spin .75s linear infinite}
+.setup-progress{display:flex;align-items:center;gap:12px;color:var(--text-2)}
 @keyframes spin{to{transform:rotate(360deg)}}
 
 /* ---------- Dialogs / drawers ---------- */

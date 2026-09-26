@@ -1157,6 +1157,7 @@ export const fr: Record<TranslationKey, string> = {
   setupSummary: "Récapitulatif",
   setupSummaryHelp: "Vérifiez vos choix. Le compte administrateur est créé quand vous terminez ; vous vous connectez ensuite avec lui.",
   setupFinish: "Créer l’administrateur et terminer",
+  setupCompleting: "Création de l’administrateur et ouverture de la connexion…",
   setupYes: "Oui",
   setupNo: "Non",
   setupLicense: "Licence",

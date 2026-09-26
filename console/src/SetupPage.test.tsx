@@ -43,10 +43,12 @@ it('stays closed until the server is ready', () => {
 // Whole-wizard flows: under a loaded image build the default 5 s is not enough.
 it('walks every step and sends the choices once', async () => {
   const calls: { url: string; init?: RequestInit }[] = [];
+  let finishRequest: (() => void) | undefined;
+  const finishing = new Promise<void>(resolve => { finishRequest = resolve; });
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const url = String(input); calls.push({ url, init });
     if (url === '/api/setup/session') return reply({ csrf: 'setup-csrf' });
-    if (url === '/api/setup/complete') return reply({ login: '/auth/login' });
+    if (url === '/api/setup/complete') { await finishing; return reply({ login: '/auth/login' }); }
     return reply({ error: 'unexpected_request' }, 404);
   });
   const { chooseLanguage } = show();
@@ -83,6 +85,9 @@ it('walks every step and sends the choices once', async () => {
   await next();
   expect(await screen.findByText('Example organization')).toBeTruthy();
   await userEvent.click(screen.getByRole('button', { name: 'Create the administrator and finish' }));
+  expect((await screen.findByText('Creating the administrator and opening sign-in…')).textContent).toContain('Creating the administrator and opening sign-in…');
+  expect(screen.getByRole('button', { name: 'Create the administrator and finish' }).hasAttribute('disabled')).toBe(true);
+  finishRequest?.();
   await waitFor(() => expect(assign).toHaveBeenCalledWith('/auth/login'));
 
   expect(calls.map(c => c.url)).toEqual(['/api/setup/session', '/api/setup/complete']);

@@ -46,14 +46,15 @@ Versions are the exact pins declared there, as resolved in `console/package-lock
 
 ## Container images
 
-Images referenced by `compose.yaml` (compose services) and by `deploy/Dockerfile` (build
-stages and the shipped base).
+Images referenced by `compose.yaml` and `install-private.sh` (compose services), and
+by `deploy/Dockerfile` (build stages and the shipped base).
 
 | Image | Tag | License | Role |
 |---|---|---|---|
 | postgres | 18.4 | PostgreSQL License | compose service (database) |
 | axllent/mailpit | v1.31.2 | MIT | compose service (mail) |
 | quay.io/keycloak/keycloak | 26.7.4 | Apache-2.0 | compose service (identity) |
+| caddy | 2.11.4-alpine | Apache-2.0 | private installer gateway (pinned by digest) |
 | node | 26.9.0-bookworm-slim | MIT | build stage (console) |
 | golang | 1.27.1-bookworm | BSD-3-Clause | build stage (server) |
 | gcr.io/distroless/static-debian12 | nonroot | Apache-2.0 | shipped base |
@@ -81,5 +82,5 @@ Console table — for each key of `dependencies` and `devDependencies` in
 Container images table — read the `image:` values in `compose.yaml` and the `FROM` lines
 of `deploy/Dockerfile`, then look up each image's license.
 
-Generated on 2026-09-25 from `server/go.mod`, `console/package-lock.json`, `compose.yaml`
-and `deploy/Dockerfile`.
+Updated on 2026-09-26 from `server/go.mod`, `console/package-lock.json`, `compose.yaml`,
+`install-private.sh` and `deploy/Dockerfile`.

@@ -1160,6 +1160,7 @@ export const es: Record<TranslationKey, string> = {
   setupSummary: "Resumen",
   setupSummaryHelp: "Revise sus elecciones. La cuenta de administrador se crea al finalizar; después iniciará sesión con ella.",
   setupFinish: "Crear el administrador y finalizar",
+  setupCompleting: "Creando el administrador y abriendo el inicio de sesión…",
   setupYes: "Sí",
   setupNo: "No",
   setupLicense: "Licencia",

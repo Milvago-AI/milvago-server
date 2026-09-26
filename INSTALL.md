@@ -24,15 +24,18 @@ official `apt` repository on Ubuntu/Debian or `dnf` repositories on Fedora and R
 `wget` and `sha256sum`. Other distributions need Docker Engine and Compose installed first.
 The script keeps Docker's registry credentials in a temporary directory. It verifies
 the pinned image signature with `cosign.pub`, generates `.env` and the identity realm using a
-pinned Node container when needed, then starts PostgreSQL, Keycloak, Mailpit and the
-Community server. The token is never written to the repository. A later run preserves the
+pinned Node container when needed, then starts PostgreSQL, Keycloak, Mailpit, the
+Community server and Caddy. The token is never written to the repository. A later run preserves the
 local configuration and database.
 
 The image contains the server and console only. It does not serve an agent, browser
 extension or installer. The script detects a private IPv4 address (or accepts
-`MILVAGO_HOST_IP`), binds the console and identity ports to that address, and prints
-the console URL and the path to the owner-readable `.env` file at the end. No
-secret value is printed. Database and Mailpit ports remain on loopback.
+`MILVAGO_HOST_IP`), binds Caddy to port 4020 on that address, and prints
+the console URL and the path to the owner-readable `.env` file at the end.
+Caddy forwards `/realms/milvago`, `/resources` and `/js` to Keycloak; the
+application and Keycloak have no direct host port in this installation. Only
+TCP port 4020 is needed through the host firewall. No secret value is printed.
+Database and Mailpit ports remain on loopback.
 HTTP on a LAN is intended for trusted test networks; use an HTTPS reverse
 proxy or gateway for broader access.
 

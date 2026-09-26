@@ -1159,6 +1159,7 @@ export const en = {
   setupSummary: "Summary",
   setupSummaryHelp: "Check your choices. The administrator account is created when you finish; you then sign in with it.",
   setupFinish: "Create the administrator and finish",
+  setupCompleting: "Creating the administrator and opening sign-in…",
   setupYes: "Yes",
   setupNo: "No",
   setupLicense: "License",

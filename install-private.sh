@@ -4,6 +4,7 @@ set -euo pipefail
 SOURCE_COMMIT='16c6358e7a87ef609d88c20268f4d1929d857d23'
 IMAGE='ghcr.io/milvago-ai/milvago-community-server@sha256:da2ac77cdd471e884f994f79344472225bc64e67a294b71ad43d84021e066563'
 COSIGN_IMAGE='ghcr.io/sigstore/cosign/cosign:v3.1.3@sha256:9e5c2f2edc34351160407ca3416c61855bdf9403c3c5936e0f0be7fc261611b8'
+CADDY_IMAGE='caddy:2.11.4-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b'
 NODE_IMAGE='node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2'
 APT_KEY_SHA256='1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570'
 RPM_KEY_SHA256='e6c650e0700b1bf4868b693b30761b926844befc8a0acb7ac0dd9b1faf1b7423'
@@ -206,7 +207,7 @@ detect_host_ip() {
 
 host_ip=$(detect_host_ip)
 
-base_tools=(uname dirname mktemp id mkdir mv rm cat env chown ln)
+base_tools=(uname dirname mktemp id mkdir mv rm cat env chown chmod ln)
 missing_tools=()
 for tool in "${base_tools[@]}"; do
   command -v "$tool" >/dev/null 2>&1 || missing_tools+=("$tool")
@@ -467,6 +468,31 @@ if (matches.length === 1 && matches[0][1]) {
 fs.chmodSync(path, 0o600);
 ' || fail 'Cannot ensure MILVAGO_SETUP_TOKEN in .env.'
 
+caddyfile="$root/.local/generated/Caddyfile.private"
+cat > "$caddyfile" <<EOF
+{
+  admin off
+  auto_https off
+}
+:8080 {
+  @identity path /realms/milvago /realms/milvago/* /resources/* /js/*
+  handle @identity {
+    reverse_proxy identity:8080 {
+      header_up -Forwarded
+      header_up Host $host_ip:4020
+      header_up X-Forwarded-For {remote_host}
+      header_up X-Forwarded-Host $host_ip:4020
+      header_up X-Forwarded-Proto http
+      header_up X-Forwarded-Port 4020
+      header_up -X-Forwarded-Prefix
+    }
+  }
+  handle {
+    reverse_proxy application:4020
+  }
+}
+EOF
+chmod 0644 "$caddyfile"
 override="$root/.local/generated/compose.private.yaml"
 cat > "$override" <<EOF
 services:
@@ -475,9 +501,9 @@ services:
       - ./deploy/postgres-init.sh:/docker-entrypoint-initdb.d/10-milvago.sh:ro,z
   identity:
     environment:
-      KC_HOSTNAME: http://$host_ip:4080
-    ports: !override
-      - "$host_ip:4080:8080"
+      KC_HOSTNAME: http://$host_ip:4020
+      KC_PROXY_HEADERS: xforwarded
+    ports: !override []
     volumes:
       - ${MILVAGO_REALM_FILE:-./.local/generated/realm.json}:/opt/keycloak/data/import/milvago.json:ro,z
       - ./deploy/theme/milvago:/opt/keycloak/themes/milvago:ro,z
@@ -486,11 +512,26 @@ services:
     image: $IMAGE
     environment:
       APP_URL: http://$host_ip:4020
-      OIDC_ISSUER: http://$host_ip:4080/realms/milvago
-    ports: !override
-      - "$host_ip:4020:4020"
+      OIDC_ISSUER: http://$host_ip:4020/realms/milvago
+    ports: !override []
     volumes:
       - ./.local/installers:/installers:ro,z
+  gateway:
+    image: $CADDY_IMAGE
+    user: "65532:65532"
+    read_only: true
+    tmpfs:
+      - /data:uid=65532,gid=65532
+      - /config:uid=65532,gid=65532
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    ports:
+      - "$host_ip:4020:8080"
+    volumes:
+      - ./.local/generated/Caddyfile.private:/etc/caddy/Caddyfile:ro,z
+    depends_on:
+      - identity
+      - application
 EOF
 
 cd "$root"
@@ -510,7 +551,7 @@ fs.chmodSync(path, 0o640);
 ' || fail 'Cannot grant Keycloak read access to realm.json.'
 run_docker "${compose[@]}" config --quiet || fail 'The private-image Compose configuration is invalid.'
 printf 'Pulling the verified image and starting Community...\n'
-run_docker "${compose[@]}" pull application
+run_docker "${compose[@]}" pull application gateway
 run_docker "${compose[@]}" up -d database identity
 identity_id=$(run_docker "${compose[@]}" ps -q identity)
 [[ -n "$identity_id" ]] || fail 'The identity container did not start.'
@@ -577,6 +618,5 @@ run_docker run --rm --network "container:$identity_id" --user "$(id -u):$(id -g)
 ' || fail 'Keycloak could not be configured for the LAN address.'
 run_docker "${compose[@]}" up -d --no-build
 printf '\nOpen http://%s:4020 for initial setup.\n' "$host_ip"
-printf 'Identity URL: http://%s:4080\n' "$host_ip"
 printf 'Find the setup token and generated secrets in %s/.env (owner-only).\n' "$root"
-printf 'If the page is unreachable, allow TCP ports 4020 and 4080 through the host firewall.\n'
+printf 'If the page is unreachable, allow TCP port 4020 through the host firewall.\n'

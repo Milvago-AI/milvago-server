@@ -263,6 +263,7 @@ export function SetupPage({ status, language, chooseLanguage }: Readonly<{ statu
       {/* A new element per step: React would otherwise reuse the previous step's
           inputs, carrying a value (the password included) into another field. */}
       <fieldset key={step} disabled={pending}>{body}</fieldset>
+      {step === STEPS && pending && <output className="setup-progress" role="status"><span className="spinner" aria-hidden="true" />{t("setupCompleting")}</output>}
       <div className="dialog-actions">
         {step > 2 && <Button disabled={pending} onClick={() => { setError(undefined); setStep(step - 1); }}>{t("back")}</Button>}
         <Button type="submit" variant="primary" disabled={pending}>{step === STEPS ? t("setupFinish") : t("next")}</Button>
