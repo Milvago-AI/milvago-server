@@ -1154,6 +1154,8 @@ export const ptBR: Record<TranslationKey, string> = {
   smtpPassword: "Senha (opcional)",
   setupSendTest: "Enviar um e-mail de teste",
   setupTestSent: "E-mail de teste enviado para {0}.",
+  setupTestRecipient: "Destinatário do teste (e-mail do administrador): {0}",
+  smtpRecipientUnknown: "O servidor de e-mail informa que esse destinatário não existe (550 5.1.1). Verifique o endereço do administrador informado na etapa 4.",
   setupPrivacyHelp: "Valores padrão desta organização. Continuam editáveis em Privacidade.",
   setupSummary: "Resumo",
   setupSummaryHelp: "Revise suas escolhas. A conta de administrador é criada ao finalizar; em seguida, você fará login com ela.",

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/mail"
 	"net/smtp"
+	"net/textproto"
 	"net/url"
 	"path"
 	"slices"
@@ -343,7 +344,7 @@ func (m setupSMTP) send(ctx context.Context, to string) error {
 		return e
 	}
 	if e = client.Rcpt(to); e != nil {
-		return e
+		return smtpRecipientFailure(e)
 	}
 	body, e := client.Data()
 	if e != nil {
@@ -359,6 +360,27 @@ func (m setupSMTP) send(ctx context.Context, to string) error {
 		return e
 	}
 	return client.Quit()
+}
+
+func smtpRecipientFailure(e error) error {
+	var response *textproto.Error
+	if errors.As(e, &response) && response.Code == 550 && strings.Contains(response.Msg, "5.1.1") {
+		return apiError{502, "smtp_recipient_unknown", "The test recipient does not exist. Check the administrator e-mail address."}
+	}
+	return e
+}
+
+func setupSMTPFailure(e error) apiError {
+	var known apiError
+	if errors.As(e, &known) {
+		return known
+	}
+	// Keep the server's diagnostic useful without displaying an unbounded reply.
+	detail := []rune(strings.Join(strings.Fields(e.Error()), " "))
+	if len(detail) > 200 {
+		detail = append(detail[:197], '.', '.', '.')
+	}
+	return apiError{502, "smtp_failed", "The mail server did not accept the test message: " + string(detail)}
 }
 
 func (a *App) setupSMTPTest(w http.ResponseWriter, r *http.Request) {
@@ -383,13 +405,7 @@ func (a *App) setupSMTPTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if e := body.SMTP.send(r.Context(), to); e != nil {
-		// The administrator needs the server's own answer to fix the settings; it
-		// never contains the password, which is only ever sent, not echoed.
-		detail := e.Error()
-		if len(detail) > 200 {
-			detail = detail[:200]
-		}
-		a.fail(w, apiError{502, "smtp_failed", "The mail server did not accept the test message: " + detail})
+		a.fail(w, setupSMTPFailure(e))
 		return
 	}
 	reply(w, 200, map[string]bool{"sent": true})

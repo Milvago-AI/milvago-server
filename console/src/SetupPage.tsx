@@ -236,6 +236,7 @@ export function SetupPage({ status, language, chooseLanguage }: Readonly<{ statu
           <Field label={t("smtpFromName")}><input maxLength={100} value={smtp.from_name} onChange={e => setSMTP("from_name", e.target.value)} /></Field>
           <Field label={t("smtpUsername")}><input maxLength={256} autoComplete="off" value={smtp.username} onChange={e => setSMTP("username", e.target.value)} /></Field>
           <Field label={t("smtpPassword")}><input type="password" maxLength={1024} autoComplete="off" value={smtp.password} onChange={e => setSMTP("password", e.target.value)} /></Field>
+          <p className="help">{t("setupTestRecipient", [admin.email])}</p>
           <Button disabled={pending || !smtp.host || !smtp.from} onClick={() => void sendTest()}>{t("setupSendTest")}</Button>
           {testSent && <Notice tone="success">{t("setupTestSent", [testSent])}</Notice>}
         </>}

@@ -74,6 +74,9 @@ it('walks every step and sends the choices once', async () => {
   await userEvent.type(screen.getByLabelText('Organization name'), 'Example organization');
   expect((screen.getByLabelText('Public agent URL') as HTMLInputElement).value).toBe('https://milvago.example.test');
   await next();
+  await userEvent.click(screen.getByLabelText('Configure an e-mail server now'));
+  expect(screen.getByText('Test recipient (administrator e-mail): owner@example.test')).toBeTruthy();
+  await userEvent.click(screen.getByLabelText('Configure an e-mail server now'));
   await next();
   // Privacy step: the team claim is left to Administration > Privacy.
   expect(screen.queryByText('OIDC team claim')).toBeNull();

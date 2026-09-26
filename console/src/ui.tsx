@@ -223,6 +223,7 @@ const knownErrorMessages: Partial<Record<string, TranslationKey>> = {
   license_community_on_enterprise: "licenseErrorCommunityOnEnterprise",
   license_request_failed: "licenseErrorRequestFailed",
   device_limit_reached: "licenseErrorDeviceLimitReached",
+  smtp_recipient_unknown: "smtpRecipientUnknown",
 };
 export function ErrorNotice({ error, retry }: Readonly<{ error: unknown; retry?: () => void }>) {
   const t = useText(); if (!error) return null;

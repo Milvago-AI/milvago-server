@@ -1153,6 +1153,8 @@ export const en = {
   smtpPassword: "Password (optional)",
   setupSendTest: "Send a test e-mail",
   setupTestSent: "Test e-mail sent to {0}.",
+  setupTestRecipient: "Test recipient (administrator e-mail): {0}",
+  smtpRecipientUnknown: "The mail server says this recipient does not exist (550 5.1.1). Check the administrator e-mail address from step 4.",
   setupPrivacyHelp: "Defaults for this organization. They remain editable in Privacy.",
   setupSummary: "Summary",
   setupSummaryHelp: "Check your choices. The administrator account is created when you finish; you then sign in with it.",
