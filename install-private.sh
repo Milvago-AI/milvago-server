@@ -555,7 +555,7 @@ run_docker "${compose[@]}" pull application gateway
 run_docker "${compose[@]}" up -d database identity
 identity_id=$(run_docker "${compose[@]}" ps -q identity)
 [[ -n "$identity_id" ]] || fail 'The identity container did not start.'
-printf 'Configuring Keycloak redirects for http://%s:4020...\n' "$host_ip"
+printf 'Configuring Keycloak redirects and password recovery for http://%s:4020...\n' "$host_ip"
 run_docker run --rm --network "container:$identity_id" --user "$(id -u):$(id -g)" \
   -v "$root/.env:/run/milvago.env:ro,z" -e "MILVAGO_APP_URL=http://$host_ip:4020" \
   "$NODE_IMAGE" node -e '
@@ -611,11 +611,33 @@ run_docker run --rm --network "container:$identity_id" --user "$(id -u):$(id -g)
     body: JSON.stringify(client),
   });
   if (!update.ok) throw new Error("Keycloak client update returned HTTP " + update.status);
+  const realmResponse = await fetch(base + "/admin/realms/milvago", { headers });
+  if (!realmResponse.ok) throw new Error("Keycloak realm lookup returned HTTP " + realmResponse.status);
+  const realm = await realmResponse.json();
+  const resetPath = base + "/admin/realms/milvago/authentication/flows/" +
+    encodeURIComponent(realm.resetCredentialsFlow || "reset credentials") + "/executions";
+  const readReset = async () => {
+    const response = await fetch(resetPath, { headers });
+    if (!response.ok) throw new Error("Keycloak password reset flow lookup returned HTTP " + response.status);
+    return response.json();
+  };
+  const otpReset = (await readReset()).find((entry) => entry.displayName === "Reset - Conditional OTP");
+  if (!otpReset?.id) throw new Error("Keycloak password reset OTP step is missing");
+  if (otpReset.requirement !== "DISABLED") {
+    const change = await fetch(resetPath, {
+      method: "PUT",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ id: otpReset.id, requirement: "DISABLED" }),
+    });
+    if (!change.ok) throw new Error("Keycloak password reset OTP change returned HTTP " + change.status);
+  }
+  const applied = (await readReset()).find((entry) => entry.id === otpReset.id);
+  if (applied?.requirement !== "DISABLED") throw new Error("Keycloak password reset OTP change was not applied");
 })().catch((error) => {
   console.error("Error: " + error.message);
   process.exitCode = 1;
 });
-' || fail 'Keycloak could not be configured for the LAN address.'
+' || fail 'Keycloak could not be configured for the LAN address and password-only recovery.'
 run_docker "${compose[@]}" up -d --no-build
 gateway_id=$(run_docker "${compose[@]}" ps -q gateway)
 if [[ -z "$gateway_id" ]]; then
