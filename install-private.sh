@@ -552,7 +552,6 @@ run_docker run --rm --network "container:$identity_id" --user "$(id -u):$(id -g)
 });
 ' || fail 'Keycloak could not be configured for the LAN address.'
 run_docker "${compose[@]}" up -d --no-build
-run_docker "${compose[@]}" ps
 setup_token=''
 while IFS= read -r env_line || [[ -n "$env_line" ]]; do
   case "$env_line" in
