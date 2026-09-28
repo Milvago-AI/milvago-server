@@ -39,7 +39,7 @@ func TestTenantDirectoryTarget(t *testing.T) {
 	}
 	for _, refused := range []string{"ldaps://database:5432", "ldaps://ldap.example.test:5432", "ldaps://identity", "ldaps://localhost", "ldaps://dc.localhost",
 		"ldaps://127.0.0.1", "ldaps://[::1]", "ldaps://[::ffff:127.0.0.1]", "ldaps://0.0.0.0", "ldaps://169.254.169.254", "ldaps://[fe80::1]", "ldaps://224.0.0.1"} {
-		if e := tenantDirectoryTarget(refused); e == nil {
+		if tenantDirectoryTarget(refused) == nil {
 			t.Fatal("a sub-organization may point its directory at", refused)
 		}
 	}

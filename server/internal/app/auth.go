@@ -391,6 +391,26 @@ func (a *App) createLoginSession(ctx context.Context, tx pgx.Tx, org, user strin
 	return session, expiry, nil
 }
 
+func (a *App) loginRequiresMFA(ctx context.Context, tx pgx.Tx, org, realm, subject string, mfa bool) (bool, error) {
+	var required bool
+	if e := tx.QueryRow(ctx, "SELECT require_mfa FROM settings WHERE organization_id=$1", org).Scan(&required); e != nil {
+		return false, e
+	}
+	if required || mfa {
+		return required, nil
+	}
+	admin, e := a.identityAdminFor(ctx, realm)
+	if e != nil {
+		return false, apiError{503, "identity_admin_unavailable", "Could not verify the account MFA configuration."}
+	}
+	required, e = admin.hasOTP(ctx, subject)
+	if e != nil {
+		a.log.Warn("identity credential lookup failed", "error", e)
+		return false, apiError{503, "identity_admin_unavailable", "Could not verify the account MFA configuration."}
+	}
+	return required, nil
+}
+
 func (a *App) completeLogin(w http.ResponseWriter, r *http.Request, ctx context.Context, flow verifiedLogin) error {
 	mfa := loginMFAEvidence(flow.claims)
 	realm := flow.attempt.realm
@@ -404,20 +424,9 @@ func (a *App) completeLogin(w http.ResponseWriter, r *http.Request, ctx context.
 	if e != nil {
 		return e
 	}
-	var requireMFA bool
-	if e = tx.QueryRow(ctx, "SELECT require_mfa FROM settings WHERE organization_id=$1", org).Scan(&requireMFA); e != nil {
+	requireMFA, e := a.loginRequiresMFA(ctx, tx, org, realm, flow.id.Subject, mfa)
+	if e != nil {
 		return e
-	}
-	if !requireMFA && !mfa {
-		admin, err := a.identityAdminFor(ctx, realm)
-		if err != nil {
-			return apiError{503, "identity_admin_unavailable", "Could not verify the account MFA configuration."}
-		}
-		requireMFA, err = admin.hasOTP(ctx, flow.id.Subject)
-		if err != nil {
-			a.log.Warn("identity credential lookup failed", "error", err)
-			return apiError{503, "identity_admin_unavailable", "Could not verify the account MFA configuration."}
-		}
 	}
 	if requireMFA && !mfa {
 		if flow.attempt.stepUp {

@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // admin serves every "/admin/realms/test/..." request issued by the product's
@@ -945,39 +947,56 @@ func (f *identityScenarioFixture) assertLDAPChildAuthority(t *testing.T, otherOr
 	if e != nil {
 		t.Fatal(e)
 	}
+	f.assertLDAPInitialAuthority(t, ctx, childTx, otherOrg, childOwner, rootOwner)
+	f.assertLDAPDirectMembershipAuthority(t, ctx, childTx, otherOrg, childOwner, rootOwner)
+	f.assertLDAPParentControl(t, ctx, childTx, otherOrg, childOwner, rootOwner, adminMember)
+	f.assertLDAPRoleAuthority(t, ctx, childTx, otherOrg)
+	childTx.Rollback(ctx)
+}
+
+type ldapConfiguratorCase struct {
+	name string
+	s    *Session
+	want bool
+}
+
+func (f *identityScenarioFixture) assertLDAPInitialAuthority(t *testing.T, ctx context.Context, childTx pgx.Tx, otherOrg, childOwner, rootOwner string) {
 	// Each organization configures its own sign-in: a direct member holding
 	// directory.manage there does, a right that only flows from the parent does not.
-	cases := []struct {
-		name string
-		s    *Session
-		want bool
-	}{
+	f.assertLDAPConfigurators(t, ctx, childTx, []ldapConfiguratorCase{
 		{"child owner", &Session{UserID: childOwner, OrganizationID: otherOrg, Role: "owner"}, true},
 		{"root owner in the child, inherited right only", &Session{UserID: rootOwner, OrganizationID: otherOrg, Role: "owner"}, false},
 		{"root owner's key", &Session{UserID: rootOwner, OrganizationID: otherOrg, Role: "owner", APIKeyID: "synthetic"}, false},
 		{"child owner's key", &Session{UserID: childOwner, OrganizationID: otherOrg, Role: "owner", APIKeyID: "synthetic"}, false},
+	})
+}
+
+func (f *identityScenarioFixture) assertLDAPDirectMembershipAuthority(t *testing.T, ctx context.Context, childTx pgx.Tx, otherOrg, childOwner, rootOwner string) {
+	// A person of the parent who is also a direct member of the child, with the right.
+	if _, e := childTx.Exec(ctx, `INSERT INTO memberships(organization_id,user_id,role) VALUES($1,$2,'owner')`, otherOrg, rootOwner); e != nil {
+		t.Fatal(e)
 	}
-	check := func() {
-		for _, c := range cases {
-			if got, e := identityConfigurator(ctx, childTx, c.s); e != nil || got != c.want {
-				t.Fatalf("%s: configurator %v, want %v (%v)", c.name, got, c.want, e)
-			}
+	f.assertLDAPConfigurators(t, ctx, childTx, []ldapConfiguratorCase{
+		{"child owner", &Session{UserID: childOwner, OrganizationID: otherOrg, Role: "owner"}, true},
+		{"root owner also a direct owner of the child", &Session{UserID: rootOwner, OrganizationID: otherOrg, Role: "owner"}, true},
+		{"root owner's key", &Session{UserID: rootOwner, OrganizationID: otherOrg, Role: "owner", APIKeyID: "synthetic"}, false},
+		{"child owner's key", &Session{UserID: childOwner, OrganizationID: otherOrg, Role: "owner", APIKeyID: "synthetic"}, false},
+	})
+	if _, e := childTx.Exec(ctx, `DELETE FROM memberships WHERE organization_id=$1 AND user_id=$2`, otherOrg, rootOwner); e != nil {
+		t.Fatal(e)
+	}
+}
+
+func (f *identityScenarioFixture) assertLDAPConfigurators(t *testing.T, ctx context.Context, childTx pgx.Tx, cases []ldapConfiguratorCase) {
+	t.Helper()
+	for _, c := range cases {
+		if got, e := identityConfigurator(ctx, childTx, c.s); e != nil || got != c.want {
+			t.Fatalf("%s: configurator %v, want %v (%v)", c.name, got, c.want, e)
 		}
 	}
-	check()
-	// A person of the parent who is also a direct member of the child, with the right.
-	if _, e = childTx.Exec(ctx, `INSERT INTO memberships(organization_id,user_id,role) VALUES($1,$2,'owner')`, otherOrg, rootOwner); e != nil {
-		t.Fatal(e)
-	}
-	cases[1] = struct {
-		name string
-		s    *Session
-		want bool
-	}{"root owner also a direct owner of the child", &Session{UserID: rootOwner, OrganizationID: otherOrg, Role: "owner"}, true}
-	check()
-	if _, e = childTx.Exec(ctx, `DELETE FROM memberships WHERE organization_id=$1 AND user_id=$2`, otherOrg, rootOwner); e != nil {
-		t.Fatal(e)
-	}
+}
+
+func (f *identityScenarioFixture) assertLDAPParentControl(t *testing.T, ctx context.Context, childTx pgx.Tx, otherOrg, childOwner, rootOwner, adminMember string) {
 	childSession := &Session{UserID: childOwner, OrganizationID: otherOrg, Role: "owner"}
 	if e := guardParentControl(ctx, childTx, childSession, rootOwner); e == nil || !strings.Contains(e.Error(), "parent organization") {
 		t.Fatal("a child owner may shadow the root owner's inherited access", e)
@@ -988,6 +1007,9 @@ func (f *identityScenarioFixture) assertLDAPChildAuthority(t *testing.T, otherOr
 	if guardParentControl(ctx, childTx, childSession, adminMember) == nil {
 		t.Fatal("a root admin reached the child through the parent yet the child owner may shadow them")
 	}
+}
+
+func (f *identityScenarioFixture) assertLDAPRoleAuthority(t *testing.T, ctx context.Context, childTx pgx.Tx, otherOrg string) {
 	// The permission decides, not the role name: a child admin lacks it, a custom role of
 	// the child carrying it has it.
 	var childAdmin, childCustom string
@@ -1002,11 +1024,11 @@ func (f *identityScenarioFixture) assertLDAPChildAuthority(t *testing.T, otherOr
 	t.Cleanup(func() {
 		_, _ = f.admin.Exec(ctx, `DELETE FROM users WHERE subject IN ('identity-child-admin','identity-child-custom')`)
 	})
-	if _, e = childTx.Exec(ctx, `INSERT INTO roles(organization_id,name,permissions) VALUES($1,'identity-custom',$2)`, otherOrg, []string{permDirectoryManage}); e != nil {
+	if _, e := childTx.Exec(ctx, `INSERT INTO roles(organization_id,name,permissions) VALUES($1,'identity-custom',$2)`, otherOrg, []string{permDirectoryManage}); e != nil {
 		t.Fatal(e)
 	}
 	for id, role := range map[string]string{childAdmin: "admin", childCustom: "identity-custom"} {
-		if _, e = childTx.Exec(ctx, `INSERT INTO memberships(organization_id,user_id,role) VALUES($1,$2,$3)`, otherOrg, id, role); e != nil {
+		if _, e := childTx.Exec(ctx, `INSERT INTO memberships(organization_id,user_id,role) VALUES($1,$2,$3)`, otherOrg, id, role); e != nil {
 			t.Fatal(e)
 		}
 	}
@@ -1015,7 +1037,6 @@ func (f *identityScenarioFixture) assertLDAPChildAuthority(t *testing.T, otherOr
 			t.Fatalf("configurator %v for %s, want %v (%v)", got, id, want, e)
 		}
 	}
-	childTx.Rollback(ctx)
 }
 
 func (f *identityScenarioFixture) removeLDAPIsolationOrg(t *testing.T, otherOrg, childOwner string) {

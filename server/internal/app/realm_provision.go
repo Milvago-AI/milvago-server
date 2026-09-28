@@ -167,55 +167,14 @@ func (a *App) createOrganizationRealm(ctx context.Context, root *identityAdmin, 
 	if e := adminJSON(ctx, root, "POST", "/partial-export?exportClients=false&exportGroupsAndRoles=false", nil, 200, &exported); e != nil {
 		return e
 	}
-	rep := map[string]any{}
-	for _, k := range realmSettings {
-		if v, ok := rootRealm[k]; ok {
-			rep[k] = v
-		}
-	}
-	custom := []any{}
-	flows, _ := exported["authenticationFlows"].([]any)
-	for _, f := range flows {
-		if flow, ok := f.(map[string]any); ok && flow["builtIn"] != true {
-			custom = append(custom, stripIdentifiers(flow))
-		}
-	}
-	// The root realm's attributes, frontendUrl included: it is set only when Keycloak is
-	// served under the console's own address, and the child realm is reached the same way.
-	attributes, _ := rep["attributes"].(map[string]any)
-	if attributes == nil {
-		attributes = map[string]any{}
-	}
 	smtp, e := a.sealedSMTP(ctx)
 	if e != nil {
 		return e
 	}
 	if smtp == nil {
-		if s, ok := rootRealm["smtpServer"].(map[string]any); ok {
-			smtp = map[string]string{}
-			for k, v := range s {
-				if text, ok := v.(string); ok && k != "password" {
-					smtp[k] = text
-				}
-			}
-		}
+		smtp = exportedSMTP(rootRealm)
 	}
-	realmRoles := map[string]any{"realm-management": managementRoles}
-	for k, v := range map[string]any{
-		"realm": realm, "enabled": true, "displayName": name, "attributes": attributes, "smtpServer": smtp,
-		"authenticationFlows": custom, "authenticatorConfig": stripIdentifiers(exported["authenticatorConfig"]),
-		"clients": []any{
-			map[string]any{"clientId": a.config.ClientID, "enabled": true, "protocol": "openid-connect", "publicClient": false, "secret": a.config.ClientSecret,
-				"standardFlowEnabled": true, "directAccessGrantsEnabled": false, "redirectUris": []string{origin + "/auth/callback"}, "webOrigins": []string{origin},
-				"baseUrl": signInURL(origin, realm), "attributes": map[string]string{"pkce.code.challenge.method": "S256", "post.logout.redirect.uris": origin + "/*"},
-				"defaultClientScopes": []string{"basic", "profile", "email", "roles", "acr"}},
-			map[string]any{"clientId": a.config.AdminClientID, "enabled": true, "protocol": "openid-connect", "publicClient": false, "secret": a.config.AdminClientSecret,
-				"serviceAccountsEnabled": true, "standardFlowEnabled": false, "directAccessGrantsEnabled": false},
-		},
-		"users": []any{map[string]any{"username": "service-account-" + a.config.AdminClientID, "enabled": true, "serviceAccountClientId": a.config.AdminClientID, "clientRoles": realmRoles}},
-	} {
-		rep[k] = v
-	}
+	rep := a.organizationRealmRepresentation(rootRealm, exported, smtp, origin, realm, name)
 	token, e := a.provisionerToken(ctx)
 	if e != nil {
 		return e
@@ -234,6 +193,63 @@ func (a *App) createOrganizationRealm(ctx context.Context, root *identityAdmin, 
 		return apiError{502, "identity_unavailable", "The identity provider could not create the organization realm."}
 	}
 	return nil
+}
+
+func exportedSMTP(rootRealm map[string]any) map[string]string {
+	s, ok := rootRealm["smtpServer"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	smtp := map[string]string{}
+	for k, v := range s {
+		if text, ok := v.(string); ok && k != "password" {
+			smtp[k] = text
+		}
+	}
+	return smtp
+}
+
+func customAuthenticationFlows(exported map[string]any) []any {
+	custom := []any{}
+	flows, _ := exported["authenticationFlows"].([]any)
+	for _, f := range flows {
+		if flow, ok := f.(map[string]any); ok && flow["builtIn"] != true {
+			custom = append(custom, stripIdentifiers(flow))
+		}
+	}
+	return custom
+}
+
+func (a *App) organizationRealmRepresentation(rootRealm, exported map[string]any, smtp map[string]string, origin, realm, name string) map[string]any {
+	rep := map[string]any{}
+	for _, k := range realmSettings {
+		if v, ok := rootRealm[k]; ok {
+			rep[k] = v
+		}
+	}
+	// The root realm's attributes, frontendUrl included: it is set only when Keycloak is
+	// served under the console's own address, and the child realm is reached the same way.
+	attributes, _ := rep["attributes"].(map[string]any)
+	if attributes == nil {
+		attributes = map[string]any{}
+	}
+	realmRoles := map[string]any{"realm-management": managementRoles}
+	for k, v := range map[string]any{
+		"realm": realm, "enabled": true, "displayName": name, "attributes": attributes, "smtpServer": smtp,
+		"authenticationFlows": customAuthenticationFlows(exported), "authenticatorConfig": stripIdentifiers(exported["authenticatorConfig"]),
+		"clients": []any{
+			map[string]any{"clientId": a.config.ClientID, "enabled": true, "protocol": "openid-connect", "publicClient": false, "secret": a.config.ClientSecret,
+				"standardFlowEnabled": true, "directAccessGrantsEnabled": false, "redirectUris": []string{origin + "/auth/callback"}, "webOrigins": []string{origin},
+				"baseUrl": signInURL(origin, realm), "attributes": map[string]string{"pkce.code.challenge.method": "S256", "post.logout.redirect.uris": origin + "/*"},
+				"defaultClientScopes": []string{"basic", "profile", "email", "roles", "acr"}},
+			map[string]any{"clientId": a.config.AdminClientID, "enabled": true, "protocol": "openid-connect", "publicClient": false, "secret": a.config.AdminClientSecret,
+				"serviceAccountsEnabled": true, "standardFlowEnabled": false, "directAccessGrantsEnabled": false},
+		},
+		"users": []any{map[string]any{"username": "service-account-" + a.config.AdminClientID, "enabled": true, "serviceAccountClientId": a.config.AdminClientID, "clientRoles": realmRoles}},
+	} {
+		rep[k] = v
+	}
+	return rep
 }
 
 // provisionerToken authenticates the master-realm client that may create realms and do
@@ -341,6 +357,54 @@ func convergeResetSecondFactor(ctx context.Context, root, admin *identityAdmin) 
 	return nil
 }
 
+const identityProviderRedirector = "identity-provider-redirector"
+
+func topLevelExecutions(ctx context.Context, admin *identityAdmin, path string) ([]map[string]any, error) {
+	var executions []map[string]any
+	if e := adminJSON(ctx, admin, "GET", path, nil, 200, &executions); e != nil {
+		return nil, e
+	}
+	level := []map[string]any{}
+	for _, x := range executions {
+		if l, _ := x["level"].(float64); l == 0 {
+			level = append(level, x)
+		}
+	}
+	return level, nil
+}
+
+func redirectorExecution(executions []map[string]any) (int, map[string]any) {
+	for i, x := range executions {
+		if x["providerId"] == identityProviderRedirector {
+			return i, x
+		}
+	}
+	return -1, nil
+}
+
+func configureBrowserRedirector(ctx context.Context, admin *identityAdmin, path string, index int, execution map[string]any) error {
+	execution["requirement"] = "ALTERNATIVE"
+	status, _, _, e := admin.call(ctx, "PUT", path, execution)
+	if e != nil {
+		return e
+	}
+	if status != http.StatusAccepted && status != http.StatusNoContent {
+		return apiError{502, "identity_unavailable", "Could not converge the sign-in flow."}
+	}
+	// Added last; raised until it sits right after the session cookie.
+	id, _ := execution["id"].(string)
+	for ; index > 1; index-- {
+		status, _, _, e := admin.call(ctx, "POST", "/authentication/executions/"+url.PathEscape(id)+"/raise-priority", nil)
+		if e != nil {
+			return e
+		}
+		if status/100 != 2 {
+			return apiError{502, "identity_unavailable", "Could not converge the sign-in flow."}
+		}
+	}
+	return nil
+}
+
 // convergeBrowserRedirector adds Keycloak's identity-provider redirector to the realm's
 // sign-in flow, right after the session cookie: kc_idp_hint then sends an address of an
 // organization's domain straight to its provider, and without a hint the sign-in is
@@ -355,56 +419,26 @@ func convergeBrowserRedirector(ctx context.Context, admin *identityAdmin) error 
 		return nil
 	}
 	path := flowExecutionsPath(flow)
-	top := func() ([]map[string]any, error) {
-		var executions []map[string]any
-		if e := adminJSON(ctx, admin, "GET", path, nil, 200, &executions); e != nil {
-			return nil, e
-		}
-		level := []map[string]any{}
-		for _, x := range executions {
-			if l, _ := x["level"].(float64); l == 0 {
-				level = append(level, x)
-			}
-		}
-		return level, nil
-	}
-	executions, e := top()
+	executions, e := topLevelExecutions(ctx, admin, path)
 	if e != nil {
 		return e
 	}
-	for _, x := range executions {
-		if x["providerId"] == "identity-provider-redirector" {
-			return nil
-		}
+	if _, existing := redirectorExecution(executions); existing != nil {
+		return nil
 	}
-	if e = adminJSON(ctx, admin, "POST", path+"/execution", map[string]any{"provider": "identity-provider-redirector"}, 201, nil); e != nil {
+	if e = adminJSON(ctx, admin, "POST", path+"/execution", map[string]any{"provider": identityProviderRedirector}, 201, nil); e != nil {
 		return e
 	}
-	if executions, e = top(); e != nil {
+	executions, e = topLevelExecutions(ctx, admin, path)
+	if e != nil {
 		return e
 	}
-	for i, x := range executions {
-		if x["providerId"] != "identity-provider-redirector" {
+	for index, execution := range executions {
+		if execution["providerId"] != identityProviderRedirector {
 			continue
 		}
-		x["requirement"] = "ALTERNATIVE"
-		status, _, _, e := admin.call(ctx, "PUT", path, x)
-		if e != nil {
+		if e := configureBrowserRedirector(ctx, admin, path, index, execution); e != nil {
 			return e
-		}
-		if status != http.StatusAccepted && status != http.StatusNoContent {
-			return apiError{502, "identity_unavailable", "Could not converge the sign-in flow."}
-		}
-		// Added last; raised until it sits right after the session cookie.
-		id, _ := x["id"].(string)
-		for ; i > 1; i-- {
-			status, _, _, e := admin.call(ctx, "POST", "/authentication/executions/"+url.PathEscape(id)+"/raise-priority", nil)
-			if e != nil {
-				return e
-			}
-			if status/100 != 2 {
-				return apiError{502, "identity_unavailable", "Could not converge the sign-in flow."}
-			}
 		}
 	}
 	return nil

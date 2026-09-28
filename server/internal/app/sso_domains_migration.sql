@@ -11,11 +11,14 @@ CREATE TABLE IF NOT EXISTS sso_domains (
 CREATE UNIQUE INDEX IF NOT EXISTS sso_domains_proven ON sso_domains(domain) WHERE verified_at IS NOT NULL;
 ALTER TABLE sso_domains ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sso_domains FORCE ROW LEVEL SECURITY;
+CREATE OR REPLACE FUNCTION public.sso_domain_lookup_role() RETURNS boolean LANGUAGE sql STABLE AS $$
+ SELECT current_user = 'milvago_lookup'
+$$;
 DROP POLICY IF EXISTS tenant ON sso_domains;
-CREATE POLICY tenant ON sso_domains USING (current_user <> 'milvago_lookup' AND organization_id = nullif(current_setting('milvago.organization_id',true),'')::uuid) WITH CHECK (current_user <> 'milvago_lookup' AND organization_id = nullif(current_setting('milvago.organization_id',true),'')::uuid);
+CREATE POLICY tenant ON sso_domains USING (NOT public.sso_domain_lookup_role() AND organization_id = nullif(current_setting('milvago.organization_id',true),'')::uuid) WITH CHECK (NOT public.sso_domain_lookup_role() AND organization_id = nullif(current_setting('milvago.organization_id',true),'')::uuid);
 -- The unauthenticated sign-in reads which organization proved one domain, nothing else.
 DROP POLICY IF EXISTS identity_lookup ON sso_domains;
-CREATE POLICY identity_lookup ON sso_domains FOR SELECT TO milvago_lookup USING (current_user = 'milvago_lookup' AND verified_at IS NOT NULL AND domain = current_setting('milvago.lookup_domain',true));
+CREATE POLICY identity_lookup ON sso_domains FOR SELECT TO milvago_lookup USING (public.sso_domain_lookup_role() AND verified_at IS NOT NULL AND domain = current_setting('milvago.lookup_domain',true));
 CREATE OR REPLACE FUNCTION sso_domain_owner(wanted text) RETURNS TABLE(organization_id uuid) LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$ BEGIN
  PERFORM set_config('milvago.lookup_domain', lower(wanted), true);
  RETURN QUERY SELECT d.organization_id FROM public.sso_domains d WHERE d.domain = lower(wanted) AND d.verified_at IS NOT NULL;

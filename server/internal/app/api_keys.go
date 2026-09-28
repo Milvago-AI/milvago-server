@@ -209,6 +209,33 @@ func (a *App) touchAPIKey(ctx context.Context, org, id string) {
 // keyHolder is one account that still holds a live key in one organization.
 type keyHolder struct{ org, user, subject, realm string }
 
+type keyHolderRealmState struct {
+	admin             *identityAdmin
+	probed, answering bool
+	unavailable       bool
+}
+
+func (a *App) withdrawnHolderVerdict(ctx context.Context, h keyHolder, state *keyHolderRealmState) (bool, bool) {
+	u, e := state.admin.user(ctx, h.subject)
+	if e != nil {
+		// An unreachable or refusing provider gives no revocation verdict.
+		return false, false
+	}
+	// A 404 is ambiguous: it can mean a deleted account, a wrong realm, or
+	// missing administration rights. Confirm the collection endpoint once.
+	if u == nil {
+		if !state.probed {
+			state.probed, state.answering = true, state.admin.answering(ctx)
+		}
+		if !state.answering {
+			a.log.Error("identity administration answered 404 for a key holder but is not listing users; withdrawn-identity sweep skipped for that realm")
+			state.unavailable = true
+			return false, false
+		}
+	}
+	return u.withdrawn(), true
+}
+
 // revokeWithdrawnIdentities revokes the API keys of accounts the identity
 // provider no longer honours -- deleted outright, or disabled.
 //
@@ -240,12 +267,7 @@ func (a *App) revokeWithdrawnIdentities(ctx context.Context) {
 	// in several organizations, and the provider is asked once. Each account is
 	// asked of its own realm, with that realm's own administration.
 	verdicts := map[string]bool{}
-	type realmState struct {
-		admin             *identityAdmin
-		probed, answering bool
-		unavailable       bool
-	}
-	realms := map[string]*realmState{}
+	realms := map[string]*keyHolderRealmState{}
 	for _, h := range holders {
 		key := h.realm + "\x00" + h.subject
 		if _, known := verdicts[key]; known {
@@ -253,7 +275,7 @@ func (a *App) revokeWithdrawnIdentities(ctx context.Context) {
 		}
 		state := realms[h.realm]
 		if state == nil {
-			state = &realmState{}
+			state = &keyHolderRealmState{}
 			if state.admin, e = a.identityAdminFor(ctx, h.realm); e != nil {
 				state.unavailable = true
 			}
@@ -262,28 +284,9 @@ func (a *App) revokeWithdrawnIdentities(ctx context.Context) {
 		if state.unavailable {
 			continue
 		}
-		u, e := state.admin.user(ctx, h.subject)
-		if e != nil {
-			// Unreachable or refused: no verdict, so this account is left alone.
-			continue
+		if withdrawn, known := a.withdrawnHolderVerdict(ctx, h, state); known {
+			verdicts[key] = withdrawn
 		}
-		// A 404 is ambiguous. The account may be gone, or the request may have
-		// reached the wrong realm, or the service account may have lost its
-		// rights -- all three answer 404 on a single user, and acting on the
-		// first reading would revoke every key in the deployment the moment the
-		// configuration is wrong. So corroborate once per realm, against the
-		// collection endpoint, and leave that realm alone rather than guess.
-		if u == nil {
-			if !state.probed {
-				state.probed, state.answering = true, state.admin.answering(ctx)
-			}
-			if !state.answering {
-				a.log.Error("identity administration answered 404 for a key holder but is not listing users; withdrawn-identity sweep skipped for that realm")
-				state.unavailable = true
-				continue
-			}
-		}
-		verdicts[key] = u.withdrawn()
 	}
 	for _, h := range holders {
 		if verdicts[h.realm+"\x00"+h.subject] {

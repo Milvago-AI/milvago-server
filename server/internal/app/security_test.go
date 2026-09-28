@@ -210,72 +210,95 @@ func (p *testIdentity) serveHTTP(t *testing.T, w http.ResponseWriter, r *http.Re
 // administration of a created realm, which reuse the "test" realm's handlers and state.
 func (p *testIdentity) serveRealms(w http.ResponseWriter, r *http.Request) bool {
 	path := r.URL.Path
-	if name, ok := strings.CutPrefix(path, "/realms/"); ok {
-		name, rest, _ := strings.Cut(name, "/")
-		p.mu.Lock()
-		_, created := p.realms[name]
-		p.mu.Unlock()
-		switch {
-		case rest == ".well-known/openid-configuration" && name != "test":
-			if !created {
-				http.NotFound(w, r)
-				return true
-			}
-			reply(w, 200, map[string]any{"issuer": p.server.URL + "/realms/" + name})
-			return true
-		case rest == "protocol/openid-connect/token" && name == "master":
-			r.ParseForm()
-			if r.Form.Get("client_secret") != fakeProvisionerSecret {
-				reply(w, 401, map[string]string{"error": "unauthorized_client"})
-				return true
-			}
-			reply(w, 200, map[string]string{"access_token": "test-provisioner-token"})
-			return true
-		case rest == "protocol/openid-connect/token" && created:
-			reply(w, 200, map[string]string{"access_token": "test-administration-token"})
-			return true
-		}
+	return p.serveRealmOIDC(w, r, path) || p.serveRealmCreation(w, r, path) || p.routeCreatedRealmAdmin(w, r, path)
+}
+
+func (p *testIdentity) serveRealmOIDC(w http.ResponseWriter, r *http.Request, path string) bool {
+	realmPath, ok := strings.CutPrefix(path, "/realms/")
+	if !ok {
 		return false
 	}
-	if path == "/admin/realms" && r.Method == "POST" {
-		if r.Header.Get("Authorization") != "Bearer test-provisioner-token" {
-			w.WriteHeader(403)
+	name, rest, _ := strings.Cut(realmPath, "/")
+	p.mu.Lock()
+	_, created := p.realms[name]
+	p.mu.Unlock()
+	if rest == ".well-known/openid-configuration" && name != "test" {
+		if !created {
+			http.NotFound(w, r)
 			return true
 		}
-		var rep map[string]any
-		if json.NewDecoder(r.Body).Decode(&rep) != nil {
-			w.WriteHeader(400)
-			return true
-		}
-		name, _ := rep["realm"].(string)
-		p.mu.Lock()
-		defer p.mu.Unlock()
-		if _, taken := p.realms[name]; taken || name == "" {
-			w.WriteHeader(409)
-			return true
-		}
-		p.realms[name] = rep
-		w.WriteHeader(201)
+		reply(w, 200, map[string]any{"issuer": p.server.URL + "/realms/" + name})
 		return true
 	}
-	if rest, ok := strings.CutPrefix(path, "/admin/realms/"); ok {
-		name, sub, _ := strings.Cut(rest, "/")
-		p.mu.Lock()
-		_, created := p.realms[name]
-		p.mu.Unlock()
-		if !created {
-			return false
-		}
-		if sub == "" && r.Method == "DELETE" {
-			p.mu.Lock()
-			delete(p.realms, name)
-			p.mu.Unlock()
-			w.WriteHeader(204)
+	if rest != "protocol/openid-connect/token" {
+		return false
+	}
+	return p.serveRealmToken(w, r, name, created)
+}
+
+func (p *testIdentity) serveRealmToken(w http.ResponseWriter, r *http.Request, name string, created bool) bool {
+	if name == "master" {
+		r.ParseForm()
+		if r.Form.Get("client_secret") != fakeProvisionerSecret {
+			reply(w, 401, map[string]string{"error": "unauthorized_client"})
 			return true
 		}
-		// The created realm is administered through the test realm's handlers.
-		r.URL.Path = "/admin/realms/test" + strings.TrimSuffix("/"+sub, "/")
+		reply(w, 200, map[string]string{"access_token": "test-provisioner-token"})
+		return true
 	}
+	if !created {
+		return false
+	}
+	reply(w, 200, map[string]string{"access_token": "test-administration-token"})
+	return true
+}
+
+func (p *testIdentity) serveRealmCreation(w http.ResponseWriter, r *http.Request, path string) bool {
+	if path != "/admin/realms" || r.Method != "POST" {
+		return false
+	}
+	if r.Header.Get("Authorization") != "Bearer test-provisioner-token" {
+		w.WriteHeader(403)
+		return true
+	}
+	var rep map[string]any
+	if json.NewDecoder(r.Body).Decode(&rep) != nil {
+		w.WriteHeader(400)
+		return true
+	}
+	name, _ := rep["realm"].(string)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if _, taken := p.realms[name]; taken || name == "" {
+		w.WriteHeader(409)
+		return true
+	}
+	p.realms[name] = rep
+	w.WriteHeader(201)
+	return true
+}
+
+func (p *testIdentity) routeCreatedRealmAdmin(w http.ResponseWriter, r *http.Request, path string) bool {
+	realmPath, ok := strings.CutPrefix(path, "/admin/realms/")
+	if !ok {
+		return false
+	}
+	name, sub, _ := strings.Cut(realmPath, "/")
+	p.mu.Lock()
+	_, created := p.realms[name]
+	p.mu.Unlock()
+	if !created {
+		return false
+	}
+	if sub == "" && r.Method == "DELETE" {
+		p.mu.Lock()
+		delete(p.realms, name)
+		p.mu.Unlock()
+		w.WriteHeader(204)
+		return true
+	}
+	// The created realm is administered through the test realm's handlers.
+	r.URL.Path = "/admin/realms/test" + strings.TrimSuffix("/"+sub, "/")
 	return false
 }
 

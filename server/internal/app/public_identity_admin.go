@@ -45,6 +45,18 @@ func (a *App) syncRealmIdentity(ctx context.Context, origin, stored string) erro
 		return err
 	}
 	path := "/clients?clientId=" + url.QueryEscape(a.config.ClientID)
+	if err := a.syncIdentityClient(ctx, admin, path, origin, stored); err != nil {
+		return err
+	}
+	if strings.HasPrefix(a.config.Issuer, a.config.AppURL+"/realms/") {
+		if err := syncIdentityRealmURL(ctx, admin, origin); err != nil {
+			return err
+		}
+	}
+	return a.verifyIdentityClientURL(ctx, admin, path, origin)
+}
+
+func (a *App) syncIdentityClient(ctx context.Context, admin *identityAdmin, path, origin, stored string) error {
 	status, _, raw, err := admin.call(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return err
@@ -85,49 +97,55 @@ func (a *App) syncRealmIdentity(ctx context.Context, origin, stored string) erro
 	if status != http.StatusNoContent {
 		return apiError{502, "identity_unavailable", "Could not update the identity client."}
 	}
+	return nil
+}
 
-	if strings.HasPrefix(a.config.Issuer, a.config.AppURL+"/realms/") {
-		status, _, raw, err = admin.call(ctx, http.MethodGet, "", nil)
-		if err != nil {
-			return err
-		}
-		if status != http.StatusOK {
-			return apiError{502, "identity_unavailable", "Could not read the identity realm."}
-		}
-		var realm map[string]any
-		if json.Unmarshal(raw, &realm) != nil {
-			return apiError{502, "identity_unavailable", "Invalid identity realm response."}
-		}
-		realmAttributes, _ := realm["attributes"].(map[string]any)
-		if realmAttributes == nil {
-			realmAttributes = map[string]any{}
-		}
-		realmAttributes["frontendUrl"] = origin
-		realm["attributes"] = realmAttributes
-		status, _, _, err = admin.call(ctx, http.MethodPut, "", realm)
-		if err != nil {
-			return err
-		}
-		if status != http.StatusNoContent {
-			return apiError{502, "identity_unavailable", "Could not update the identity realm URL."}
-		}
-		status, _, raw, err = admin.call(ctx, http.MethodGet, "", nil)
-		if err != nil {
-			return err
-		}
-		realm = nil
-		if status != http.StatusOK || json.Unmarshal(raw, &realm) != nil {
-			return apiError{502, "identity_unavailable", "Could not verify the identity realm URL."}
-		}
-		confirmed, _ := realm["attributes"].(map[string]any)
-		if confirmed["frontendUrl"] != origin {
-			return apiError{502, "identity_unavailable", "The identity realm URL was not applied."}
-		}
-	}
-	status, _, raw, err = admin.call(ctx, http.MethodGet, path, nil)
+func syncIdentityRealmURL(ctx context.Context, admin *identityAdmin, origin string) error {
+	status, _, raw, err := admin.call(ctx, http.MethodGet, "", nil)
 	if err != nil {
 		return err
 	}
+	if status != http.StatusOK {
+		return apiError{502, "identity_unavailable", "Could not read the identity realm."}
+	}
+	var realm map[string]any
+	if json.Unmarshal(raw, &realm) != nil {
+		return apiError{502, "identity_unavailable", "Invalid identity realm response."}
+	}
+	realmAttributes, _ := realm["attributes"].(map[string]any)
+	if realmAttributes == nil {
+		realmAttributes = map[string]any{}
+	}
+	realmAttributes["frontendUrl"] = origin
+	realm["attributes"] = realmAttributes
+	status, _, _, err = admin.call(ctx, http.MethodPut, "", realm)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusNoContent {
+		return apiError{502, "identity_unavailable", "Could not update the identity realm URL."}
+	}
+	status, _, raw, err = admin.call(ctx, http.MethodGet, "", nil)
+	if err != nil {
+		return err
+	}
+	realm = nil
+	if status != http.StatusOK || json.Unmarshal(raw, &realm) != nil {
+		return apiError{502, "identity_unavailable", "Could not verify the identity realm URL."}
+	}
+	confirmed, _ := realm["attributes"].(map[string]any)
+	if confirmed["frontendUrl"] != origin {
+		return apiError{502, "identity_unavailable", "The identity realm URL was not applied."}
+	}
+	return nil
+}
+
+func (a *App) verifyIdentityClientURL(ctx context.Context, admin *identityAdmin, path, origin string) error {
+	status, _, raw, err := admin.call(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return err
+	}
+	var clients []map[string]any
 	if status != http.StatusOK || json.Unmarshal(raw, &clients) != nil {
 		return apiError{502, "identity_unavailable", "Could not verify the identity client URL."}
 	}
