@@ -443,9 +443,9 @@ import { join } from 'node:path';
 
 const root = '/work';
 const target = join(root, '.local/installers');
-const expectedArchive = 'f123ec27e295e9cdcfc8bf653650cdacf3b83ca8fd6d4b3dd3c7bfe746f4b546';
+const expectedArchive = '46fa08ed2504a66b14c31bea45693cfa52c560075713cc5c3fc8e7d9e3ff6969';
 const expected = {
-  windows: { name: 'milvago-community-0.6.0-windows.msi', size: 5844992, sha256: '4c9f57e216a5dd7253570741edcd1946b87a374b737dccb915e38145f66f419b', format: 'msi', script: { name: 'milvago-community-0.6.0-windows-install.ps1', size: 3455, sha256: '82557ca2f067de46c5655e196826d5d56fbfdbd74ec5d12c67d9c4ec7b3d8cc7' } },
+  windows: { name: 'milvago-community-0.6.0-windows.msi', size: 5840896, sha256: 'd7e2f5f1edd1cc08f7fee99aeeb63ee8fb22a0dbaca12546acda999f283a721f', format: 'msi', script: { name: 'milvago-community-0.6.0-windows-install.ps1', size: 3455, sha256: '240649bf10a9d89d0d57a9f66f47e5ee7a2116ee4afc6ad01c2f7e196a8284af' } },
   linux: { name: 'milvago-community-0.6.0-linux.tar.gz', size: 5549559, sha256: '347765c87bd9d701d9064027735dc023efb212340a5aeaa000adf2aea494ae70', format: 'binary' },
 };
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -454,7 +454,7 @@ let stage;
 try {
   const token = readFileSync(0, 'utf8').trim();
   requireValue(/^[A-Za-z0-9_]+$/.test(token), 'GitHub token is missing');
-  const response = await fetch('https://api.github.com/repos/Milvago-AI/milvago-agent/releases/assets/596132844', {
+  const response = await fetch('https://api.github.com/repos/Milvago-AI/milvago-agent/releases/assets/596232876', {
     headers: { Authorization: 'Bearer ' + token, Accept: 'application/octet-stream', 'X-GitHub-Api-Version': '2022-11-28' },
     redirect: 'manual',
   });
