@@ -9,5 +9,5 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, e)
 		return
 	}
-	reply(w, 200, map[string]string{"default_language": language, "edition": Edition})
+	reply(w, 200, map[string]any{"default_language": language, "edition": Edition, "demo_read_only": a.config.DemoReadOnly})
 }

@@ -258,6 +258,15 @@ describe('Console workflows', () => {
     expect(assign).toHaveBeenLastCalledWith('/auth/login?lang=fr&login_hint=jdoe');
     vi.unstubAllGlobals();
   });
+  it('prefills the demo sign-in name only on a read-only demo instance', async () => {
+    serve({ '/api/bootstrap': { edition: 'commercial', demo_read_only: true } }, url => url === '/api/session' ? reply({ error: 'unauthorized' }, 401) : undefined);
+    render(<App />);
+    const field = await screen.findByRole('textbox', { name: 'E-mail ou identifiant' });
+    await waitFor(() => expect(field).toHaveValue('demo'));
+    await userEvent.setup().clear(field);
+    await userEvent.setup().type(field, 'another-user');
+    expect(field).toHaveValue('another-user');
+  });
   it('names the commercial edition Enterprise in the shell and on the entry page', async () => {
     serve({ '/api/overview': { period_hours: 24, events: 0, navigations: 0, blocked: 0, devices: 0, active_devices: 0, providers: [], timeline: [] }, '/api/bootstrap': { default_language: 'fr', edition: 'commercial' } }, url => url === '/api/session' ? reply({ ...session, edition: 'commercial' }) : undefined);
     const shell = render(<App />);

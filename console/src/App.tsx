@@ -302,6 +302,7 @@ export function App() {
   const [session, setSession] = useState<Session>();
   // Edition of this instance as served publicly, for the signed-out entry page.
   const [publicEdition, setPublicEdition] = useState<Session["edition"]>();
+  const [loginHint, setLoginHint] = useState("");
   // An instance without any administrator shows the setup wizard instead of the entry page.
   const [setupStatus, setSetupStatus] = useState<SetupStatus>();
   const [sessionError, setSessionError] = useState<unknown>();
@@ -348,10 +349,11 @@ export function App() {
     // Only the edition is read here now: the signed-out page renders this
     // browser's explicit choice, else its own language, both of which are known
     // before any request answers.
-    request<{ edition: Session["edition"] }>("/api/bootstrap", { signal: controller.signal })
+    request<{ edition: Session["edition"]; demo_read_only?: boolean }>("/api/bootstrap", { signal: controller.signal })
       .then(value => {
         if (controller.signal.aborted) return;
         setPublicEdition(value.edition);
+        if (value.demo_read_only) setLoginHint(previous => previous || "demo");
       }).catch(() => { /* The resolved language already stands. */ });
     request<SetupStatus>("/api/setup", { signal: controller.signal })
       .then(value => { if (!controller.signal.aborted) setSetupStatus(value); })
@@ -542,6 +544,8 @@ export function App() {
                     id="entry-email"
                     name="login_hint"
                     type="text"
+                    value={loginHint}
+                    onChange={event => setLoginHint(event.target.value)}
                     required
                     maxLength={254}
                     autoCapitalize="none"
