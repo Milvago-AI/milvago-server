@@ -506,7 +506,7 @@ export const en = {
   publicAgentUrlNotConfirmed: "Public Milvago URL not confirmed",
   setAndConfirmThePublicHttps: "Set and confirm the public agent URL in Administration → Settings before downloading an installer. Agents will connect to that URL.",
   anOrganizationOwnerMustConfirmThe: "An organization owner must confirm the public URL in Administration → Settings before any download.",
-  windowsPackageIncludesFiles: "The Windows ZIP contains the MSI, its installation script and this organization's provisioning file. Extract it and run the script as administrator. Protect the ZIP and JSON: they can enroll devices. If your account uses a second factor, verify again when prompted.",
+  windowsPackageIncludesFiles: "The Windows ZIP contains the MSI, its installation script, this organization's provisioning file and a README.md with the required command. Extract it and run the script as administrator. Protect the ZIP and JSON: they can enroll devices. If your account uses a second factor, verify again when prompted.",
   manualApprovalIsOn: "Manual approval is on",
   everyInstalledDeviceWillAppearAs: "Every installed device will appear as pending and will report nothing until you approve it in Devices.",
   approvalDependsOnTheNetwork: "Approval depends on the network",

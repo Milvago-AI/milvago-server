@@ -565,10 +565,10 @@ func (x servedInstallerFixture) downloadModeMSI(t *testing.T, state *installerMo
 		t.Fatal("real ZIP response invalid")
 	}
 	archive, e := zip.NewReader(bytes.NewReader(data), int64(len(data)))
-	if e != nil || len(archive.File) != 3 {
-		t.Fatal("ZIP must contain exactly three files", e)
+	if e != nil || len(archive.File) != 4 {
+		t.Fatal("ZIP must contain exactly four files", e)
 	}
-	wanted := map[string]bool{"milvago-windows-installer.msi": true, "milvago-windows-install.ps1": true, "milvago-provision.json": true}
+	wanted := map[string]bool{"milvago-windows-installer.msi": true, "milvago-windows-install.ps1": true, "milvago-provision.json": true, "README.md": true}
 	files := map[string][]byte{}
 	for _, entry := range archive.File {
 		if !wanted[entry.Name] || files[entry.Name] != nil {
@@ -584,6 +584,12 @@ func (x servedInstallerFixture) downloadModeMSI(t *testing.T, state *installerMo
 			t.Fatal("ZIP entry invalid", readErr)
 		}
 		files[entry.Name] = contents
+	}
+	readme := string(files["README.md"])
+	for _, instruction := range []string{"-MsiPath .\\milvago-windows-installer.msi", "-ProvisionPath .\\milvago-provision.json", "as Administrator"} {
+		if !strings.Contains(readme, instruction) {
+			t.Fatal("ZIP README is missing an installation instruction", instruction)
+		}
 	}
 	msiBytes := files["milvago-windows-installer.msi"]
 	if len(msiBytes) < 8 || !bytes.Equal(msiBytes[:8], []byte{0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1}) {

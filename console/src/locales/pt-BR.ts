@@ -507,7 +507,7 @@ export const ptBR: Record<TranslationKey, string> = {
   publicAgentUrlNotConfirmed: "URL pública do Milvago não confirmada",
   setAndConfirmThePublicHttps: "Defina e confirme a URL pública do Milvago em Administração → Configurações antes de baixar um instalador. Os agentes se conectarão a essa URL.",
   anOrganizationOwnerMustConfirmThe: "Um proprietário da organização deve confirmar a URL pública em Administração → Configurações antes de qualquer download.",
-  windowsPackageIncludesFiles: "O ZIP do Windows contém o MSI, o script de instalação e o arquivo de provisionamento desta organização. Extraia-o e execute o script como administrador. Proteja o ZIP e o JSON: eles permitem registrar dispositivos. Se sua conta usar um segundo fator, confirme-o quando solicitado.",
+  windowsPackageIncludesFiles: "O ZIP do Windows contém o MSI, o script de instalação, o arquivo de provisionamento desta organização e um README.md com o comando obrigatório. Extraia-o e execute o script como administrador. Proteja o ZIP e o JSON: eles permitem registrar dispositivos. Se sua conta usar um segundo fator, confirme-o quando solicitado.",
   manualApprovalIsOn: "A aprovação manual está ativada",
   everyInstalledDeviceWillAppearAs: "Cada dispositivo instalado aparecerá como pendente e não reportará nada até que você o aprove em Dispositivos.",
   approvalDependsOnTheNetwork: "A aprovação depende da rede",

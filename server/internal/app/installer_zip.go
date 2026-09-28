@@ -3,6 +3,7 @@ package app
 import (
 	"archive/zip"
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,6 +16,9 @@ import (
 )
 
 const windowsPackageName = "milvago-windows-package.zip"
+
+//go:embed windows_package_readme.md
+var windowsPackageReadme []byte
 
 // Only the provisioning document varies by organization. The MSI and script
 // are copied from the verified release before they enter the ZIP.
@@ -101,6 +105,7 @@ func (a *App) downloadWindowsPackage(w http.ResponseWriter, r *http.Request, tx 
 		{name: "milvago-windows-installer.msi", path: copyPath},
 		{name: "milvago-windows-install.ps1", body: script},
 		{name: "milvago-provision.json", body: provisionJSON},
+		{name: "README.md", body: windowsPackageReadme},
 	} {
 		var input io.Reader = bytes.NewReader(item.body)
 		if item.path != "" {
