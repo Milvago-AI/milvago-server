@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SOURCE_COMMIT='7d035d7c3040cba87d65d52d18fa24f676dcc7b7'
-IMAGE='ghcr.io/milvago-ai/milvago-community-server@sha256:4916171380e6881560190360c6f9cb56d60f8633d1064e789d4df7a9e904d31d'
+IMAGE='ghcr.io/milvago-ai/milvago-community-server@sha256:bd7a81cb7b93e91d6d86a86bdb77c4fe2a57a043c840d08929bdceb80b58c4fb'
 COSIGN_IMAGE='ghcr.io/sigstore/cosign/cosign:v3.1.3@sha256:9e5c2f2edc34351160407ca3416c61855bdf9403c3c5936e0f0be7fc261611b8'
 CADDY_IMAGE='caddy:2.11.4-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b'
 NODE_IMAGE='node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2'
