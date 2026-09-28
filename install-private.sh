@@ -442,10 +442,10 @@ import { join } from 'node:path';
 
 const root = '/work';
 const target = join(root, '.local/installers');
-const expectedArchive = 'd3f03490d14d921edaf907fbc14de85dbbd5dfae92248e70478d7b611e3fe390';
+const expectedArchive = 'cac865774dff40dd50c4dda8057d861e0afe3df591a32e4044718f6b7f8a2bf0';
 const expected = {
-  windows: { name: 'milvago-community-0.5.51-windows.msi', size: 5824512, sha256: '83041474374d90f1e399053e5e3f05a4a32511a2848345064ad98702637db07c', format: 'msi' },
-  linux: { name: 'milvago-community-0.5.51-linux.tar.gz', size: 5548553, sha256: '14a134fd987139f41a66d780021c6ff1f971e9aacefa528621611d9b5c347188', format: 'binary' },
+  windows: { name: 'milvago-community-0.6.0-windows.msi', size: 5844992, sha256: '4ecab960b8801670b5a6db863e975b989db650038bc60b6c47a1ece11546323f', format: 'msi', script: { name: 'milvago-community-0.6.0-windows-install.ps1', size: 2778, sha256: 'e236e107eea89a7415f42623020b12a1ee2f1846b3e58ee939cbf61deae74a08' } },
+  linux: { name: 'milvago-community-0.6.0-linux.tar.gz', size: 5549559, sha256: '347765c87bd9d701d9064027735dc023efb212340a5aeaa000adf2aea494ae70', format: 'binary' },
 };
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const requireValue = (condition, message) => { if (!condition) throw Error(message); };
@@ -453,7 +453,7 @@ let stage;
 try {
   const token = readFileSync(0, 'utf8').trim();
   requireValue(/^[A-Za-z0-9_]+$/.test(token), 'GitHub token is missing');
-  const response = await fetch('https://api.github.com/repos/Milvago-AI/milvago-agent/releases/assets/591307586', {
+  const response = await fetch('https://api.github.com/repos/Milvago-AI/milvago-agent/releases/assets/595065960', {
     headers: { Authorization: 'Bearer ' + token, Accept: 'application/octet-stream', 'X-GitHub-Api-Version': '2022-11-28' },
     redirect: 'manual',
   });
@@ -477,7 +477,7 @@ try {
   requireValue(tar.status === 0, 'Community agent archive could not be extracted');
   const files = readdirSync(unpacked).sort();
   const wanted = ['community-linux-update.json', 'community-linux.json', 'community-windows-update.json',
-    'community-windows.json', expected.linux.name, expected.windows.name, 'release-public-key.txt'].sort();
+    'community-windows.json', expected.linux.name, expected.windows.name, expected.windows.script.name, 'release-public-key.txt'].sort();
   requireValue(JSON.stringify(files) === JSON.stringify(wanted), 'Community agent archive contains unexpected files');
   const publicKey = readFileSync(join(unpacked, 'release-public-key.txt'), 'utf8').trim();
   requireValue(publicKey === process.env.MILVAGO_UPDATE_PUBLIC_KEY, 'Community update key differs from the pinned key');
@@ -492,15 +492,22 @@ try {
     const payload = Buffer.from(envelope.payload, 'base64');
     const release = JSON.parse(payload);
     requireValue(artifact.length === item.size && digest(artifact) === item.sha256 &&
-      manifest.version === '0.5.51' && manifest.artifact === item.name &&
+      manifest.version === '0.6.0' && manifest.artifact === item.name &&
       manifest.size === item.size && manifest.sha256 === item.sha256,
       'Community ' + platform + ' artifact verification failed');
     requireValue(verify(null, payload, key, Buffer.from(envelope.signature, 'base64')) &&
-      release.version === '0.5.51' && release.edition === 'community' && release.platform === platform &&
+      release.version === '0.6.0' && release.edition === 'community' && release.platform === platform &&
       release.format === item.format && release.sha256 === item.sha256 && release.size === item.size &&
       Date.parse(release.expires_at) > Date.now(),
       'Community ' + platform + ' update signature or release has expired');
   }
+  const script = readFileSync(join(unpacked, expected.windows.script.name));
+  const windowsManifest = JSON.parse(readFileSync(join(unpacked, 'community-windows.json'), 'utf8'));
+  requireValue(windowsManifest.script === expected.windows.script.name &&
+    windowsManifest.script_size === expected.windows.script.size &&
+    windowsManifest.script_sha256 === expected.windows.script.sha256 &&
+    script.length === expected.windows.script.size && digest(script) === expected.windows.script.sha256,
+    'Community Windows deployment script verification failed');
   if (existsSync(target)) {
     requireValue(lstatSync(target).isDirectory() && !lstatSync(target).isSymbolicLink(),
       'Community installer directory is not a regular directory');
@@ -512,7 +519,7 @@ try {
     chmodSync(next, 0o644);
     renameSync(next, join(target, name));
   }
-  console.log('Verified Community agent 0.5.51 for Windows and Linux.');
+  console.log('Verified Community agent 0.6.0 for Windows and Linux.');
 } catch (error) {
   console.error('Error: ' + error.message);
   process.exitCode = 1;
@@ -599,7 +606,9 @@ cat > "$caddyfile" <<EOF
   }
 }
 :8080 {
-  @private_identity path /admin /admin/* /realms/master /realms/master/*
+  # Keycloak administration, the master realm, and account linking at will: users
+  # never operate the identity provider, and SSO is configured from the console.
+  @private_identity path /admin /admin/* /realms/master /realms/master/* /realms/*/broker/*/link /realms/*/broker/*/link/*
   handle @private_identity {
     respond 404
   }
@@ -737,6 +746,27 @@ run_docker run --rm --network "container:$identity_id" --user "$(id -u):$(id -g)
     body: JSON.stringify(client),
   });
   if (!update.ok) throw new Error("Keycloak client update returned HTTP " + update.status);
+  const call = async (path, method = "GET", body) => {
+    const response = await fetch(base + "/admin/realms/milvago" + path, {
+      method, headers: { ...headers, "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    if (!response.ok) throw new Error("Keycloak " + method + " " + path.split("?")[0] + " returned HTTP " + response.status);
+    return response.status === 204 ? null : response.json();
+  };
+  // basic carries auth_time: without it the console cannot prove how recent a second factor is.
+  const basic = (await call("/client-scopes")).find((scope) => scope.name === "basic");
+  if (!basic) throw new Error("The Keycloak basic client scope is missing");
+  await call("/clients/" + encodeURIComponent(client.id) + "/default-client-scopes/" + encodeURIComponent(basic.id), "PUT");
+  // The SSO settings of the console write identity providers through the management account.
+  const [management] = await call("/clients?clientId=milvago-management");
+  const [realmManagement] = await call("/clients?clientId=realm-management");
+  if (!management?.id || !realmManagement?.id) throw new Error("Keycloak management clients are missing");
+  const serviceAccount = await call("/clients/" + encodeURIComponent(management.id) + "/service-account-user");
+  const providerRoles = (await call("/clients/" + encodeURIComponent(realmManagement.id) + "/roles"))
+    .filter((role) => role.name === "manage-identity-providers" || role.name === "view-identity-providers");
+  if (providerRoles.length !== 2) throw new Error("Keycloak identity-provider roles are missing");
+  await call("/users/" + encodeURIComponent(serviceAccount.id) + "/role-mappings/clients/" + encodeURIComponent(realmManagement.id), "POST", providerRoles);
   const realmResponse = await fetch(base + "/admin/realms/milvago", { headers });
   if (!realmResponse.ok) throw new Error("Keycloak realm lookup returned HTTP " + realmResponse.status);
   const realm = await realmResponse.json();
@@ -772,6 +802,8 @@ run_docker run --rm --network "container:$identity_id" --user "$(id -u):$(id -g)
 });
 ' || fail 'Keycloak could not be configured for the LAN address and password-only recovery.'
 run_docker "${compose[@]}" up -d --no-build
+# Caddy reads the mounted Caddyfile at startup, so a rerun must reload it.
+run_docker "${compose[@]}" restart gateway || fail 'The Caddy gateway could not reload its configuration.'
 gateway_id=$(run_docker "${compose[@]}" ps -q gateway)
 if [[ -z "$gateway_id" ]]; then
   run_docker "${compose[@]}" logs --tail 40 gateway >&2 || true

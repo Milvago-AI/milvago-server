@@ -117,18 +117,15 @@ func (a *App) downloadInstaller(w http.ResponseWriter, r *http.Request, tx pgx.T
 		return apiError{503, "installer_changed", "The release changed during preparation. Try again."}
 	}
 	source = snapshot
-	raw, err := json.Marshal(provision)
-	if err != nil {
-		return err
-	}
-	if err = os.WriteFile(filepath.Join(directory, fileProvisionJSON), raw, 0600); err != nil {
-		return err
-	}
-	var result string
-	if provision.Platform == "windows" {
-		result = filepath.Join(directory, "milvago.msi")
-		err = setMSIBinaryStream(source, result, "MilvagoProvision", raw)
-	} else {
+	result := source
+	if provision.Platform != "windows" {
+		raw, marshalErr := json.Marshal(provision)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		if err = os.WriteFile(filepath.Join(directory, fileProvisionJSON), raw, 0600); err != nil {
+			return err
+		}
 		result, err = buildInstallerRPM(directory, source, provision)
 	}
 	if err != nil {
@@ -147,8 +144,9 @@ func (a *App) downloadInstaller(w http.ResponseWriter, r *http.Request, tx pgx.T
 		return fmt.Errorf("invalid generated installer")
 	}
 	endBuild()
-	// The release snapshot is the largest file here and is not served.
-	_ = os.Remove(source)
+	if result != source {
+		_ = os.Remove(source)
+	}
 	extension := "msi"
 	media := "application/x-msi"
 	if provision.Platform == "linux" {
@@ -164,6 +162,81 @@ func (a *App) downloadInstaller(w http.ResponseWriter, r *http.Request, tx pgx.T
 	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
 	http.ServeContent(w, r, name, info.ModTime(), file)
 	return nil
+}
+
+// downloadWindowsProvision reveals the organization's deployment token only after
+// a fresh second factor. The MSI itself stays identical across organizations.
+func (a *App) downloadWindowsProvision(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
+	if err := requireIndividual(r); err != nil {
+		return err
+	}
+	if err := a.requireFreshMFA(r, tx, s); err != nil {
+		return err
+	}
+	provision, err := a.installerProvision(r.Context(), tx, s.OrganizationID, "windows")
+	if err != nil {
+		return err
+	}
+	bundle, _, err := a.releaseBundle("windows")
+	if err != nil {
+		return err
+	}
+	provision.Version = bundle.Version
+	provision.ExpiresAt = time.Now().UTC().Add(deploymentHorizon)
+	if err = audit(r.Context(), tx, s.OrganizationID, s.UserID, "deployment_key.provisioning", provision.ProfileID); err != nil {
+		return err
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", `attachment; filename="milvago-provision.json"`)
+	w.Header().Set("Cache-Control", "no-store, private")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	return json.NewEncoder(w).Encode(provision)
+}
+
+// downloadWindowsScript serves the release-bound installer helper without any token.
+func (a *App) downloadWindowsScript(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
+	bundle, source, err := a.releaseBundle("windows")
+	if err != nil {
+		return err
+	}
+	if bundle.Script == "" {
+		return apiError{503, "installer_unavailable", "Deployment script is unavailable for this release."}
+	}
+	root, err := os.OpenRoot(filepath.Dir(source))
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	before, err := root.Lstat(bundle.Script)
+	if err != nil || !before.Mode().IsRegular() || before.Size() != bundle.ScriptSize {
+		return apiError{503, "installer_unavailable", "Deployment script differs from its release."}
+	}
+	file, err := root.Open(bundle.Script)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(before, opened) {
+		return apiError{503, "installer_unavailable", "Deployment script changed during download."}
+	}
+	body, err := io.ReadAll(io.LimitReader(file, 131073))
+	if err != nil || int64(len(body)) != bundle.ScriptSize {
+		return apiError{503, "installer_unavailable", "Deployment script is incomplete."}
+	}
+	sum := sha256.Sum256(body)
+	if hex.EncodeToString(sum[:]) != bundle.ScriptSHA256 {
+		return apiError{503, "installer_unavailable", "Deployment script differs from its release."}
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="milvago-windows-install.ps1"`)
+	w.Header().Set("Cache-Control", "no-store, private")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, err = w.Write(body)
+	return err
 }
 
 // The installer files live in the release directory or in this request's own temporary

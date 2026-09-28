@@ -10,12 +10,12 @@ import (
 
 // One durable deployment credential per organization.
 //
-// It replaces the short-lived, per-platform installation package. An installer
-// downloaded from the console carries this key inside the MSI's own stream; the
-// device presents it once at `/v2/install` and receives a credential of its own.
-// The key never leaves the server in any other form, and is never shown again after
-// creation — the console reports that one exists, when it last rotated, and offers to
-// rotate or revoke it.
+// It replaces the short-lived, per-platform installation package. Windows
+// receives it in a separately authorized provisioning file; the generic MSI has
+// no organization secret. Linux still carries it in the assembled RPM. The device
+// presents the key once at `/v2/install` and receives a credential of its own.
+// The console reports whether a key exists, when it last rotated, and offers to
+// rotate or revoke it. Revealing Windows provisioning requires recent MFA.
 //
 // It is deliberately durable: a fleet deployed by GPO or an endpoint manager must not
 // need a fresh package every thirty days. What bounds the exposure instead is that it

@@ -30,6 +30,8 @@ func (p *testIdentity) admin(w http.ResponseWriter, r *http.Request) {
 		p.adminClientScopes(w, r, path)
 	case strings.HasPrefix(path, "/components"):
 		p.adminComponents(w, r, path)
+	case strings.HasPrefix(path, "/identity-provider/instances"), path == "/authentication/required-actions/idp_link":
+		p.adminProviders(w, r, path)
 	case path == "/testLDAPConnection" && r.Method == "POST":
 		if p.ldapFail {
 			reply(w, 400, map[string]string{"errorMessage": "connection refused"})
@@ -505,6 +507,8 @@ func testIdentitySubsystem(t *testing.T, f subsystemFixture) {
 	t.Run("identity administration unavailable", scenario.testIdentityAdminUnavailable)
 
 	t.Run("ldap directory settings", scenario.testLDAPDirectorySettings)
+
+	t.Run("sso settings", scenario.testSSOSettings)
 
 	t.Run("directory import", scenario.testDirectoryImport)
 
@@ -994,6 +998,11 @@ func (f *identityScenarioFixture) testLDAPURLAndSecret(t *testing.T) {
 	// server it was saved for — never spent on a new host, on either route.
 	requireHTTP(t, owner("PUT", "/api/settings/ldap", directoryPayload(map[string]any{"connection_url": "ldap://ldap-other:389", "bind_credential": ""})), 400)
 	requireHTTP(t, owner("POST", "/api/settings/ldap/test", directoryPayload(map[string]any{"connection_url": "ldap://ldap-other:389", "bind_credential": ""})), 400)
+	// Nor through Keycloak's own "keep the stored secret" mask, or a vault reference.
+	for _, credential := range []string{secretMask, "${vault.other}"} {
+		requireHTTP(t, owner("PUT", "/api/settings/ldap", directoryPayload(map[string]any{"connection_url": "ldap://ldap-other:389", "bind_credential": credential})), 400)
+		requireHTTP(t, owner("POST", "/api/settings/ldap/test", directoryPayload(map[string]any{"connection_url": "ldap://ldap-other:389", "bind_credential": credential})), 400)
+	}
 	// URL unchanged, credential empty: the stored secret is reused as before.
 	requireHTTP(t, owner("PUT", "/api/settings/ldap", directoryPayload(map[string]any{"bind_credential": ""})), 200)
 	requireHTTP(t, owner("POST", "/api/settings/ldap/test", directoryPayload(map[string]any{"bind_credential": ""})), 200)

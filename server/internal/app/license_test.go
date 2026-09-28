@@ -464,6 +464,7 @@ func (f *licenseIntegrationFixture) testLicenseCommunityRestricted(t *testing.T)
 		{"POST", "/api/roles"}, {"PUT", "/api/roles/admin"}, {"DELETE", "/api/roles/admin"},
 		{"POST", "/api/members/invitations"}, {"PUT", "/api/members/00000000-0000-0000-0000-000000000000/role"},
 		{"PUT", "/api/settings/ldap"}, {"POST", "/api/settings/ldap/test"}, {"GET", "/api/members/directory"}, {"POST", "/api/members/directory"},
+		{"PUT", "/api/settings/sso/google"}, {"PUT", "/api/settings/sso/microsoft"},
 	} {
 		w := call(r.method, r.path, map[string]string{}, cookies, csrf)
 		if w.Code != 403 || !strings.Contains(w.Body.String(), "license_restricted") {

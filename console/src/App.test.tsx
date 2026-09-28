@@ -289,7 +289,7 @@ describe('Console workflows', () => {
     await screen.findByText('Dernière rotation');
     await user.click(screen.getByRole('button', { name: 'Faire tourner' }));
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/rotate'))).toBe(false);
-    expect(screen.getByText(/Un nouvel installateur sera nécessaire/)).toBeInTheDocument();
+    expect(screen.getByText(/Téléchargez un nouveau fichier de provisionnement/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Confirmer la rotation' }));
     expect(fetchMock).toHaveBeenCalledWith('/api/deployment-key/rotate', expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ 'X-CSRF-Token': 'session-csrf' }) }));
     await user.click(await screen.findByRole('button', { name: 'Révoquer' }));

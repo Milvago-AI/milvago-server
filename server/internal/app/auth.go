@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -87,11 +86,7 @@ func (a *App) loginProfileAction(w http.ResponseWriter, r *http.Request) (string
 	}
 	if action == "manage_mfa" {
 		// Keycloak owns credential management; only the configured issuer receives this redirect.
-		accountIssuer := a.publicOIDC.Load().issuer
-		if !strings.Contains(accountIssuer, "/realms/") {
-			accountIssuer = a.config.Issuer
-		}
-		accountURL := strings.TrimRight(accountIssuer, "/") + "/account/account-security/signing-in"
+		accountURL := a.publicIssuer() + "/account/account-security/signing-in"
 		if language := r.URL.Query().Get("lang"); slices.Contains(consoleLanguages, language) {
 			accountURL += "?" + url.Values{"kc_locale": {language}}.Encode()
 		}

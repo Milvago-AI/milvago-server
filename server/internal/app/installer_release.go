@@ -15,10 +15,13 @@ import (
 )
 
 type InstallerBundle struct {
-	Version  string `json:"version"`
-	Artifact string `json:"artifact"`
-	SHA256   string `json:"sha256"`
-	Size     int64  `json:"size"`
+	Version      string `json:"version"`
+	Artifact     string `json:"artifact"`
+	SHA256       string `json:"sha256"`
+	Size         int64  `json:"size"`
+	Script       string `json:"script,omitempty"`
+	ScriptSHA256 string `json:"script_sha256,omitempty"`
+	ScriptSize   int64  `json:"script_size,omitempty"`
 }
 
 const installerBundleLimit int64 = 256 * 1024 * 1024
@@ -96,6 +99,14 @@ func readInstallerManifest(root *os.Root, platform string) (InstallerBundle, boo
 		len(bundle.Artifact) > 160 || filepath.Base(bundle.Artifact) != bundle.Artifact ||
 		strings.ContainsAny(bundle.Artifact, "/\\") {
 		return bundle, false
+	}
+	if bundle.Script != "" || bundle.ScriptSHA256 != "" || bundle.ScriptSize != 0 {
+		if platform != "windows" || bundle.Script == "" ||
+			len(bundle.Script) > 160 || filepath.Base(bundle.Script) != bundle.Script ||
+			strings.ContainsAny(bundle.Script, "/\\") || !strings.HasSuffix(bundle.Script, ".ps1") ||
+			!digestPattern.MatchString(bundle.ScriptSHA256) || bundle.ScriptSize < 1 || bundle.ScriptSize > 131072 {
+			return bundle, false
+		}
 	}
 	extension := ".msi"
 	if platform == "linux" {

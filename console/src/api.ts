@@ -165,6 +165,19 @@ export type LdapDirectory =
       pagination: boolean;
       updated_at: string;
     };
+export type SsoProvider = "google" | "microsoft";
+export type SsoProviderView = {
+  configured: boolean;
+  enabled: boolean;
+  client_id: string;
+  hosted_domain?: string;
+  tenant_id?: string;
+  redirect_uri: string;
+};
+export type SsoSettings = {
+  editable: boolean;
+  providers: Record<SsoProvider, SsoProviderView>;
+};
 export type DirectoryUser = {
   subject: string;
   username: string;

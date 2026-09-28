@@ -60,7 +60,7 @@ func TestInstallerServedRelease(t *testing.T) {
 	if err := copyInstallerFile(source, filepath.Join(output, generic)); err != nil {
 		t.Fatal(err)
 	}
-	observer.observe(t, generic, Edition+"-generic-state", "synthetic-generic", Edition, false)
+	observer.observe(t, generic, "", Edition+"-generic-state", "synthetic-generic", Edition, false)
 	fixture := servedInstallerFixture{setup: setup, bundle: bundle, sourceFiles: sourceFiles, output: output, caller: caller, observer: observer}
 	for index, mode := range []string{"automatic", "manual"} {
 		t.Run(mode, func(t *testing.T) { fixture.assertMode(t, ctx, index, mode) })
@@ -128,7 +128,7 @@ func newInstallerSession(t *testing.T, ctx context.Context, admin *pgxpool.Pool,
 		t.Fatal(e)
 	}
 	token, csrf := randomToken(), randomToken()
-	if _, e = tx.Exec(ctx, "INSERT INTO sessions(token_hash,user_id,organization_id,csrf_token,encrypted_tokens,mfa,expires_at,identity_expires_at) VALUES($1,$2,$3,$4,$5,true,$6,$6)", hash(token), user, org, csrf, []byte("synthetic-session"), time.Now().Add(time.Hour)); e != nil {
+	if _, e = tx.Exec(ctx, "INSERT INTO sessions(token_hash,user_id,organization_id,csrf_token,encrypted_tokens,mfa,mfa_verified_at,expires_at,identity_expires_at) VALUES($1,$2,$3,$4,$5,true,clock_timestamp(),$6,$6)", hash(token), user, org, csrf, []byte("synthetic-session"), time.Now().Add(time.Hour)); e != nil {
 		t.Fatal(e)
 	}
 	if e = tx.Commit(ctx); e != nil {
@@ -164,9 +164,9 @@ type installerBootstrapObserver struct {
 	step   int
 }
 
-func (o *installerBootstrapObserver) observe(t *testing.T, msi, state, hostname, binaryEdition string, success bool) {
+func (o *installerBootstrapObserver) observe(t *testing.T, msi, provision, state, hostname, binaryEdition string, success bool) {
 	o.step++
-	request := map[string]any{"step": o.step, "edition": Edition, "binary_edition": binaryEdition, "msi": msi, "state": state, "hostname": hostname, "success": success}
+	request := map[string]any{"step": o.step, "edition": Edition, "binary_edition": binaryEdition, "msi": msi, "provision": provision, "state": state, "hostname": hostname, "success": success}
 	raw, _ := json.Marshal(request)
 	name := filepath.Join(o.output, fmt.Sprintf("%s-%02d.request.json", Edition, o.step))
 	if err := os.WriteFile(name+".tmp", raw, 0600); err != nil {
@@ -446,7 +446,7 @@ func (x servedInstallerFixture) assertMode(t *testing.T, ctx context.Context, in
 		opposite = "community"
 	}
 	hostname := "synthetic-" + Edition + "-" + mode
-	observer.observe(t, msi, Edition+"-"+mode+"-wrong", hostname, opposite, false)
+	observer.observe(t, msi, state.provision, Edition+"-"+mode+"-wrong", hostname, opposite, false)
 	state.hostname = hostname
 	x.assertModeRetry(t, ctx, &state)
 	x.assertManualApproval(t, ctx, state)
@@ -464,6 +464,7 @@ type installerModeState struct {
 	keyID          string
 	beforeUses     int
 	msi            string
+	provision      string
 	path           string
 	digest         [32]byte
 	hostname       string
@@ -540,11 +541,29 @@ func (x servedInstallerFixture) downloadModeMSI(t *testing.T, state *installerMo
 	digest := sha256.Sum256(data)
 
 	state.msi, state.path, state.digest = msi, path, digest
+	script := x.caller.call(t, "GET", "/api/installer/windows/script", nil, state.cookie, state.token)
+	requireHTTP(t, script, 200)
+	scriptHash := sha256.Sum256(script.Body.Bytes())
+	if hex.EncodeToString(scriptHash[:]) != bundle.ScriptSHA256 || int64(script.Body.Len()) != bundle.ScriptSize {
+		t.Fatal("served deployment script differs from release")
+	}
+	w := x.caller.call(t, "POST", "/api/installer/windows/provision", nil, state.cookie, state.token)
+	requireHTTP(t, w, 200)
+	if !strings.Contains(w.Header().Get("Cache-Control"), "no-store") {
+		t.Fatal("provision response may be cached")
+	}
+	state.provision = Edition + "-" + mode + ".json"
+	if err := os.WriteFile(filepath.Join(output, state.provision), w.Body.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (x servedInstallerFixture) assertServedMSI(t *testing.T, state installerModeState) {
 	path, org, keyID := state.path, state.org, state.keyID
 	sourceFiles, bundle, a, config := x.sourceFiles, x.bundle, x.setup.app, x.setup.config
+	if hex.EncodeToString(state.digest[:]) != bundle.SHA256 {
+		t.Fatal("served MSI differs from immutable release")
+	}
 	servedFiles := extractMSIPayloadFiles(t, path)
 	if len(servedFiles) != len(sourceFiles) {
 		t.Fatal("served MSI changed payload file count")
@@ -558,6 +577,13 @@ func (x servedInstallerFixture) assertServedMSI(t *testing.T, state installerMod
 	if e != nil {
 		t.Fatal("cannot inspect served MSI provision", e)
 	}
+	if strings.TrimSpace(string(raw)) != "{}" {
+		t.Fatal("generic MSI embeds organization data")
+	}
+	raw, e = os.ReadFile(filepath.Join(x.output, state.provision))
+	if e != nil {
+		t.Fatal(e)
+	}
 	var provision InstallerProvision
 	if json.Unmarshal(raw, &provision) != nil || provision.Edition != Edition || provision.Platform != "windows" || provision.Version != bundle.Version || provision.ProfileID != keyID || provision.ServerURL != config.AppURL || provision.PolicyPublicKey != base64.StdEncoding.EncodeToString(a.policyKey(org).Public().(ed25519.PublicKey)) || provision.UpdatePublicKey != base64.StdEncoding.EncodeToString(config.UpdatePublicKey) || len(provision.BootstrapToken) != 43 {
 		t.Fatal("served MSI provision does not match synthetic organization")
@@ -566,7 +592,7 @@ func (x servedInstallerFixture) assertServedMSI(t *testing.T, state installerMod
 
 func (x servedInstallerFixture) assertModeRetry(t *testing.T, ctx context.Context, state *installerModeState) {
 	for attempt := 0; attempt < 2; attempt++ {
-		x.observer.observe(t, state.msi, Edition+"-"+state.mode+"-state", state.hostname, Edition, true)
+		x.observer.observe(t, state.msi, state.provision, Edition+"-"+state.mode+"-state", state.hostname, Edition, true)
 		projectedID := x.projectedModeDeviceID(t, *state)
 		x.assertStoredModeDevice(t, ctx, state, projectedID, attempt)
 	}

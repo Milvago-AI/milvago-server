@@ -137,7 +137,7 @@ func (a *App) apiKeyTx(r *http.Request) (pgx.Tx, *Session, error) {
 	// waits for requests already in flight and cannot be raced, while two
 	// concurrent requests using the same key no longer serialize. That matters
 	// here and not for devices, because this surface includes responses that
-	// stream for a long time (GET /api/installer/{platform} sends a signed MSI,
+	// stream for a long time (GET /api/installer/{platform} sends a release MSI,
 	// GET /api/shadow/export sends a full export) and one such download would
 	// otherwise block every other call made with the same key for its duration.
 	//

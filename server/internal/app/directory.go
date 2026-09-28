@@ -96,6 +96,13 @@ func hasControl(v string) bool {
 	return false
 }
 
+// invalidSecret refuses a submitted secret that Keycloak would not store as typed:
+// the mask means "keep the stored one", which would carry that secret to a changed
+// server or client, and a vault reference would make Keycloak send another secret.
+func invalidSecret(v string) bool {
+	return hasControl(v) || len(v) > 512 || v == secretMask || strings.HasPrefix(v, "${vault.")
+}
+
 // validate normalizes and bounds a submitted configuration before any value
 // reaches Keycloak or the database.
 func (d *directoryConfig) validate() error {
@@ -370,7 +377,7 @@ func (a *App) readDirectoryAdminBody(w http.ResponseWriter, r *http.Request, tx 
 	if err := body.validate(); err != nil {
 		return directoryBody{}, err
 	}
-	if hasControl(body.BindCredential) || len(body.BindCredential) > 512 {
+	if invalidSecret(body.BindCredential) {
 		return directoryBody{}, bad("Bind password is too long or malformed.")
 	}
 	// Both operations can use a stored bind credential.

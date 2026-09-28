@@ -84,6 +84,10 @@ type testIdentity struct {
 	// The realm's smtpServer as last written through the admin API.
 	smtp            map[string]string
 	realmAttributes map[string]string
+	// Brokered identity providers by alias, with their real client secret, and
+	// whether the idp_link required action is on (Keycloak's default).
+	providers map[string]map[string]any
+	idpLink   bool
 }
 
 type fakeClient struct {
@@ -138,6 +142,8 @@ func identityProvider(t *testing.T) *testIdentity {
 	p := &testIdentity{key: key, email: "admin@example.test", subject: "test-owner", audience: "test-console", expiry: time.Now().Add(time.Hour), verified: true,
 		users:      map[string]*fakeUser{"invited-subject": {ID: "invited-subject", Username: "invitee", Email: "invitee@example.test"}},
 		components: map[string]map[string]any{},
+		providers:  map[string]map[string]any{},
+		idpLink:    true,
 		clients:    map[string]*fakeClient{"console": {ClientID: "test-console", Attributes: map[string]string{}}}}
 	p.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { p.serveHTTP(t, w, r) }))
 	t.Cleanup(p.server.Close)

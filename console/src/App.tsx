@@ -15,6 +15,7 @@ import { DeploymentKeyPanel, InstallerDialog } from "./InstallerDialog";
 import { RolesPanel } from "./RolesPanel";
 import { ProfilePage } from "./ProfilePage";
 import { DirectoryCard } from "./DirectoryCard";
+import { SsoCard } from "./SsoCard";
 import { DirectoryImportDialog } from "./DirectoryImportDialog";
 import "./shadow/shadow.css";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
@@ -2467,7 +2468,7 @@ function LicenseBanner() {
   }
   return null;
 }
-type SettingsArea = "organization" | "license" | "directory" | "installers" | "connectors";
+type SettingsArea = "organization" | "license" | "directory" | "sso" | "installers" | "connectors";
 
 function SettingsPanel() {
   const t = useText();
@@ -2477,7 +2478,7 @@ function SettingsPanel() {
   // The licence area is informational for everyone who can see Settings at all --
   // only the instance owner gets the form to change it (LicensePanel itself guards that).
   const areas: SettingsArea[] = ["organization", "license"];
-  if (can(session, "directory.manage") && !session.license?.restricted) areas.push("directory");
+  if (can(session, "directory.manage") && !session.license?.restricted) areas.push("directory", "sso");
   // The guard that shows the section must be the one the server enforces on it.
   if (can(session, "installers.manage")) areas.push("installers");
   // Self-registration is an instance-level decision written on the identity provider,
@@ -2491,6 +2492,7 @@ function SettingsPanel() {
     organization: t("organization"),
     license: t("license"),
     directory: t("ldapDirectory"),
+    sso: t("sso"),
     installers: t("deploymentKey"),
     connectors: t("connectorSelfRegistration"),
   };
@@ -2507,6 +2509,7 @@ function SettingsPanel() {
     }
     if (current === "license") { return <LicensePanel />; }
     if (current === "directory") { return <DirectoryCard />; }
+    if (current === "sso") { return <SsoCard />; }
     if (current === "connectors") { return <ConnectorRegistrationPanel />; }
     return <DeploymentKeyPanel />;
   }

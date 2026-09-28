@@ -57,6 +57,34 @@ export function InstallerDialog({ close }: Readonly<{ close: () => void }>) {
       setDownloading('');
     }
   }
+  async function downloadWindowsAsset(asset: 'script' | 'provision') {
+    if (!ready) return;
+    controller.current = new AbortController();
+    const signal = controller.current.signal;
+    setDownloading(asset);
+    setError(undefined);
+    try {
+      const response = await requestRaw(`/api/installer/windows/${asset}`, {
+        method: asset === 'provision' ? 'POST' : 'GET',
+        csrf: session.csrf_token,
+        signal,
+        accept: asset === 'provision' ? 'application/json' : 'text/plain',
+        fallbackCode: 'download_failed',
+      });
+      const blob = await response.blob();
+      if (signal.aborted) return;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = asset === 'provision' ? 'milvago-provision.json' : 'milvago-windows-install.ps1';
+      document.body.append(link);
+      try { link.click(); } finally { link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 0); }
+    } catch (cause) {
+      if (!signal.aborted) setError(cause instanceof ApiError ? cause : new ApiError(0, 'download_failed', t("downloadUnavailable")));
+    } finally {
+      setDownloading('');
+    }
+  }
   return (
     <Dialog title={t("downloadTheAgent")} close={() => !busy && close()}>
       <div className="dialog-body">
@@ -70,6 +98,7 @@ export function InstallerDialog({ close }: Readonly<{ close: () => void }>) {
         downloading={downloading}
         downloadedVersions={downloadedVersions}
         onDownload={(platform) => void download(platform)}
+        onDownloadWindowsAsset={(asset) => void downloadWindowsAsset(asset)}
         close={close}
       />
       </div>
@@ -122,7 +151,7 @@ function InstallerTile({
 }
 
 function InstallerDialogBody({
-  settings, ready, approval, downloadError, busy, downloading, downloadedVersions, onDownload, close,
+  settings, ready, approval, downloadError, busy, downloading, downloadedVersions, onDownload, onDownloadWindowsAsset, close,
 }: Readonly<{
   settings: { data: Settings | undefined; error: unknown; loading: boolean; reload: () => void };
   ready: boolean;
@@ -132,6 +161,7 @@ function InstallerDialogBody({
   downloading: string;
   downloadedVersions: Partial<Record<Platform, string>>;
   onDownload: (platform: Platform) => void;
+  onDownloadWindowsAsset: (asset: 'script' | 'provision') => void;
   close: () => void;
 }>) {
   const t = useText();
@@ -153,7 +183,7 @@ function InstallerDialogBody({
   }
   return (
     <>
-      <Notice>{t("thePackageCarriesThisOrganizationS")}</Notice>
+      <Notice>{t("windowsProvisioningSeparate")}</Notice>
       {/* A mass deployment under manual approval must not surprise anyone: the devices
           appear immediately and report nothing until they are approved. */}
       {approval === 'manual' && (
@@ -170,6 +200,16 @@ function InstallerDialogBody({
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 12 }}>
         <InstallerTile platform="windows" label="Windows MSI" hint={t("windowsServiceMachineWide")} busy={busy} downloading={downloading} downloadedVersion={downloadedVersions.windows} onDownload={onDownload} />
         <InstallerTile platform="linux" label="Linux RPM" hint={t("systemdServiceMachineWide")} busy={busy} downloading={downloading} downloadedVersion={downloadedVersions.linux} onDownload={onDownload} />
+      </div>
+      <div className="card" style={{ marginTop: 12 }}>
+        <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <strong>{t("windowsDeploymentFiles")}</strong>
+          <span className="help">{t("windowsDeploymentInstructions")}</span>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button className="button" disabled={busy} onClick={() => onDownloadWindowsAsset('script')}>{downloading === 'script' ? t("downloading") : t("downloadWindowsScript")}</button>
+            <button className="button" disabled={busy} onClick={() => onDownloadWindowsAsset('provision')}>{downloading === 'provision' ? t("downloading") : t("downloadWindowsProvision")}</button>
+          </div>
+        </div>
       </div>
       <p className="fine-print" style={{ marginTop: 12 }}>{t("theSamePackageServesTheWhole")}</p>
     </>

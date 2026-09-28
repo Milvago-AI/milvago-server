@@ -28,6 +28,8 @@ func TestDemoRefuses(t *testing.T) {
 		{"POST", "/api/members/invitations", true, "inviting is a mutation"},
 		{"POST", "/api/keys", true, "minting a credential is a mutation"},
 		{"PATCH", "/api/privacy", true, "an unexpected method is refused, not guessed"},
+		{"PUT", "/api/settings/sso/google", true, "a sign-in provider is a mutation"},
+		{"DELETE", "/api/settings/sso/microsoft", true, "removing a sign-in provider is a mutation"},
 		// The endpoint exists only when the instance was started with it; what it
 		// serves is read-only by construction — the tool catalog admits GET console
 		// routes alone — so the read-only rule does not have to refuse its envelope

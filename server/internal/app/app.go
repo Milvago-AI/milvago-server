@@ -354,6 +354,7 @@ func New(ctx context.Context, c Config, p *pgxpool.Pool, logger *slog.Logger) (*
 	a.registerDeviceGroupRoutes()
 	a.registerInstallerRoutes()
 	a.registerDirectoryRoutes()
+	a.registerSSORoutes()
 	a.registerPrivacyRoutes()
 	a.registerDetectionRoutes()
 	a.registerPublisherRoutes()
