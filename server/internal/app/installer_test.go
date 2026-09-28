@@ -465,7 +465,7 @@ func (f installerBootstrapFixture) testNetwork(t *testing.T) {
 }
 
 func (f installerBootstrapFixture) testReinstallation(t *testing.T) {
-	ctx, admin, org, owner, csrf := t.Context(), f.admin, f.org, f.owner, f.csrf
+	org, owner, csrf := f.org, f.owner, f.csrf
 	f.setApproval(t, "manual")
 	token := f.provision(t, org).BootstrapToken
 	body := installerRequest("88888888-8888-4888-8888-888888888888")
@@ -485,11 +485,7 @@ func (f installerBootstrapFixture) testReinstallation(t *testing.T) {
 	requireHTTP(t, f.call(t, "POST", "/api/devices/"+probe.DeviceID+"/revoke", map[string]any{}, owner, csrf, ""), 200)
 	f.checkReinstallation(t, token, probe, "revoked")
 	requireHTTP(t, f.call(t, "POST", "/v2/install", body, nil, "", token), 401)
-	// Deleting a device erases its history: a fresh second factor first.
-	requireHTTP(t, f.call(t, "DELETE", "/api/devices/"+probe.DeviceID, nil, owner, csrf, ""), 403)
-	if _, e := admin.Exec(ctx, `UPDATE sessions SET mfa=true,mfa_verified_at=clock_timestamp() WHERE token_hash=$1`, hash(owner.Value)); e != nil {
-		t.Fatal(e)
-	}
+	// A device manager can delete without a fresh second factor.
 	requireHTTP(t, f.call(t, "DELETE", "/api/devices/"+probe.DeviceID, nil, owner, csrf, ""), 200)
 	f.checkReinstallation(t, token, probe, "deleted")
 	// Deletion removes the former installation record. A new authorized

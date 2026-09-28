@@ -215,13 +215,8 @@ func (a *App) deleteDevice(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s 
 	if !uuidPattern.MatchString(id) {
 		return bad("Invalid device ID.")
 	}
-	// The delete cascades through the device's events and the prompt text retained
-	// with them: the same irreversible erasure as a purge or a shorter retention, so
-	// the same fresh second factor, and content.purge while any text is retained
-	// (audit of 2026-09-24).
-	if e := a.requireFreshPerson(r, tx, s); e != nil {
-		return e
-	}
+	// Deleting retained prompt text still requires content.purge. The route also
+	// requires an authenticated session with devices.manage.
 	// The row first: a batch in flight holds it, so the check below sees its text
 	// once it commits rather than missing it and the cascade erasing it unchecked.
 	if _, e := tx.Exec(r.Context(), `SELECT 1 FROM devices WHERE id=$1 FOR UPDATE`, id); e != nil {

@@ -334,8 +334,8 @@ func New(ctx context.Context, c Config, p *pgxpool.Pool, logger *slog.Logger) (*
 	a.console("POST /api/enrollments", permDevicesManage, a.enrollment)
 	a.console("POST /api/devices/{id}/approve", permDevicesManage, a.approve)
 	a.console("POST /api/devices/{id}/revoke", permDevicesManage, a.revoke)
-	// Deleting a device cascades through its whole history: session-only, fresh
-	// second factor (see deleteDevice).
+	// Deleting a device cascades through its whole history. Keep this action
+	// session-only and limited to device managers.
 	a.sessionOnly("DELETE /api/devices/{id}", permDevicesManage, a.deleteDevice)
 	a.console("GET /api/members", permMembersRead, a.members)
 	a.console("GET /api/roles", permMembersRead, a.roles)
