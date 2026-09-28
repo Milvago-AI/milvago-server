@@ -133,6 +133,7 @@ export function SetupPage({ status, language, chooseLanguage }: Readonly<{ statu
     [t("publicAgentHttpsUrl"), organization.public_url],
     [t("instanceDefaultLanguage"), languages.find(l => l.code === organization.default_language)?.label ?? organization.default_language],
     [t("setupEmailServer"), smtpEnabled ? `${smtp.host}:${smtp.port}` : t("notConfigured")],
+    [t("discoveryEnabled"), yesNo(privacy?.discovery_enabled ?? false)],
   ];
 
   let body: ReactNode;
@@ -245,7 +246,10 @@ export function SetupPage({ status, language, chooseLanguage }: Readonly<{ statu
     case 8:
       body = <>
         <p className="help">{t("setupPrivacyHelp")}</p>
-        {privacy && <PrivacyFields config={privacy} set={setPrivacyValue} locked={false} edition={status.edition} teamClaim={false} />}
+        {privacy && <>
+          <PrivacyFields config={privacy} set={setPrivacyValue} locked={false} edition={status.edition} teamClaim={false} />
+          {checkbox(t("discoveryEnabled"), t("privacyDiscoveryNotice"), privacy.discovery_enabled, value => setPrivacyValue("discovery_enabled", value))}
+        </>}
       </>;
       break;
     default:

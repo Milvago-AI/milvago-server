@@ -1,7 +1,7 @@
 import { useContext, useEffect, useRef, useState } from 'react';
 import { ApiError, requestRaw } from './api';
 import { saveBlob, WINDOWS_PACKAGE_NAME, WINDOWS_PACKAGE_PATH } from './download';
-import { verifySecondFactor } from './secondFactor';
+import { secondFactorRequired, verifySecondFactor } from './secondFactor';
 import type { DeploymentKey, Platform, Settings } from './api';
 import type { ShadowSettings } from './shadow/types';
 import { Card, Context, DateValue, Dialog, ErrorNotice, Icon, Loading, Notice, ResourceView, Status, useMutation, useResource, useText } from './ui';
@@ -23,6 +23,7 @@ export function InstallerDialog({ close }: Readonly<{ close: () => void }>) {
   const [downloading, setDownloading] = useState('');
   const [downloadedVersions, setDownloadedVersions] = useState<Partial<Record<Platform, string>>>({});
   const [error, setError] = useState<ApiError>();
+  const [mfaChallenge, setMfaChallenge] = useState<ApiError>();
   const controller = useRef<AbortController | null>(null);
   useEffect(() => () => controller.current?.abort(), []);
   const ready = Boolean(settings.data?.public_url_confirmed && settings.data.public_url);
@@ -50,13 +51,17 @@ export function InstallerDialog({ close }: Readonly<{ close: () => void }>) {
       saveBlob(blob, downloadName(platform));
     } catch (cause) {
       if (signal.aborted) return;
-      if (platform === 'windows') verifySecondFactor(WINDOWS_PACKAGE_PATH, 'POST', undefined, cause, language, { org: session.organization.id, user: session.user.id }, 'windows-package');
+      if (platform === 'windows' && secondFactorRequired(cause)) {
+        setMfaChallenge(cause);
+        return;
+      }
       setError(cause instanceof ApiError ? cause : new ApiError(0, 'download_failed', t("downloadUnavailable")));
     } finally {
       setDownloading('');
     }
   }
   return (
+    <>
     <Dialog title={t("downloadTheAgent")} close={() => !busy && close()}>
       <div className="dialog-body">
       <p><strong>{session.organization.name}</strong></p>
@@ -74,6 +79,17 @@ export function InstallerDialog({ close }: Readonly<{ close: () => void }>) {
       </div>
       <div className="dialog-actions"><button type="button" className="button ghost" disabled={busy} onClick={() => close()}>{t("close")}</button></div>
     </Dialog>
+    {mfaChallenge && <Dialog title={t("verifySecondFactorBeforeDownload")} close={() => setMfaChallenge(undefined)}>
+      <div className="dialog-body"><p>{t("windowsZipMfaRedirectNotice")}</p></div>
+      <div className="dialog-actions">
+        <button type="button" className="button secondary" onClick={() => setMfaChallenge(undefined)}>{t("cancel")}</button>
+        <button type="button" className="button primary" onClick={() => {
+          setMfaChallenge(undefined);
+          verifySecondFactor(WINDOWS_PACKAGE_PATH, 'POST', undefined, mfaChallenge, language, { org: session.organization.id, user: session.user.id }, 'windows-package');
+        }}>{t("continueToSecondFactor")}</button>
+      </div>
+    </Dialog>}
+    </>
   );
 }
 

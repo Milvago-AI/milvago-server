@@ -5,7 +5,7 @@ import { saveBlob, WINDOWS_PACKAGE_NAME, WINDOWS_PACKAGE_PATH } from './download
 // have authenticated recently, `mfa_required` when it must carry a second factor at all.
 // Both are answered by one verification, so the console treats them as one demand.
 const codes = new Set(['fresh_mfa_required', 'mfa_required']);
-export const secondFactorRequired = (error?: unknown) => error instanceof ApiError && codes.has(error.code);
+export const secondFactorRequired = (error?: unknown): error is ApiError => error instanceof ApiError && codes.has(error.code);
 
 const KEY = 'milvago.second-factor-retry';
 // Long enough to sign in with a second factor, short enough that a forgotten tab does
@@ -48,6 +48,18 @@ const secretField = /(?:password|passphrase|secret|credential|token|authorizatio
 const carriesSecret = (value: unknown): boolean =>
   typeof value === 'object' && value !== null &&
   Object.entries(value).some(([name, inner]) => (secretField.test(name) && inner !== '' && inner != null) || carriesSecret(inner));
+
+export type SecondFactorChallenge = { path: string; method: string; body: unknown; error: ApiError; language: string; scope: HeldScope };
+const challengeListeners = new Set<(challenge: SecondFactorChallenge) => void>();
+export function onSecondFactorChallenge(listener: (challenge: SecondFactorChallenge) => void): () => void {
+  challengeListeners.add(listener);
+  return () => { challengeListeners.delete(listener); };
+}
+export function requestSecondFactor(path: string, method: string, body: unknown, error: unknown, language: string, scope: HeldScope): boolean {
+  if (!secondFactorRequired(error)) return false;
+  for (const listener of challengeListeners) listener({ path, method, body, error, language, scope });
+  return true;
+}
 
 export function verifySecondFactor(path: string, method: string, body: unknown, error: unknown, language: string, scope: HeldScope, download?: 'windows-package'): boolean {
   if (!secondFactorRequired(error)) return false;

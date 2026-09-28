@@ -8,7 +8,7 @@ import type { SetupStatus } from './SetupPage';
 import { Context } from './ui';
 import type { Session } from './api';
 
-const privacy = { pseudonymous: true, aggregate_only: false, k_anonymity: 5, identity_link_days: 90, lock_descendants: false, retention_justification: '', team_claim: '', discovery_enabled: false, ignored_domains: [], auto_catalog: false, share_health: false, share_fleet: false };
+const privacy = { pseudonymous: true, aggregate_only: false, k_anonymity: 5, identity_link_days: 90, lock_descendants: false, retention_justification: '', team_claim: '', discovery_enabled: true, ignored_domains: [], auto_catalog: false, share_health: false, share_fleet: false };
 const ready: SetupStatus = { pending: true, ready: true, edition: 'community', privacy_defaults: privacy };
 function reply(body: unknown, status = 200) { return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }); }
 
@@ -82,8 +82,11 @@ it('walks every step and sends the choices once', async () => {
   await next();
   // Privacy step: the team claim is left to Administration > Privacy.
   expect(screen.queryByText('OIDC team claim')).toBeNull();
+  expect(screen.getByRole('checkbox', { name: 'Discover candidate domains' })).toBeChecked();
   await next();
-  expect(await screen.findByText('Example organization')).toBeTruthy();
+  const discoverySummary = await screen.findByText('Discover candidate domains');
+  expect(discoverySummary.parentElement?.textContent).toContain('Yes');
+  expect(screen.getByText('Example organization')).toBeTruthy();
   await userEvent.click(screen.getByRole('button', { name: 'Create the administrator and finish' }));
   expect((await screen.findByText('Creating the administrator and opening sign-in…')).textContent).toContain('Creating the administrator and opening sign-in…');
   expect(screen.getByRole('button', { name: 'Create the administrator and finish' }).hasAttribute('disabled')).toBe(true);
@@ -96,6 +99,7 @@ it('walks every step and sends the choices once', async () => {
   const body = JSON.parse(String(complete.body));
   expect(body).toMatchObject({ admin: { email: 'owner@example.test', first_name: 'Alex', last_name: 'Doe', password: 'a-long-enough-passphrase' }, organization: { name: 'Example organization', public_url: 'https://milvago.example.test', default_language: 'fr' }, admin_totp: true, require_mfa: true, smtp: null, license: '' });
   expect(body.privacy.k_anonymity).toBe(5);
+  expect(body.privacy.discovery_enabled).toBe(true);
   const stored = JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage }) + document.cookie;
   expect(stored).not.toContain('passphrase');
   expect(stored).not.toContain('synthetic-token');

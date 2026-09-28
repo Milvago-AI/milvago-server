@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { ApiError, request } from './api';
 import type { Session } from './api';
-import { secondFactorRequired, verifySecondFactor } from './secondFactor';
+import { secondFactorRequired, requestSecondFactor } from './secondFactor';
 import { languages as languageOptions } from './locales/languages';
 import type { Language } from './locales/languages';
 import { en } from './locales/en';
@@ -118,12 +118,9 @@ export function useMutation() {
     }
     setPending(true); setError(undefined);
     try { return await request<T>(path, { method, body, csrf: session.csrf_token }); }
-    // A demand for a second factor is a step, not a failure: the console goes to the
-    // verification and replays this very call on return, instead of showing the raw
-    // server sentence under an "access denied" heading and asking for another click.
-    // The error is still raised — callers rely on it to keep their draft and to not
-    // treat the refusal as a partial success — the redirect merely happens as well.
-    catch (e) { setError(e); verifySecondFactor(path, method, body, e, language, { org: session.organization.id, user: session.user.id }); throw e; }
+    // Hold the refused action in memory until the person confirms the second-factor
+    // dialog. Callers still receive the refusal so they keep their unsaved draft.
+    catch (e) { setError(e); requestSecondFactor(path, method, body, e, language, { org: session.organization.id, user: session.user.id }); throw e; }
     finally { setPending(false); }
   }
   return { run, pending, error, clear: () => setError(undefined) };
@@ -227,10 +224,9 @@ const knownErrorMessages: Partial<Record<string, TranslationKey>> = {
 };
 export function ErrorNotice({ error, retry }: Readonly<{ error: unknown; retry?: () => void }>) {
   const t = useText(); if (!error) return null;
-  // Asking for a second factor is a step of the action, not a refusal of it. Shown as
-  // "access denied" with the server's own English sentence, it read as a wall; it is
-  // its own notice, in the reader's language, next to what it is about.
-  if (secondFactorRequired(error)) return <output className="notice warning"><Icon name="lock" /><div><strong>{t("secondFactorNeeded")}</strong><p>{t("secondFactorRedirecting")}</p></div></output>;
+  // The shared dialog explains the verification step; never flash a second notice
+  // underneath it or expose the server's raw refusal sentence.
+  if (secondFactorRequired(error)) return null;
   const knownKey = error instanceof ApiError ? knownErrorMessages[error.code] : undefined;
   let text = t("cannotReachTheServerCheckYour");
   if (error instanceof ApiError) text = error.message;

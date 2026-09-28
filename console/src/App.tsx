@@ -22,6 +22,7 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "r
 import type { SubmitEvent, ReactNode } from "react";
 import { ApiError, request } from "./api";
 import { navigate } from "./navigation";
+import { SecondFactorConfirmation } from "./SecondFactorConfirmation";
 import { Shell, editionName } from "./Shell";
 import type { Page } from "./Shell";
 import { GroupsPage } from "./GroupsPage";
@@ -688,6 +689,7 @@ export function App() {
           {pageViews[page]?.({ session, t, refreshSession }) ?? <OverviewPage />}
         </div>
       </Shell>
+      <SecondFactorConfirmation />
     </Context.Provider>
   );
 }

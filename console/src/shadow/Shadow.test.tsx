@@ -7,6 +7,7 @@ import { CartographyPage } from './CartographyPage';
 import { ConversationsPage } from './ConversationsPage';
 import { ShadowAdministration } from './ShadowAdministration';
 import { browser } from '../secondFactor';
+import { SecondFactorConfirmation } from '../SecondFactorConfirmation';
 import type { Cartography, Conversation, ShadowEvent, ShadowSettings, Thread, ThreadMessage } from './types';
 
 const session: Session = { user: { id: 'user-1', email: 'owner@example.org', display_name: 'Propriétaire de test' }, organization: { id: 'org-1', name: 'Organisation de test', role: 'owner' }, organizations: [{ id: 'org-1', name: 'Organisation de test', role: 'owner' }], permissions: ['overview.read', 'events.read', 'devices.read', 'devices.manage', 'members.read', 'members.manage', 'settings.manage', 'policy.manage', 'installers.manage', 'content.read', 'audit.read', 'roles.manage', 'organizations.manage'], csrf_token: 'shadow-csrf', edition: 'community' };
@@ -22,7 +23,7 @@ function thread(items: ThreadMessage[], older_cursor = '', can_read_content = tr
 function message(base: ShadowEvent, content_state: ThreadMessage['content_state'], content?: ThreadMessage['content']): ThreadMessage { return { ...base, content_state, content }; }
 function reply(body: unknown, status = 200) { return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }); }
 function serve(handler: (url: string, init?: RequestInit) => Response | undefined) { return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => handler(String(url), init) ?? (String(url).startsWith('/api/shadow/filters') ? reply({ items: [] }) : reply({ error: 'unexpected_request', message: String(url) }, 404))); }
-function show(children: React.ReactNode, current = session) { return render(<Context.Provider value={{ session: current, language: 'fr', refreshSession: async () => {} }}>{children}</Context.Provider>); }
+function show(children: React.ReactNode, current = session) { return render(<Context.Provider value={{ session: current, language: 'fr', refreshSession: async () => {} }}>{children}<SecondFactorConfirmation /></Context.Provider>); }
 beforeEach(() => { location.hash = ''; Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { configurable: true, value() { this.setAttribute('open', ''); } }); Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value() { this.removeAttribute('open'); } }); });
 
 describe('Shadow AI workflows', () => {
@@ -392,7 +393,7 @@ describe('Shadow AI workflows', () => {
     fireEvent.click(content); fireEvent.click(screen.getByRole('button', { name: 'Enregistrer les changements' }));
     // The demand is announced in the reader's language as a step, not as a refusal,
     // and the draft it was refused for is kept exactly as it was.
-    expect(await screen.findByText(/Vérification du second facteur requise/)).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'Vérifier le second facteur' })).toBeInTheDocument();
     expect(screen.queryByText('Un second facteur vérifié est requis.')).not.toBeInTheDocument();
     expect(content).toBeChecked(); expect(screen.queryByText(/Configuration enregistrée/)).not.toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith('/api/shadow/settings', expect.objectContaining({ method: 'PUT', headers: expect.objectContaining({ 'X-CSRF-Token': 'shadow-csrf' }), body: expect.stringContaining('"revision":5') }));
@@ -553,10 +554,7 @@ describe('Shadow AI workflows', () => {
     expect(screen.queryByRole('columnheader', { name: 'Poste' })).not.toBeInTheDocument();
   });
 
-  // One gesture for every second-factor demand: the console said what was missing but
-  // not what to do, then made the person retype a change it had already refused. The
-  // action is replayed on return, so a change is sent once.
-  it('goes straight to the second-factor verification and keeps the refused call for the return', async () => {
+  it('confirms a second-factor redirect before holding the refused action', async () => {
     const navigate = vi.spyOn(browser, 'navigate').mockImplementation(() => {});
     serve((url, init) => url === '/api/shadow/settings'
       ? init?.method === 'PUT'
@@ -567,20 +565,22 @@ describe('Shadow AI workflows', () => {
     const content = await screen.findByRole('checkbox', { name: 'Conserver le texte des requêtes et réponses' });
     fireEvent.click(content);
     fireEvent.click(screen.getByRole('button', { name: 'Enregistrer les changements' }));
-
-    // The person is taken to the verification rather than told, in English and under
-    // an "access denied" heading, to go and find it themselves.
-    await waitFor(() => expect(navigate).toHaveBeenCalledWith(expect.stringContaining('/auth/login?mfa=1')));
-    expect(navigate).toHaveBeenCalledWith(expect.stringContaining('lang=fr'));
-    expect(screen.queryByText(/Accès refusé/)).not.toBeInTheDocument();
+    const confirmation = await screen.findByRole('dialog', { name: 'Vérifier le second facteur' });
+    expect(navigate).not.toHaveBeenCalled();
+    expect(window.sessionStorage.getItem('milvago.second-factor-retry')).toBeNull();
     expect(screen.queryByText(/Authenticate again/)).not.toBeInTheDocument();
-
-    // The refused call is held so the return can replay it: the change is sent once.
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Annuler' }));
+    expect(navigate).not.toHaveBeenCalled();
+    expect(window.sessionStorage.getItem('milvago.second-factor-retry')).toBeNull();
+    expect(content).toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: 'Enregistrer les changements' }));
+    const renewed = await screen.findByRole('dialog', { name: 'Vérifier le second facteur' });
+    fireEvent.click(within(renewed).getByRole('button', { name: 'Continuer vers la vérification' }));
+    expect(navigate).toHaveBeenCalledWith(expect.stringContaining('/auth/login?mfa=1&lang=fr'));
     const held = JSON.parse(window.sessionStorage.getItem('milvago.second-factor-retry')!);
     expect(held.path).toBe('/api/shadow/settings');
     expect(held.method).toBe('PUT');
     expect(held.body.config.collection.store_content).toBe(true);
-    navigate.mockRestore();
   });
 
   // A record without a verified person is not a record about nobody: the OS account

@@ -66,7 +66,7 @@ describe('Console workflows', () => {
     // The package is assembled for this download; no deployment key is created.
     expect(fetchMock.mock.calls.filter(([url]) => url === '/api/installer/windows/package')).toHaveLength(1);
   });
-  it('starts second-factor verification for the Windows ZIP without saving a partial download', async () => {
+  it('asks before redirecting for Windows ZIP second-factor verification', async () => {
     window.location.hash = '#devices';
     const navigate = vi.spyOn(browser, 'navigate').mockImplementation(() => {});
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
@@ -74,10 +74,25 @@ describe('Console workflows', () => {
       url === '/api/installer/windows/package' ? reply({ error: 'fresh_mfa_required', message: 'Verify again.' }, 403) : undefined);
     render(<App />); const user = userEvent.setup();
     await user.click(await screen.findByRole('button', { name: /Télécharger l’agent/ }));
-    await user.click(await screen.findByRole('button', { name: 'Windows ZIP' }));
-    await waitFor(() => expect(navigate).toHaveBeenCalledWith(expect.stringContaining('/auth/login?mfa=1&lang=')));
+    const windows = await screen.findByRole('button', { name: 'Windows ZIP' });
+    await user.click(windows);
+    const confirmation = await screen.findByRole('dialog', { name: 'Vérifier le second facteur' });
+    expect(within(confirmation).getByText(/Le ZIP Windows est protégé/)).toBeInTheDocument();
+    expect(navigate).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem('milvago.second-factor-retry')).toBeNull();
+    expect(screen.queryByText('Verify again.')).not.toBeInTheDocument();
     expect(click).not.toHaveBeenCalled();
-    expect(fetchMock).toHaveBeenCalledWith('/api/installer/windows/package', expect.objectContaining({ method: 'POST' }));
+
+    await user.click(within(confirmation).getByRole('button', { name: 'Annuler' }));
+    expect(screen.queryByRole('dialog', { name: 'Vérifier le second facteur' })).not.toBeInTheDocument();
+    expect(navigate).not.toHaveBeenCalled();
+
+    await user.click(windows);
+    const renewed = await screen.findByRole('dialog', { name: 'Vérifier le second facteur' });
+    await user.click(within(renewed).getByRole('button', { name: 'Continuer vers la vérification' }));
+    expect(navigate).toHaveBeenCalledWith(expect.stringContaining('/auth/login?mfa=1&lang='));
+    expect(JSON.parse(sessionStorage.getItem('milvago.second-factor-retry')!)).toMatchObject({ path: '/api/installer/windows/package', method: 'POST', download: 'windows-package' });
+    expect(fetchMock.mock.calls.filter(([url]) => url === '/api/installer/windows/package')).toHaveLength(2);
   });
   it('clears an old downloaded version when a later package does not confirm one', async () => {
     window.location.hash = '#devices';

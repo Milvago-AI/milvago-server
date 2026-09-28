@@ -64,7 +64,7 @@ type PrivacyView struct {
 }
 
 func defaultPrivacy() IdentityPrivacyConfig {
-	return IdentityPrivacyConfig{Pseudonymous: true, K: 5, IdentityDays: 90, IgnoredDomains: []string{}, HealthMinDevices: 3, HealthDOMRatio: 20, HealthWindowHours: 24}
+	return IdentityPrivacyConfig{Pseudonymous: true, K: 5, IdentityDays: 90, DiscoveryEnabled: true, IgnoredDomains: []string{}, HealthMinDevices: 3, HealthDOMRatio: 20, HealthWindowHours: 24}
 }
 
 type privacyContextKey struct{}
