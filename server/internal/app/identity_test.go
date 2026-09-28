@@ -32,6 +32,8 @@ func (p *testIdentity) admin(w http.ResponseWriter, r *http.Request) {
 		p.adminComponents(w, r, path)
 	case strings.HasPrefix(path, "/identity-provider/instances"), path == "/authentication/required-actions/idp_link":
 		p.adminProviders(w, r, path)
+	case strings.HasPrefix(path, "/authentication/"), strings.HasPrefix(path, "/roles"):
+		p.adminFlows(w, r, path)
 	case path == "/testLDAPConnection" && r.Method == "POST":
 		if p.ldapFail {
 			reply(w, 400, map[string]string{"errorMessage": "connection refused"})
@@ -55,7 +57,16 @@ func (p *testIdentity) adminUsers(w http.ResponseWriter, r *http.Request, path s
 		p.credentials(w, strings.TrimSuffix(strings.TrimPrefix(path, "/users/"), "/credentials"))
 	case strings.HasSuffix(path, "/execute-actions-email") && r.Method == "PUT":
 		p.mails++
+		p.mailQuery = r.URL.Query()
+		p.mailActions = nil
+		_ = json.NewDecoder(r.Body).Decode(&p.mailActions)
+		if p.mailsSucceed {
+			w.WriteHeader(204)
+			return
+		}
 		reply(w, 500, map[string]string{"error": "smtp_unavailable"})
+	case strings.HasSuffix(path, "/role-mappings/realm"):
+		p.roleMappings(w, r, strings.TrimSuffix(strings.TrimPrefix(path, "/users/"), "/role-mappings/realm"))
 	case strings.HasPrefix(path, "/users/") && r.Method == "GET":
 		p.getUser(w, strings.TrimPrefix(path, "/users/"))
 	case strings.HasPrefix(path, "/users/") && r.Method == "DELETE":
@@ -127,12 +138,13 @@ func (p *testIdentity) updateConsoleClient(w http.ResponseWriter, r *http.Reques
 		RedirectURIs []string          `json:"redirectUris"`
 		WebOrigins   []string          `json:"webOrigins"`
 		Attributes   map[string]string `json:"attributes"`
+		BaseURL      string            `json:"baseUrl"`
 	}
 	if json.NewDecoder(r.Body).Decode(&incoming) != nil {
 		w.WriteHeader(400)
 		return
 	}
-	client.RedirectURIs, client.WebOrigins, client.Attributes = incoming.RedirectURIs, incoming.WebOrigins, incoming.Attributes
+	client.RedirectURIs, client.WebOrigins, client.Attributes, client.BaseURL = incoming.RedirectURIs, incoming.WebOrigins, incoming.Attributes, incoming.BaseURL
 	w.WriteHeader(204)
 }
 
@@ -227,12 +239,14 @@ func (p *testIdentity) createUser(w http.ResponseWriter, r *http.Request) {
 		Username, Email, FirstName, LastName string
 		EmailVerified                        bool
 		RequiredActions                      []string
+		Attributes                           map[string][]string
 		Credentials                          []struct{ Type, Value string }
 	}
 	if json.NewDecoder(r.Body).Decode(&body) != nil {
 		w.WriteHeader(400)
 		return
 	}
+	p.createdLocale = body.Attributes["locale"]
 	// A realm password policy of length(14), stricter than the server's own floor,
 	// so a test can reach the identity provider's refusal.
 	password := ""

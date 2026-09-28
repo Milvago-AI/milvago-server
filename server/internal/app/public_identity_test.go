@@ -40,6 +40,9 @@ func TestPublicIdentityConfiguration(t *testing.T) {
 	if got := client.Attributes["post.logout.redirect.uris"]; got != "https://console.example.test/*" {
 		t.Fatalf("post logout URI = %q", got)
 	}
+	if client.BaseURL != "https://console.example.test/auth/login" {
+		t.Fatalf("client base URL = %q", client.BaseURL)
+	}
 }
 
 func TestConfirmedPublicOriginChangesOIDCClient(t *testing.T) {

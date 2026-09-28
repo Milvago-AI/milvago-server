@@ -1,6 +1,7 @@
 package app
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/aes"
@@ -52,6 +53,7 @@ func TestInstallerServedRelease(t *testing.T) {
 	a, config, serverURL, owner := setup.app, setup.config, setup.serverURL, setup.owner
 	t.Run("linux_download", func(t *testing.T) { assertLinuxDownload(t, serverURL, owner, bundle.Version) })
 	caller := installerCaller{a: a, origin: config.AppURL}
+	t.Run("windows_zip_mfa", func(t *testing.T) { assertWindowsPackageMFA(t, ctx, setup, caller) })
 	// Each response is tied to a fresh sequence number; stale marker files cannot
 	// make a bootstrap pass. The host records only exit status, never credentials.
 	observer := &installerBootstrapObserver{output: output}
@@ -66,6 +68,33 @@ func TestInstallerServedRelease(t *testing.T) {
 		t.Run(mode, func(t *testing.T) { fixture.assertMode(t, ctx, index, mode) })
 	}
 	t.Logf("source MSI sha256=%s; %d host bootstrap observations required", bundle.SHA256, observer.step)
+}
+
+func assertWindowsPackageMFA(t *testing.T, ctx context.Context, setup installerServerFixture, caller installerCaller) {
+	owner, csrf, admin := setup.owner, setup.csrf, setup.admin
+	result, err := admin.Exec(ctx, `UPDATE sessions SET mfa_verified_at=clock_timestamp()-interval '6 minutes' WHERE token_hash=$1`, hash(owner.Value))
+	if err != nil || result.RowsAffected() != 1 {
+		t.Fatal("could not age the owner session", err)
+	}
+	defer func() {
+		restored, restoreErr := admin.Exec(ctx, `UPDATE sessions SET mfa_verified_at=clock_timestamp() WHERE token_hash=$1`, hash(owner.Value))
+		if restoreErr != nil || restored.RowsAffected() != 1 {
+			t.Error("could not restore the owner session", restoreErr)
+		}
+	}()
+	stale := caller.call(t, "POST", "/api/installer/windows/package", nil, owner, csrf)
+	if stale.Code != 403 || !strings.Contains(stale.Body.String(), "fresh_mfa_required") {
+		t.Fatal("stale second factor must block Windows package")
+	}
+	withoutFactor, token := newInstallerSession(t, ctx, admin, setup.root)
+	result, err = admin.Exec(ctx, `UPDATE sessions SET mfa=false, mfa_verified_at=NULL WHERE token_hash=$1`, hash(withoutFactor.Value))
+	if err != nil || result.RowsAffected() != 1 {
+		t.Fatal("could not remove the synthetic second factor", err)
+	}
+	packageResponse := caller.call(t, "POST", "/api/installer/windows/package", nil, withoutFactor, token)
+	if packageResponse.Code != 200 || packageResponse.Header().Get("Content-Type") != "application/zip" || !strings.Contains(packageResponse.Header().Get("Cache-Control"), "no-store") {
+		t.Fatal("account without a second factor could not download ZIP", packageResponse.Code)
+	}
 }
 
 func extractMSIPayloadFiles(t *testing.T, msi string) map[string]string {
@@ -515,46 +544,65 @@ func (x servedInstallerFixture) prepareMode(t *testing.T, ctx context.Context, i
 
 func (x servedInstallerFixture) downloadModeMSI(t *testing.T, state *installerModeState) {
 	cookie, mode, bundle, output := state.cookie, state.mode, x.bundle, x.output
-	req, e := http.NewRequest("GET", "http://127.0.0.1:4020/api/installer/windows", nil)
+	req, e := http.NewRequest("POST", "http://127.0.0.1:4020/api/installer/windows/package", nil)
 	if e != nil {
 		t.Fatal(e)
 	}
 	req.AddCookie(cookie)
+	req.Header.Set("Origin", x.setup.config.AppURL)
+	req.Header.Set("X-CSRF-Token", state.token)
 	client := &http.Client{Timeout: 100 * time.Second}
 	download, e := client.Do(req)
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer download.Body.Close()
-	if download.StatusCode != 200 || download.Header.Get("X-Milvago-Installer-Version") != bundle.Version || !strings.Contains(download.Header.Get("Cache-Control"), "no-store") || download.Header.Get("Content-Type") != "application/x-msi" {
-		t.Fatal("real MSI download failed", download.StatusCode)
+	if download.StatusCode != 200 || download.Header.Get("X-Milvago-Installer-Version") != bundle.Version || !strings.Contains(download.Header.Get("Cache-Control"), "no-store") || download.Header.Get("Content-Type") != "application/zip" || !strings.Contains(download.Header.Get("Content-Disposition"), windowsPackageName) {
+		t.Fatal("real ZIP download failed", download.StatusCode)
 	}
-	data, e := io.ReadAll(io.LimitReader(download.Body, 128*1024*1024+1))
-	if e != nil || len(data) < 8 || len(data) > 128*1024*1024 || !bytes.Equal(data[:8], []byte{0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1}) {
-		t.Fatal("real MSI response invalid")
+	data, e := io.ReadAll(io.LimitReader(download.Body, 129*1024*1024+1))
+	if e != nil || len(data) < 4 || len(data) > 129*1024*1024 || !bytes.Equal(data[:2], []byte("PK")) {
+		t.Fatal("real ZIP response invalid")
+	}
+	archive, e := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if e != nil || len(archive.File) != 3 {
+		t.Fatal("ZIP must contain exactly three files", e)
+	}
+	wanted := map[string]bool{"milvago-windows-installer.msi": true, "milvago-windows-install.ps1": true, "milvago-provision.json": true}
+	files := map[string][]byte{}
+	for _, entry := range archive.File {
+		if !wanted[entry.Name] || files[entry.Name] != nil {
+			t.Fatal("unexpected ZIP entry")
+		}
+		file, openErr := entry.Open()
+		if openErr != nil {
+			t.Fatal(openErr)
+		}
+		contents, readErr := io.ReadAll(io.LimitReader(file, 128*1024*1024+1))
+		file.Close()
+		if readErr != nil || len(contents) > 128*1024*1024 {
+			t.Fatal("ZIP entry invalid", readErr)
+		}
+		files[entry.Name] = contents
+	}
+	msiBytes := files["milvago-windows-installer.msi"]
+	if len(msiBytes) < 8 || !bytes.Equal(msiBytes[:8], []byte{0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1}) {
+		t.Fatal("ZIP MSI response invalid")
 	}
 	msi := Edition + "-" + mode + ".msi"
 	path := filepath.Join(output, msi)
-	if e = os.WriteFile(path, data, 0600); e != nil {
+	if e = os.WriteFile(path, msiBytes, 0600); e != nil {
 		t.Fatal(e)
 	}
-	digest := sha256.Sum256(data)
-
-	state.msi, state.path, state.digest = msi, path, digest
-	script := x.caller.call(t, "GET", "/api/installer/windows/script", nil, state.cookie, state.token)
-	requireHTTP(t, script, 200)
-	scriptHash := sha256.Sum256(script.Body.Bytes())
-	if hex.EncodeToString(scriptHash[:]) != bundle.ScriptSHA256 || int64(script.Body.Len()) != bundle.ScriptSize {
-		t.Fatal("served deployment script differs from release")
-	}
-	w := x.caller.call(t, "POST", "/api/installer/windows/provision", nil, state.cookie, state.token)
-	requireHTTP(t, w, 200)
-	if !strings.Contains(w.Header().Get("Cache-Control"), "no-store") {
-		t.Fatal("provision response may be cached")
+	state.msi, state.path, state.digest = msi, path, sha256.Sum256(msiBytes)
+	script := files["milvago-windows-install.ps1"]
+	scriptHash := sha256.Sum256(script)
+	if hex.EncodeToString(scriptHash[:]) != bundle.ScriptSHA256 || int64(len(script)) != bundle.ScriptSize {
+		t.Fatal("ZIP deployment script differs from release")
 	}
 	state.provision = Edition + "-" + mode + ".json"
-	if err := os.WriteFile(filepath.Join(output, state.provision), w.Body.Bytes(), 0600); err != nil {
-		t.Fatal(err)
+	if e = os.WriteFile(filepath.Join(output, state.provision), files["milvago-provision.json"], 0600); e != nil {
+		t.Fatal(e)
 	}
 }
 

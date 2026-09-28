@@ -235,6 +235,10 @@ func (a *App) loginIdentityKind(ctx context.Context, subject string) string {
 		a.log.Warn("identity type lookup failed", "error", e)
 		return ""
 	}
+	// The account has now signed in: a later provider account needs the usual proof.
+	if e = clearPendingInvitation(ctx, admin, subject); e != nil {
+		a.log.Warn("pending invitation role not cleared", "error", e)
+	}
 	return kind
 }
 

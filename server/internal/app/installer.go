@@ -37,6 +37,7 @@ func (a *App) registerInstallerRoutes() {
 	a.console("POST /api/deployment-key/rotate", permInstallersManage, a.rotateOrganizationKey)
 	a.console("POST /api/deployment-key/revoke", permInstallersManage, a.revokeOrganizationKey)
 	a.console("GET /api/installer/{platform}", permInstallersManage, a.downloadInstaller)
+	a.sessionOnly("POST /api/installer/windows/package", permInstallersManage, a.downloadWindowsPackage)
 	a.sessionOnly("POST /api/installer/windows/provision", permInstallersManage, a.downloadWindowsProvision)
 	a.console("GET /api/installer/windows/script", permInstallersManage, a.downloadWindowsScript)
 	if Edition == "commercial" {

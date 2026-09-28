@@ -242,6 +242,7 @@ func (p *projectionFixture) routes() []projectionRoute {
 		{pattern: "POST /api/deployment-key/rotate", exempt: "mutation"},
 		{pattern: "POST /api/deployment-key/revoke", exempt: "mutation"},
 		{pattern: "GET /api/installer/{platform}", path: "/api/installer/windows"},
+		{pattern: "POST /api/installer/windows/package", exempt: "mutation"},
 		{pattern: "GET /api/organizations/{id}/deployment-key", path: "/api/organizations/" + p.org + "/deployment-key", optional: true},
 		{pattern: "POST /api/organizations/{id}/deployment-key/rotate", exempt: "mutation", optional: true},
 		{pattern: "POST /api/organizations/{id}/deployment-key/revoke", exempt: "mutation", optional: true},

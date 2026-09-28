@@ -78,8 +78,8 @@ input[type=checkbox]{accent-color:var(--mv-accent-solid);width:16px;height:16px}
 input[type=checkbox]:focus-visible{outline:2px solid var(--mv-focus);outline-offset:2px}
 
 /* ---------- Buttons & links ---------- */
-.pf-v5-c-button.pf-m-primary,#kc-login{height:40px!important;min-height:0!important;background:var(--mv-accent-solid)!important;color:var(--mv-accent-ink)!important;border:0!important;border-radius:4px!important;font-size:14px!important;font-weight:600!important;box-shadow:none!important}
-.pf-v5-c-button.pf-m-primary:hover,#kc-login:hover{background:var(--mv-primary-hover)!important}
+.pf-v5-c-button.pf-m-primary,#kc-login,#kc-info-message a{height:40px!important;min-height:0!important;background:var(--mv-accent-solid)!important;color:var(--mv-accent-ink)!important;border:0!important;border-radius:4px!important;font-size:14px!important;font-weight:600!important;box-shadow:none!important}
+.pf-v5-c-button.pf-m-primary:hover,#kc-login:hover,#kc-info-message a:hover{background:var(--mv-primary-hover)!important}
 .pf-v5-c-button.pf-m-link{color:var(--mv-text)!important;font-size:13px!important}
 a{color:var(--mv-text)!important;font-size:13px;text-decoration:underline;text-underline-offset:3px}
 .mv-appearance:focus-visible,a:focus-visible,button:focus-visible{outline:2px solid var(--mv-focus);outline-offset:4px}
@@ -112,3 +112,5 @@ a{color:var(--mv-text)!important;font-size:13px;text-decoration:underline;text-u
   .mv-controls{top:16px;right:16px;gap:8px}
   .mv-appearance{padding:0 10px}
 }
+/* The only way on from the info page (account ready, link expired) is its link: shown as the primary action. */
+#kc-info-message a{display:inline-flex;align-items:center;margin-top:16px;padding:0 20px;text-decoration:none!important}

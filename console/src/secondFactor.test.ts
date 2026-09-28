@@ -1,11 +1,12 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { ApiError } from './api';
+import { WINDOWS_PACKAGE_NAME, WINDOWS_PACKAGE_PATH } from './download';
 import { browser, resumeSecondFactor, sameOriginTarget, verifySecondFactor } from './secondFactor';
 
 const KEY = 'milvago.second-factor-retry';
 const refused = new ApiError(403, 'fresh_mfa_required', 'Authenticate again.');
 
-afterEach(() => { window.sessionStorage.clear(); vi.restoreAllMocks(); });
+afterEach(() => { window.sessionStorage.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 // sessionStorage outlives an abandoned verification: a directory bind password held
 // there would stay readable for the life of the tab, although the server never returns it.
@@ -55,4 +56,25 @@ it('replays only for the same person in the same organization', async () => {
   expect(await resumeSecondFactor('csrf', scope)).toBe('resumed');
   expect(fetchMock).toHaveBeenCalledTimes(1);
   vi.unstubAllGlobals();
+});
+
+it('downloads the protected Windows ZIP after verification and never replays it for another account', async () => {
+  const navigate = vi.spyOn(browser, 'navigate').mockImplementation(() => {});
+  const createObjectURL = vi.fn().mockReturnValue('blob:windows-package');
+  Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
+  Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
+  const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+    expect(this.download).toBe(WINDOWS_PACKAGE_NAME);
+  });
+  const fetchMock = vi.fn(async () => new Response('PK-package', { status: 200, headers: { 'Content-Type': 'application/zip' } }));
+  vi.stubGlobal('fetch', fetchMock);
+  expect(verifySecondFactor(WINDOWS_PACKAGE_PATH, 'POST', undefined, refused, 'fr', scope, 'windows-package')).toBe(true);
+  expect(navigate).toHaveBeenCalledWith('/auth/login?mfa=1&lang=fr');
+  expect(await resumeSecondFactor('csrf', { ...scope, user: '33333333-3333-4333-8333-333333333333' })).toBe('none');
+  expect(fetchMock).not.toHaveBeenCalled();
+  verifySecondFactor(WINDOWS_PACKAGE_PATH, 'POST', undefined, refused, 'fr', scope, 'windows-package');
+  expect(await resumeSecondFactor('csrf', scope)).toBe('downloaded');
+  expect(fetchMock).toHaveBeenCalledWith(WINDOWS_PACKAGE_PATH, expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ Accept: 'application/zip', 'X-CSRF-Token': 'csrf' }) }));
+  expect(click).toHaveBeenCalledOnce();
+  expect(await resumeSecondFactor('csrf', scope)).toBe('none');
 });

@@ -65,37 +65,43 @@ func lookupInviteSubject(ctx context.Context, admin *identityAdmin, email string
 	return "", nil
 }
 
-func resolveInviteIdentity(r *http.Request, tx pgx.Tx, s *Session, admin *identityAdmin, email string) (string, string, string, error) {
+func resolveInviteIdentity(r *http.Request, tx pgx.Tx, s *Session, admin *identityAdmin, email, language string) (subject, kind, name string, created bool, err error) {
 	subject, e := lookupInviteSubject(r.Context(), admin, email)
 	if e != nil {
-		return "", "", "", e
+		return "", "", "", false, e
 	}
-	kind, name := "local", ""
+	kind, name = "local", ""
 	if subject == "" {
 		// The activation link carries required actions, allowing later SSO linking.
-		status, _, _, e := admin.call(r.Context(), "POST", "/users", map[string]any{"username": email, "email": email, "enabled": true, "emailVerified": false})
+		account := map[string]any{"username": email, "email": email, "enabled": true, "emailVerified": false}
+		if language != "" {
+			// The invitation e-mail and the activation pages follow the account locale.
+			account["attributes"] = map[string][]string{"locale": {language}}
+		}
+		status, _, _, e := admin.call(r.Context(), "POST", "/users", account)
 		if e != nil || (status != 201 && status != 409) {
-			return "", "", "", apiError{502, "identity_unavailable", "Could not create the identity account."}
+			return "", "", "", false, apiError{502, "identity_unavailable", "Could not create the identity account."}
 		}
 		subject, e = lookupInviteSubject(r.Context(), admin, email)
 		if e != nil {
-			return "", "", "", e
+			return "", "", "", false, e
 		}
 		if subject == "" {
-			return "", "", "", apiError{502, "identity_unavailable", "The created identity account could not be found."}
+			return "", "", "", false, apiError{502, "identity_unavailable", "The created identity account could not be found."}
 		}
-		return subject, kind, name, nil
+		// 409: another request created it first, so it is not this invitation's own.
+		return subject, kind, name, status == 201, nil
 	}
 	u, e := admin.user(r.Context(), subject)
 	if e != nil {
-		return "", "", "", e
+		return "", "", "", false, e
 	}
 	if u == nil {
-		return "", "", "", apiError{502, "identity_unavailable", "The identity account could not be read."}
+		return "", "", "", false, apiError{502, "identity_unavailable", "The identity account could not be read."}
 	}
 	kind, e = admin.identityType(r.Context(), u)
 	if e != nil {
-		return "", "", "", e
+		return "", "", "", false, e
 	}
 	name = u.displayName()
 	if kind == "ldap" {
@@ -103,13 +109,13 @@ func resolveInviteIdentity(r *http.Request, tx pgx.Tx, s *Session, admin *identi
 		var component string
 		e = tx.QueryRow(r.Context(), "SELECT component_id FROM ldap_directories WHERE organization_id=$1", s.OrganizationID).Scan(&component)
 		if e != nil && !errors.Is(e, pgx.ErrNoRows) {
-			return "", "", "", e
+			return "", "", "", false, e
 		}
 		if e != nil || component != u.FederationLink {
-			return "", "", "", apiError{409, "directory_mismatch", "This account belongs to a directory that is not this organization's."}
+			return "", "", "", false, apiError{409, "directory_mismatch", "This account belongs to a directory that is not this organization's."}
 		}
 	}
-	return subject, kind, name, nil
+	return subject, kind, name, false, nil
 }
 
 func validateInviteMembership(r *http.Request, tx pgx.Tx, s *Session, subject string) error {
@@ -152,7 +158,7 @@ func (a *App) invite(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Sessi
 	if e != nil {
 		return e
 	}
-	subject, kind, name, e := resolveInviteIdentity(r, tx, s, admin, body.Email)
+	subject, kind, name, created, e := resolveInviteIdentity(r, tx, s, admin, body.Email, body.Language)
 	if e != nil {
 		return e
 	}
@@ -160,7 +166,25 @@ func (a *App) invite(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Sessi
 		return e
 	}
 	if kind == "local" {
-		status, _, _, e := admin.call(r.Context(), "PUT", "/users/"+url.PathEscape(subject)+"/execute-actions-email?lifespan=86400", []string{"VERIFY_EMAIL", "UPDATE_PASSWORD"})
+		actions := []string{"VERIFY_EMAIL", "UPDATE_PASSWORD"}
+		if created {
+			// An address of the organization's own domain signs in with its provider:
+			// the link only confirms the mailbox, and no password is created.
+			direct, e := invitationProvider(r.Context(), admin, body.Email)
+			if e == nil && direct {
+				e = markPendingInvitation(r.Context(), admin, subject)
+			}
+			if e != nil {
+				return e
+			}
+			if direct {
+				actions = []string{"VERIFY_EMAIL"}
+			}
+		}
+		// Naming the console client makes the page shown once the account is ready
+		// link to its sign-in (the client base URL) instead of ending there.
+		query := url.Values{"lifespan": {"86400"}, "client_id": {a.config.ClientID}}
+		status, _, _, e := admin.call(r.Context(), "PUT", "/users/"+url.PathEscape(subject)+"/execute-actions-email?"+query.Encode(), actions)
 		if e != nil || status != 204 {
 			return apiError{502, "invitation_email_failed", "The identity provider could not send the invitation. Check its SMTP configuration."}
 		}

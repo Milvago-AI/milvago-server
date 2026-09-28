@@ -202,34 +202,9 @@ func (a *App) downloadWindowsScript(w http.ResponseWriter, r *http.Request, tx p
 	if err != nil {
 		return err
 	}
-	if bundle.Script == "" {
-		return apiError{503, "installer_unavailable", "Deployment script is unavailable for this release."}
-	}
-	root, err := os.OpenRoot(filepath.Dir(source))
+	body, err := readWindowsReleaseScript(bundle, source)
 	if err != nil {
 		return err
-	}
-	defer root.Close()
-	before, err := root.Lstat(bundle.Script)
-	if err != nil || !before.Mode().IsRegular() || before.Size() != bundle.ScriptSize {
-		return apiError{503, "installer_unavailable", "Deployment script differs from its release."}
-	}
-	file, err := root.Open(bundle.Script)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	opened, err := file.Stat()
-	if err != nil || !os.SameFile(before, opened) {
-		return apiError{503, "installer_unavailable", "Deployment script changed during download."}
-	}
-	body, err := io.ReadAll(io.LimitReader(file, 131073))
-	if err != nil || int64(len(body)) != bundle.ScriptSize {
-		return apiError{503, "installer_unavailable", "Deployment script is incomplete."}
-	}
-	sum := sha256.Sum256(body)
-	if hex.EncodeToString(sum[:]) != bundle.ScriptSHA256 {
-		return apiError{503, "installer_unavailable", "Deployment script differs from its release."}
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="milvago-windows-install.ps1"`)
@@ -237,6 +212,41 @@ func (a *App) downloadWindowsScript(w http.ResponseWriter, r *http.Request, tx p
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, err = w.Write(body)
 	return err
+}
+
+// readWindowsReleaseScript accepts only the regular file named and hashed by
+// the verified release manifest. It is shared by the standalone and ZIP routes.
+func readWindowsReleaseScript(bundle InstallerBundle, source string) ([]byte, error) {
+	if bundle.Script == "" {
+		return nil, apiError{503, "installer_unavailable", "Deployment script is unavailable for this release."}
+	}
+	root, err := os.OpenRoot(filepath.Dir(source))
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	before, err := root.Lstat(bundle.Script)
+	if err != nil || !before.Mode().IsRegular() || before.Size() != bundle.ScriptSize {
+		return nil, apiError{503, "installer_unavailable", "Deployment script differs from its release."}
+	}
+	file, err := root.Open(bundle.Script)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(before, opened) {
+		return nil, apiError{503, "installer_unavailable", "Deployment script changed during download."}
+	}
+	data, err := io.ReadAll(io.LimitReader(file, 131073))
+	if err != nil || int64(len(data)) != bundle.ScriptSize {
+		return nil, apiError{503, "installer_unavailable", "Deployment script is incomplete."}
+	}
+	sum := sha256.Sum256(data)
+	if hex.EncodeToString(sum[:]) != bundle.ScriptSHA256 {
+		return nil, apiError{503, "installer_unavailable", "Deployment script differs from its release."}
+	}
+	return data, nil
 }
 
 // The installer files live in the release directory or in this request's own temporary

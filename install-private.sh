@@ -442,9 +442,9 @@ import { join } from 'node:path';
 
 const root = '/work';
 const target = join(root, '.local/installers');
-const expectedArchive = 'cac865774dff40dd50c4dda8057d861e0afe3df591a32e4044718f6b7f8a2bf0';
+const expectedArchive = '210378fdb89d8c6e44bbcf1a45f84b7049144df1769b659a3381d94ebe5d6598';
 const expected = {
-  windows: { name: 'milvago-community-0.6.0-windows.msi', size: 5844992, sha256: '4ecab960b8801670b5a6db863e975b989db650038bc60b6c47a1ece11546323f', format: 'msi', script: { name: 'milvago-community-0.6.0-windows-install.ps1', size: 2778, sha256: 'e236e107eea89a7415f42623020b12a1ee2f1846b3e58ee939cbf61deae74a08' } },
+  windows: { name: 'milvago-community-0.6.0-windows.msi', size: 5844992, sha256: '5347f749f86d56b99124500ff3ae48d9a14498062161db02954d1c04c6308500', format: 'msi', script: { name: 'milvago-community-0.6.0-windows-install.ps1', size: 2778, sha256: '6fbab484490402cdea7dc3d583756185d8fbc9a37dc0e21016795faa5650b866' } },
   linux: { name: 'milvago-community-0.6.0-linux.tar.gz', size: 5549559, sha256: '347765c87bd9d701d9064027735dc023efb212340a5aeaa000adf2aea494ae70', format: 'binary' },
 };
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -453,7 +453,7 @@ let stage;
 try {
   const token = readFileSync(0, 'utf8').trim();
   requireValue(/^[A-Za-z0-9_]+$/.test(token), 'GitHub token is missing');
-  const response = await fetch('https://api.github.com/repos/Milvago-AI/milvago-agent/releases/assets/595065960', {
+  const response = await fetch('https://api.github.com/repos/Milvago-AI/milvago-agent/releases/assets/595229136', {
     headers: { Authorization: 'Bearer ' + token, Accept: 'application/octet-stream', 'X-GitHub-Api-Version': '2022-11-28' },
     redirect: 'manual',
   });
@@ -739,6 +739,8 @@ run_docker run --rm --network "container:$identity_id" --user "$(id -u):$(id -g)
   const appURL = process.env.MILVAGO_APP_URL;
   client.redirectUris = [appURL + "/auth/callback"];
   client.webOrigins = [appURL];
+  // Keycloak links its own pages here: once an invited account is ready, sign in.
+  client.baseUrl = appURL + "/auth/login";
   client.attributes = { ...client.attributes, "post.logout.redirect.uris": appURL + "/*" };
   const update = await fetch(base + "/admin/realms/milvago/clients/" + encodeURIComponent(client.id), {
     method: "PUT",
@@ -771,6 +773,8 @@ run_docker run --rm --network "container:$identity_id" --user "$(id -u):$(id -g)
   if (!realmResponse.ok) throw new Error("Keycloak realm lookup returned HTTP " + realmResponse.status);
   const realm = await realmResponse.json();
   realm.attributes = { ...realm.attributes, frontendUrl: appURL };
+  // The invitation e-mail is worded by the Milvago e-mail theme.
+  realm.emailTheme = "milvago";
   const realmUpdate = await fetch(base + "/admin/realms/milvago", {
     method: "PUT",
     headers: { ...headers, "Content-Type": "application/json" },

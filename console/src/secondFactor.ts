@@ -1,4 +1,5 @@
-import { ApiError, request } from './api';
+import { ApiError, request, requestRaw } from './api';
+import { saveBlob, WINDOWS_PACKAGE_NAME, WINDOWS_PACKAGE_PATH } from './download';
 
 // Two server codes ask for the same thing — `fresh_mfa_required` when the session must
 // have authenticated recently, `mfa_required` when it must carry a second factor at all.
@@ -16,7 +17,7 @@ const WINDOW_MS = 5 * 60 * 1000;
 // only for the same person in the same organization (audit of 2026-09-24: a purge
 // asked in a child organization was replayed in the root one).
 export type HeldScope = { org: string; user: string };
-type Held = { path: string; method: string; body?: unknown; hash: string; at: number } & HeldScope;
+type Held = { path: string; method: string; body?: unknown; download?: 'windows-package'; hash: string; at: number } & HeldScope;
 const replayable = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 /**
@@ -48,9 +49,9 @@ const carriesSecret = (value: unknown): boolean =>
   typeof value === 'object' && value !== null &&
   Object.entries(value).some(([name, inner]) => (secretField.test(name) && inner !== '' && inner != null) || carriesSecret(inner));
 
-export function verifySecondFactor(path: string, method: string, body: unknown, error: unknown, language: string, scope: HeldScope): boolean {
+export function verifySecondFactor(path: string, method: string, body: unknown, error: unknown, language: string, scope: HeldScope, download?: 'windows-package'): boolean {
   if (!secondFactorRequired(error)) return false;
-  const held: Held = { path, method, body, hash: window.location.hash, at: Date.now(), ...scope };
+  const held: Held = { path, method, body, download, hash: window.location.hash, at: Date.now(), ...scope };
   // An older held change must not be replayed in place of this one.
   try { if (carriesSecret(body)) window.sessionStorage.removeItem(KEY); else window.sessionStorage.setItem(KEY, JSON.stringify(held)); }
   catch { /* Private browsing: the change is lost, the verification still happens. */ }
@@ -62,7 +63,7 @@ export function verifySecondFactor(path: string, method: string, body: unknown, 
  * Replays the call the second factor was demanded for, once, on return. The entry is
  * dropped BEFORE the attempt so a repeated refusal cannot loop through the login page.
  */
-export async function resumeSecondFactor(csrf: string, scope: HeldScope): Promise<'resumed' | 'refused' | 'none'> {
+export async function resumeSecondFactor(csrf: string, scope: HeldScope): Promise<'resumed' | 'downloaded' | 'refused' | 'none'> {
   let held: Held | undefined;
   try {
     const raw = window.sessionStorage.getItem(KEY);
@@ -72,8 +73,14 @@ export async function resumeSecondFactor(csrf: string, scope: HeldScope): Promis
   } catch { return 'none'; }
   if (!held?.path || typeof held.at !== 'number' || Date.now() - held.at > WINDOW_MS) return 'none';
   if (held.org !== scope.org || held.user !== scope.user || !held.path.startsWith('/api/') || !replayable.has(held.method)) return 'none';
+  if (held.download && (held.download !== 'windows-package' || held.path !== WINDOWS_PACKAGE_PATH || held.method !== 'POST' || held.body !== undefined)) return 'none';
   if (held.hash && window.location.hash !== held.hash) window.location.hash = held.hash;
   try {
+    if (held.download === 'windows-package') {
+      const response = await requestRaw(WINDOWS_PACKAGE_PATH, { method: 'POST', csrf, accept: 'application/zip' });
+      saveBlob(await response.blob(), WINDOWS_PACKAGE_NAME);
+      return 'downloaded';
+    }
     await request(held.path, { method: held.method, body: held.body, csrf });
     return 'resumed';
   } catch {

@@ -172,6 +172,7 @@ export type SsoProviderView = {
   client_id: string;
   hosted_domain?: string;
   tenant_id?: string;
+  invitation_domain?: string;
   redirect_uri: string;
 };
 export type SsoSettings = {

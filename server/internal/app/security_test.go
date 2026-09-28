@@ -70,11 +70,14 @@ type testIdentity struct {
 	// Fake identity-administration state (Keycloak admin REST API), guarded by mu
 	// since it is written both by the test goroutine and read by the server's
 	// request-handling goroutine.
-	mu         sync.Mutex
-	users      map[string]*fakeUser
-	mails      int
-	components map[string]map[string]any
-	ldapFail   bool
+	mu    sync.Mutex
+	users map[string]*fakeUser
+	mails int
+	// What the last invitation asked of Keycloak: the e-mail query and the new account locale.
+	mailQuery     url.Values
+	createdLocale []string
+	components    map[string]map[string]any
+	ldapFail      bool
 	// Which client scopes were pushed into the realm's own default and optional
 	// lists, in order, so a test can prove what a newly created client inherits.
 	realmScopes []string
@@ -88,6 +91,14 @@ type testIdentity struct {
 	// whether the idp_link required action is on (Keycloak's default).
 	providers map[string]map[string]any
 	idpLink   bool
+	// Realm roles, their holders, and authentication flows with their execution configs.
+	roles     map[string]bool
+	userRoles map[string]map[string]bool
+	flows     map[string][]*fakeExecution
+	configs   map[string]map[string]string
+	// mailsSucceed makes execute-actions-email answer 204; mailActions is the last list.
+	mailsSucceed bool
+	mailActions  []string
 }
 
 type fakeClient struct {
@@ -97,6 +108,7 @@ type fakeClient struct {
 	Mappers                  []map[string]any
 	Attributes               map[string]string
 	RedirectURIs, WebOrigins []string
+	BaseURL                  string
 }
 
 // fakeUser is a minimal Keycloak UserRepresentation held by the fake identity
@@ -144,6 +156,10 @@ func identityProvider(t *testing.T) *testIdentity {
 		components: map[string]map[string]any{},
 		providers:  map[string]map[string]any{},
 		idpLink:    true,
+		roles:      map[string]bool{},
+		userRoles:  map[string]map[string]bool{},
+		flows:      map[string][]*fakeExecution{},
+		configs:    map[string]map[string]string{},
 		clients:    map[string]*fakeClient{"console": {ClientID: "test-console", Attributes: map[string]string{}}}}
 	p.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { p.serveHTTP(t, w, r) }))
 	t.Cleanup(p.server.Close)
@@ -648,6 +664,15 @@ func (f *securityFixture) testMFAAndInvitationFailure(t *testing.T) {
 	var count int
 	if e := admin.QueryRow(ctx, `SELECT count(*) FROM users WHERE subject='invited-subject'`).Scan(&count); e != nil || count != 0 {
 		t.Fatal("failed SMTP created a local member")
+	}
+	// The account is created in the invitee's language, and the e-mail names the
+	// console client so that its last page links to the console sign-in.
+	requireHTTP(t, call("POST", "/api/members/invitations", map[string]string{"email": "new-invitee@example.test", "role": "viewer", "language": "es"}, sessionCookie, session.CSRF, c.AppURL, ""), 502)
+	f.p.mu.Lock()
+	query, locale := f.p.mailQuery, f.p.createdLocale
+	f.p.mu.Unlock()
+	if query.Get("client_id") != c.ClientID || query.Get("lifespan") != "86400" || len(locale) != 1 || locale[0] != "es" {
+		t.Fatalf("invitation request: query=%v locale=%v", query, locale)
 	}
 }
 

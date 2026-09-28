@@ -43,6 +43,9 @@ func (a *App) syncPublicIdentity(ctx context.Context, origin string) error {
 	}
 	client["redirectUris"] = []string{origin + "/auth/callback"}
 	client["webOrigins"] = []string{origin}
+	// Keycloak links its own pages to the base URL: once an invited account is ready,
+	// and on an expired link, the next step is signing in to the console.
+	client["baseUrl"] = origin + "/auth/login"
 	attributes, _ := client["attributes"].(map[string]any)
 	if attributes == nil {
 		attributes = map[string]any{}

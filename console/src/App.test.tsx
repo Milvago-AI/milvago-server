@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import * as navigation from './navigation';
 import type { Session } from './api';
+import { browser } from './secondFactor';
 import type { ShadowSettings } from './shadow/types';
 
 const adminPermissions = ['overview.read', 'events.read', 'devices.read', 'devices.manage', 'members.read', 'members.manage', 'settings.manage', 'policy.manage', 'installers.manage'];
@@ -25,7 +26,7 @@ function serve(routes: Record<string, unknown>, handler?: (url: string, init?: R
   });
 }
 beforeEach(() => {
-  vi.unstubAllGlobals(); localStorage.clear(); document.cookie = 'milvago_theme=;Max-Age=0;Path=/'; window.location.hash = '';
+  vi.unstubAllGlobals(); vi.restoreAllMocks(); sessionStorage.clear(); localStorage.clear(); document.cookie = 'milvago_theme=;Max-Age=0;Path=/'; window.location.hash = '';
   Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { configurable: true, value() { this.setAttribute('open', ''); } });
   Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value() { this.removeAttribute('open'); } });
 });
@@ -51,19 +52,32 @@ describe('Console workflows', () => {
     const createObjectURL = vi.fn().mockReturnValue('blob:installer-file');
     Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
     Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
-    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { expect(this.download).toBe('milvago-windows-installer.msi'); });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { expect(this.download).toBe('milvago-windows-package.zip'); });
     const automatic = { ...deviceShadowSettings, config: { ...deviceShadowSettings.config, enrollment: { approval: 'automatic' as const, cidrs: [] } } };
-    const fetchMock = serve({ '/api/devices': devices([]), '/api/settings': confirmedSettings, '/api/shadow/settings': automatic }, url => url === '/api/installer/windows' ? new Response('package', { headers: { 'X-Milvago-Installer-Version': '0.5.10' } }) : undefined);
+    const fetchMock = serve({ '/api/devices': devices([]), '/api/settings': confirmedSettings, '/api/shadow/settings': automatic }, url => url === '/api/installer/windows/package' ? new Response('package', { headers: { 'X-Milvago-Installer-Version': '0.5.10' } }) : undefined);
     render(<App />); const user = userEvent.setup();
     await user.click(await screen.findByRole('button', { name: /Télécharger l’agent/ }));
-    const windows = await screen.findByRole('button', { name: 'Windows MSI' });
+    const windows = await screen.findByRole('button', { name: 'Windows ZIP' });
     await waitFor(() => expect(windows).toBeEnabled());
     await user.click(windows);
     expect(click).toHaveBeenCalledOnce();
     expect(screen.getAllByRole('status')).toContain(await screen.findByText('Version téléchargée : 0.5.10'));
-    expect(fetchMock).toHaveBeenCalledWith('/api/installer/windows', expect.objectContaining({ credentials: 'same-origin' }));
-    // The durable key replaced the per-download package: nothing is created here.
-    expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+    expect(fetchMock).toHaveBeenCalledWith('/api/installer/windows/package', expect.objectContaining({ method: 'POST', credentials: 'same-origin', headers: expect.objectContaining({ 'X-CSRF-Token': 'session-csrf', Accept: 'application/zip' }) }));
+    // The package is assembled for this download; no deployment key is created.
+    expect(fetchMock.mock.calls.filter(([url]) => url === '/api/installer/windows/package')).toHaveLength(1);
+  });
+  it('starts second-factor verification for the Windows ZIP without saving a partial download', async () => {
+    window.location.hash = '#devices';
+    const navigate = vi.spyOn(browser, 'navigate').mockImplementation(() => {});
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    const fetchMock = serve({ '/api/devices': devices([]), '/api/settings': confirmedSettings, '/api/shadow/settings': deviceShadowSettings }, url =>
+      url === '/api/installer/windows/package' ? reply({ error: 'fresh_mfa_required', message: 'Verify again.' }, 403) : undefined);
+    render(<App />); const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: /Télécharger l’agent/ }));
+    await user.click(await screen.findByRole('button', { name: 'Windows ZIP' }));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith(expect.stringContaining('/auth/login?mfa=1&lang=')));
+    expect(click).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledWith('/api/installer/windows/package', expect.objectContaining({ method: 'POST' }));
   });
   it('clears an old downloaded version when a later package does not confirm one', async () => {
     window.location.hash = '#devices';
@@ -74,13 +88,13 @@ describe('Console workflows', () => {
     const headers = ['0.5.10', '', 'invalid'];
     let download = 0;
     serve({ '/api/devices': devices([]), '/api/settings': confirmedSettings, '/api/shadow/settings': automatic }, url => {
-      if (url !== '/api/installer/windows') return undefined;
+      if (url !== '/api/installer/windows/package') return undefined;
       const version = headers[download++];
       return new Response('package', { headers: version ? { 'X-Milvago-Installer-Version': version } : {} });
     });
     render(<App />); const user = userEvent.setup();
     await user.click(await screen.findByRole('button', { name: /Télécharger l’agent/ }));
-    const windows = await screen.findByRole('button', { name: 'Windows MSI' });
+    const windows = await screen.findByRole('button', { name: 'Windows ZIP' });
     await waitFor(() => expect(windows).toBeEnabled());
     await user.click(windows);
     expect(await screen.findByText('Version téléchargée : 0.5.10')).toBeInTheDocument();
@@ -289,7 +303,7 @@ describe('Console workflows', () => {
     await screen.findByText('Dernière rotation');
     await user.click(screen.getByRole('button', { name: 'Faire tourner' }));
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/rotate'))).toBe(false);
-    expect(screen.getByText(/Téléchargez un nouveau fichier de provisionnement/)).toBeInTheDocument();
+    expect(screen.getByText(/Téléchargez un nouveau ZIP Windows/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Confirmer la rotation' }));
     expect(fetchMock).toHaveBeenCalledWith('/api/deployment-key/rotate', expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ 'X-CSRF-Token': 'session-csrf' }) }));
     await user.click(await screen.findByRole('button', { name: 'Révoquer' }));

@@ -40,7 +40,7 @@ describe('Settings > SSO', () => {
     await waitFor(() => {
       const put = fetchMock.mock.calls.find(([url, init]) => url === '/api/settings/sso/google' && (init as RequestInit | undefined)?.method === 'PUT');
       expect(put).toBeDefined();
-      expect(JSON.parse(String((put?.[1] as RequestInit).body))).toEqual({ enabled: true, client_id: 'synthetic.apps.googleusercontent.com', client_secret: 'synthetic-secret', hosted_domain: 'example.org', tenant_id: '' });
+      expect(JSON.parse(String((put?.[1] as RequestInit).body))).toEqual({ enabled: true, client_id: 'synthetic.apps.googleusercontent.com', client_secret: 'synthetic-secret', hosted_domain: 'example.org', tenant_id: '', invitation_domain: '' });
     });
   });
 

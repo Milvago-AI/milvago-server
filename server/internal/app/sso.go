@@ -18,11 +18,8 @@ import (
 // Keycloak is the only store: no table, and the client secret never comes back out.
 
 const (
-	ssoPath = "/identity-provider/instances/"
-	// Keycloak's built-in flow: an existing account is linked only after the person
-	// signing in proves they control it, never on a matching e-mail alone.
-	ssoBrokerLoginFlow = "first broker login"
-	microsoftLogin     = "https://login.microsoftonline.com/"
+	ssoPath        = "/identity-provider/instances/"
+	microsoftLogin = "https://login.microsoftonline.com/"
 )
 
 var (
@@ -37,6 +34,9 @@ type ssoBody struct {
 	ClientSecret string `json:"client_secret"`
 	HostedDomain string `json:"hosted_domain"`
 	TenantID     string `json:"tenant_id"`
+	// InvitationDomain is the Microsoft counterpart of the Google domain: invitations to
+	// it sign in with Microsoft without a further proof. Empty keeps the proof.
+	InvitationDomain string `json:"invitation_domain"`
 }
 
 type ssoView struct {
@@ -46,6 +46,8 @@ type ssoView struct {
 	HostedDomain string `json:"hosted_domain,omitempty"`
 	TenantID     string `json:"tenant_id,omitempty"`
 	RedirectURI  string `json:"redirect_uri"`
+	// InvitationDomain is set for Microsoft only.
+	InvitationDomain string `json:"invitation_domain,omitempty"`
 }
 
 func (a *App) registerSSORoutes() {
@@ -125,6 +127,7 @@ func (a *App) ssoViewOf(alias string, current map[string]any) ssoView {
 		v.HostedDomain = ssoConfigValue(current, "hostedDomain")
 	} else {
 		v.TenantID = strings.TrimSuffix(strings.TrimPrefix(ssoConfigValue(current, "issuer"), microsoftLogin), "/v2.0")
+		v.InvitationDomain = ssoConfigValue(current, ssoInvitationDomain)
 	}
 	return v
 }
@@ -156,16 +159,17 @@ func (b *ssoBody) validate(alias string) error {
 	b.ClientID = strings.TrimSpace(b.ClientID)
 	b.HostedDomain = strings.ToLower(strings.TrimSpace(b.HostedDomain))
 	b.TenantID = strings.ToLower(strings.TrimSpace(b.TenantID))
+	b.InvitationDomain = strings.ToLower(strings.TrimSpace(b.InvitationDomain))
 	if invalidSecret(b.ClientSecret) {
 		return bad("Client secret is too long or malformed.")
 	}
 	if alias == "google" {
-		b.TenantID = ""
+		b.TenantID, b.InvitationDomain = "", ""
 		if !ssoClientPattern.MatchString(b.ClientID) {
 			return bad("Enter the OAuth client ID Google issued.")
 		}
 		// Without a domain any Google account could present itself to the broker.
-		if len(b.HostedDomain) > 253 || !strings.Contains(b.HostedDomain, ".") || !ldapHostPattern.MatchString(b.HostedDomain) {
+		if !emailDomain(b.HostedDomain) {
 			return bad("Enter the organization's Google Workspace domain.")
 		}
 		return nil
@@ -179,12 +183,21 @@ func (b *ssoBody) validate(alias string) error {
 	if !guidPattern.MatchString(b.TenantID) {
 		return bad("Enter the directory (tenant) ID of the organization's Microsoft Entra tenant.")
 	}
+	if b.InvitationDomain != "" && !emailDomain(b.InvitationDomain) {
+		return bad("Enter the organization's e-mail domain, or leave it empty.")
+	}
 	return nil
+}
+
+// emailDomain accepts a bare DNS name with at least two labels: no scheme, port, path,
+// wildcard, list or trailing dot.
+func emailDomain(v string) bool {
+	return len(v) <= 253 && strings.Contains(v, ".") && ldapHostPattern.MatchString(v)
 }
 
 func (b ssoBody) representation(alias, secret string) map[string]any {
 	config := map[string]any{"clientId": b.ClientID, "clientSecret": secret, "defaultScope": "openid profile email", "syncMode": "IMPORT"}
-	rep := map[string]any{"alias": alias, "providerId": alias, "enabled": b.Enabled, "trustEmail": true, "storeToken": false, "linkOnly": false, "hideOnLogin": false, "firstBrokerLoginFlowAlias": ssoBrokerLoginFlow, "config": config}
+	rep := map[string]any{"alias": alias, "providerId": alias, "enabled": b.Enabled, "trustEmail": true, "storeToken": false, "linkOnly": false, "hideOnLogin": false, "firstBrokerLoginFlowAlias": ssoFirstLoginFlow, "config": config}
 	if alias == "google" {
 		// Google verifies its e-mail addresses, and Keycloak checks the token's hd claim.
 		config["hostedDomain"] = b.HostedDomain
@@ -204,6 +217,9 @@ func (b ssoBody) representation(alias, secret string) map[string]any {
 		"validateSignature": "true", "pkceEnabled": "true", "pkceMethod": "S256",
 		"clientAuthMethod": "client_secret_post", "disableUserInfo": "true",
 	})
+	if b.InvitationDomain != "" {
+		config[ssoInvitationDomain] = b.InvitationDomain
+	}
 	return rep
 }
 
@@ -249,6 +265,9 @@ func (a *App) putSSO(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Sessi
 	}
 	// Before the provider exists, so that it is never offered with linking open.
 	if err = disableSelfLinking(r.Context(), admin); err != nil {
+		return err
+	}
+	if err = ensureSSOInvitationLinking(r.Context(), admin); err != nil {
 		return err
 	}
 	method, path, want := "POST", strings.TrimSuffix(ssoPath, "/"), 201

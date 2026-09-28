@@ -20,6 +20,7 @@ type ProviderForm = {
   client_secret: string;
   hosted_domain: string;
   tenant_id: string;
+  invitation_domain: string;
 };
 
 function fromView(view: SsoProviderView): ProviderForm {
@@ -29,6 +30,7 @@ function fromView(view: SsoProviderView): ProviderForm {
     client_secret: "",
     hosted_domain: view.hosted_domain ?? "",
     tenant_id: view.tenant_id ?? "",
+    invitation_domain: view.invitation_domain ?? "",
   };
 }
 
@@ -143,6 +145,15 @@ function ProviderEditor({
                   placeholder="00000000-0000-0000-0000-000000000000"
                   value={form.tenant_id}
                   onChange={(e) => set("tenant_id", e.target.value)}
+                />
+              </Field>
+            )}
+            {!google && (
+              <Field label={t("ssoMicrosoftInvitationDomain")} help={t("ssoMicrosoftInvitationDomainHelp")}>
+                <input
+                  placeholder="example.com"
+                  value={form.invitation_domain}
+                  onChange={(e) => set("invitation_domain", e.target.value)}
                 />
               </Field>
             )}
