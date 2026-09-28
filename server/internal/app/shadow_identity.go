@@ -47,10 +47,6 @@ func (a *App) deviceAssociationRequest(w http.ResponseWriter, r *http.Request) e
 	if e := a.checkPublicRequest(r, "device-association", 120, 1200); e != nil {
 		return e
 	}
-	identity, e := a.currentOIDC(r.Context())
-	if e != nil {
-		return e
-	}
 	token := r.URL.Query().Get("token")
 	if r.Method == "POST" {
 		r.Body = http.MaxBytesReader(w, r.Body, 4096)
@@ -76,6 +72,15 @@ func (a *App) deviceAssociationRequest(w http.ResponseWriter, r *http.Request) e
 		return e
 	}
 	defer tx.Rollback(r.Context())
+	// The person at the machine signs in to the realm of the machine's organization.
+	realm, e := a.organizationRealm(r.Context(), tx, org)
+	if e != nil {
+		return e
+	}
+	identity, e := a.currentOIDCFor(r.Context(), realm)
+	if e != nil {
+		return e
+	}
 	var hostname, sealedName, name string
 	if e = tx.QueryRow(r.Context(), `SELECT d.hostname,COALESCE(d.hostname_ciphertext,''),o.name FROM devices d JOIN organizations o ON o.id=d.organization_id WHERE d.id=$1 AND d.status='approved'`, device).Scan(&hostname, &sealedName, &name); e != nil {
 		return forbidden()
@@ -100,7 +105,7 @@ func (a *App) deviceAssociationRequest(w http.ResponseWriter, r *http.Request) e
 		return associationPage.Execute(w, map[string]string{"Organization": name, "Hostname": hostname, "Token": token, "Confirmation": confirmation})
 	}
 	state, binding, nonce, verifier := randomToken(), randomToken(), randomToken(), oauth2.GenerateVerifier()
-	if _, e = tx.Exec(r.Context(), `INSERT INTO login_attempts(state_hash,binding_hash,verifier,nonce,expires_at,association_org,association_device,association_hash) VALUES($1,$2,$3,$4,now()+interval '10 minutes',$5,$6,$7)`, hash(state), hash(binding), verifier, nonce, org, device, hash(token)); e != nil {
+	if _, e = tx.Exec(r.Context(), `INSERT INTO login_attempts(state_hash,binding_hash,verifier,nonce,expires_at,association_org,association_device,association_hash,realm) VALUES($1,$2,$3,$4,now()+interval '10 minutes',$5,$6,$7,$8)`, hash(state), hash(binding), verifier, nonce, org, device, hash(token), realm); e != nil {
 		return e
 	}
 	if e = tx.Commit(r.Context()); e != nil {

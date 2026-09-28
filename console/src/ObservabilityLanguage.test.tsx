@@ -187,13 +187,14 @@ describe("Instance language", () => {
     speaks("es-ES", "es");
     serve(base, url => url === "/api/session" ? reply({}, 401) : url === "/api/bootstrap" ? reply({ default_language: "en" }) : undefined);
     render(<App />);
-    expect(await screen.findByRole("link", { name: /Iniciar sesión/ })).toHaveAttribute("href", "/auth/login?lang=es");
+    const signIn = await screen.findByRole("button", { name: /Iniciar sesión/ });
+    expect(signIn.closest("form")?.querySelector("input[name=lang]")).toHaveValue("es");
     expect(localStorage.getItem("milvago.language")).toBeNull();
     // The two-language toggle became a four-language picker; the behaviour under
     // test is unchanged, so the assertion moves to the new control.
     fireEvent.change(screen.getByRole("combobox", { name: "Idioma" }), { target: { value: "fr" } });
     expect(localStorage.getItem("milvago.language")).toBe("fr");
-    expect(screen.getByRole("link", { name: /Se connecter/ })).toHaveAttribute("href", "/auth/login?lang=fr");
+    expect(screen.getByRole("button", { name: /Se connecter/ }).closest("form")?.querySelector("input[name=lang]")).toHaveValue("fr");
   });
   // Regression: the two new languages were silently dropped on load. The guards
   // spelled out ["fr","en"], so a remembered "es" read as "no explicit choice"

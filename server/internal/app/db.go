@@ -241,6 +241,9 @@ func applyServiceDatabaseSchema(ctx context.Context, tx pgx.Tx, c Config) error 
 	if e = initializeDeviceGroups(ctx, tx, role); e != nil {
 		return e
 	}
+	if e = initializeSSODomains(ctx, tx, role); e != nil {
+		return e
+	}
 	if e = initializePublisherClient(ctx, tx, role); e != nil {
 		return e
 	}
@@ -568,6 +571,7 @@ func (a *App) maintainMinute(ctx context.Context) error {
 		return e
 	}
 	a.maintainPublisher(ctx)
+	a.expirePendingInvitations(ctx)
 	return ctx.Err()
 }
 

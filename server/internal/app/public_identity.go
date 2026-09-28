@@ -62,19 +62,58 @@ func (a *App) publicIdentityIssuer(origin string) string {
 }
 
 func (a *App) currentOIDC(ctx context.Context) (*identityRuntime, error) {
+	return a.currentOIDCFor(ctx, "")
+}
+
+// currentOIDCFor is the browser OIDC runtime of one realm ("" is the root one). Each
+// organization realm has its own issuer, keys and endpoints: a token of one realm never
+// verifies in another.
+func (a *App) currentOIDCFor(ctx context.Context, realm string) (*identityRuntime, error) {
 	origin, err := a.publicIdentityOrigin(ctx)
 	if err != nil {
 		return nil, err
 	}
-	issuer := a.publicIdentityIssuer(origin)
-	if state := a.publicOIDC.Load(); state != nil && state.origin == origin && state.issuer == issuer {
+	rootIssuer := a.publicIdentityIssuer(origin)
+	if realm == "" || realm == a.rootRealm() {
+		if state := a.publicOIDC.Load(); state != nil && state.origin == origin && state.issuer == rootIssuer {
+			return state, nil
+		}
+		a.publicOIDCMu.Lock()
+		defer a.publicOIDCMu.Unlock()
+		if state := a.publicOIDC.Load(); state != nil && state.origin == origin && state.issuer == rootIssuer {
+			return state, nil
+		}
+		state, err := a.discoverOIDC(ctx, origin, rootIssuer)
+		if err != nil {
+			return nil, err
+		}
+		a.publicOIDC.Store(state)
 		return state, nil
 	}
-	a.publicOIDCMu.Lock()
-	defer a.publicOIDCMu.Unlock()
-	if state := a.publicOIDC.Load(); state != nil && state.origin == origin && state.issuer == issuer {
-		return state, nil
+	issuer, err := realmIssuer(rootIssuer, realm)
+	if err != nil {
+		return nil, err
 	}
+	if cached, ok := a.realmOIDC.Load(realm); ok {
+		if state := cached.(*identityRuntime); state.origin == origin && state.issuer == issuer {
+			return state, nil
+		}
+	}
+	state, err := a.discoverOIDC(ctx, origin, issuer)
+	if err != nil {
+		return nil, err
+	}
+	a.realmOIDC.Store(realm, state)
+	return state, nil
+}
+
+// A verifier is cached beyond the request that discovers it. Its JWKS fetches
+// must keep working after that request ends.
+func longLivedOIDCContext(client *http.Client) context.Context {
+	return oidc.ClientContext(context.Background(), client)
+}
+
+func (a *App) discoverOIDC(ctx context.Context, origin, issuer string) (*identityRuntime, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
 	if a.config.InternalOIDC != "" {
 		public, _ := url.Parse(issuer)
@@ -94,19 +133,17 @@ func (a *App) currentOIDC(ctx context.Context) (*identityRuntime, error) {
 	if err = provider.Claims(&discovery); err != nil {
 		return nil, err
 	}
-	state := &identityRuntime{
+	return &identityRuntime{
 		origin: origin, issuer: issuer, client: client, provider: provider, logoutURL: discovery.Logout,
 		oauth: oauth2.Config{
 			ClientID: a.config.ClientID, ClientSecret: a.config.ClientSecret,
 			Endpoint: provider.Endpoint(), RedirectURL: origin + "/auth/callback",
 			Scopes: []string{oidc.ScopeOpenID, "profile", "email"},
 		},
-		verifier: provider.VerifierContext(oidc.ClientContext(context.Background(), client), &oidc.Config{
+		verifier: provider.VerifierContext(longLivedOIDCContext(client), &oidc.Config{
 			ClientID: a.config.ClientID, SupportedSigningAlgs: []string{oidc.RS256},
 		}),
-	}
-	a.publicOIDC.Store(state)
-	return state, nil
+	}, nil
 }
 
 func (a *App) browserOrigin() string {

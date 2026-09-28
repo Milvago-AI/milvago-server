@@ -157,7 +157,7 @@ func (a *App) apiKeyTx(r *http.Request) (pgx.Tx, *Session, error) {
 	// The identity fields existing handlers already read -- session() reports the
 	// email and display name. users carries no row-level security, which is why
 	// the cross-tenant lookup above can stay at two columns.
-	if e = tx.QueryRow(ctx, `SELECT email,display_name,subject,identity_type FROM users WHERE id=$1`, s.UserID).Scan(&s.Email, &s.DisplayName, &s.Subject, &s.IdentityType); e != nil {
+	if e = tx.QueryRow(ctx, `SELECT email,display_name,subject,identity_type,realm FROM users WHERE id=$1`, s.UserID).Scan(&s.Email, &s.DisplayName, &s.Subject, &s.IdentityType, &s.Realm); e != nil {
 		return fail(apiKeyUnauthorized())
 	}
 	return tx, s, nil
@@ -207,7 +207,7 @@ func (a *App) touchAPIKey(ctx context.Context, org, id string) {
 }
 
 // keyHolder is one account that still holds a live key in one organization.
-type keyHolder struct{ org, user, subject string }
+type keyHolder struct{ org, user, subject, realm string }
 
 // revokeWithdrawnIdentities revokes the API keys of accounts the identity
 // provider no longer honours -- deleted outright, or disabled.
@@ -232,23 +232,37 @@ type keyHolder struct{ org, user, subject string }
 //     provider's. The exposure window is therefore one maintenance cycle, which
 //     is the honest trade and is documented for the offboarding procedure.
 func (a *App) revokeWithdrawnIdentities(ctx context.Context) {
-	admin, e := a.identityAdmin(ctx)
-	if e != nil {
-		return
-	}
 	holders, e := a.withdrawnKeyHolders(ctx)
 	if e != nil {
 		return
 	}
 	// One verdict per account for the whole sweep: the same person can hold keys
-	// in several organizations, and the provider is asked once.
+	// in several organizations, and the provider is asked once. Each account is
+	// asked of its own realm, with that realm's own administration.
 	verdicts := map[string]bool{}
-	probed, answering := false, false
+	type realmState struct {
+		admin             *identityAdmin
+		probed, answering bool
+		unavailable       bool
+	}
+	realms := map[string]*realmState{}
 	for _, h := range holders {
-		if _, known := verdicts[h.subject]; known {
+		key := h.realm + "\x00" + h.subject
+		if _, known := verdicts[key]; known {
 			continue
 		}
-		u, e := admin.user(ctx, h.subject)
+		state := realms[h.realm]
+		if state == nil {
+			state = &realmState{}
+			if state.admin, e = a.identityAdminFor(ctx, h.realm); e != nil {
+				state.unavailable = true
+			}
+			realms[h.realm] = state
+		}
+		if state.unavailable {
+			continue
+		}
+		u, e := state.admin.user(ctx, h.subject)
 		if e != nil {
 			// Unreachable or refused: no verdict, so this account is left alone.
 			continue
@@ -257,21 +271,22 @@ func (a *App) revokeWithdrawnIdentities(ctx context.Context) {
 		// reached the wrong realm, or the service account may have lost its
 		// rights -- all three answer 404 on a single user, and acting on the
 		// first reading would revoke every key in the deployment the moment the
-		// configuration is wrong. So corroborate once, against the collection
-		// endpoint, and abandon the sweep rather than guess.
+		// configuration is wrong. So corroborate once per realm, against the
+		// collection endpoint, and leave that realm alone rather than guess.
 		if u == nil {
-			if !probed {
-				probed, answering = true, admin.answering(ctx)
+			if !state.probed {
+				state.probed, state.answering = true, state.admin.answering(ctx)
 			}
-			if !answering {
-				a.log.Error("identity administration answered 404 for a key holder but is not listing users; withdrawn-identity sweep abandoned")
-				return
+			if !state.answering {
+				a.log.Error("identity administration answered 404 for a key holder but is not listing users; withdrawn-identity sweep skipped for that realm")
+				state.unavailable = true
+				continue
 			}
 		}
-		verdicts[h.subject] = u.withdrawn()
+		verdicts[key] = u.withdrawn()
 	}
 	for _, h := range holders {
-		if verdicts[h.subject] {
+		if verdicts[h.realm+"\x00"+h.subject] {
 			a.revokeWithdrawnKeyHolder(ctx, h)
 		}
 	}
@@ -306,11 +321,11 @@ func (a *App) withdrawnKeyHolders(ctx context.Context) ([]keyHolder, error) {
 		if e != nil {
 			continue
 		}
-		found, e := tx.Query(ctx, `SELECT DISTINCT k.user_id,u.subject FROM api_keys k JOIN users u ON u.id=k.user_id WHERE k.revoked_at IS NULL AND k.expires_at>now()`)
+		found, e := tx.Query(ctx, `SELECT DISTINCT k.user_id,u.subject,u.realm FROM api_keys k JOIN users u ON u.id=k.user_id WHERE k.revoked_at IS NULL AND k.expires_at>now()`)
 		if e == nil {
 			for found.Next() {
 				h := keyHolder{org: org}
-				if e = found.Scan(&h.user, &h.subject); e != nil {
+				if e = found.Scan(&h.user, &h.subject, &h.realm); e != nil {
 					break
 				}
 				holders = append(holders, h)

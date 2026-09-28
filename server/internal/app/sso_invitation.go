@@ -70,7 +70,7 @@ func adminJSON(ctx context.Context, admin *identityAdmin, method, path string, b
 		return e
 	}
 	if status != want || (out != nil && json.Unmarshal(raw, out) != nil) {
-		return apiError{502, "identity_unavailable", "The identity provider refused the single sign-on sign-in flow."}
+		return apiError{502, "identity_unavailable", "The identity provider refused an identity administration request."}
 	}
 	return nil
 }
@@ -116,57 +116,71 @@ func pendingRole(ctx context.Context, admin *identityAdmin, create bool) (map[st
 	return role, nil
 }
 
+func newFlowExecution(before, after []map[string]any) map[string]any {
+	known := make(map[any]bool, len(before))
+	for _, execution := range before {
+		known[execution["id"]] = true
+	}
+	var added map[string]any
+	for _, execution := range after {
+		if !known[execution["id"]] {
+			added = execution
+		}
+	}
+	return added
+}
+
+func addSSOFirstLoginStep(ctx context.Context, admin *identityAdmin, parent string, step flowStep) error {
+	path := flowExecutionsPath(parent)
+	var before []map[string]any
+	if err := adminJSON(ctx, admin, "GET", path, nil, 200, &before); err != nil {
+		return err
+	}
+	if step.subflow {
+		if err := adminJSON(ctx, admin, "POST", path+"/flow", map[string]any{"alias": step.name, "type": "basic-flow", "provider": "registration-page-form", "description": step.name}, 201, nil); err != nil {
+			return err
+		}
+	} else if err := adminJSON(ctx, admin, "POST", path+"/execution", map[string]any{"provider": step.name}, 201, nil); err != nil {
+		return err
+	}
+	var after []map[string]any
+	if err := adminJSON(ctx, admin, "GET", path, nil, 200, &after); err != nil {
+		return err
+	}
+	added := newFlowExecution(before, after)
+	if added == nil {
+		return errSSOFlowForeign
+	}
+	added["requirement"] = step.requirement
+	// Keycloak answers 202 or 204 depending on the release.
+	status, _, _, err := admin.call(ctx, "PUT", path, added)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusAccepted && status != http.StatusNoContent {
+		return apiError{502, "identity_unavailable", "The identity provider refused the single sign-on sign-in flow."}
+	}
+	if step.config != nil {
+		id, _ := added["id"].(string)
+		if err := adminJSON(ctx, admin, "POST", "/authentication/executions/"+url.PathEscape(id)+"/config", map[string]any{"alias": ssoFirstLoginFlow + "-pending-invitation", "config": step.config}, 201, nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func buildSSOFirstLoginFlow(ctx context.Context, admin *identityAdmin) error {
-	if e := adminJSON(ctx, admin, "POST", "/authentication/flows", map[string]any{"alias": ssoFirstLoginFlow, "providerId": "basic-flow", "topLevel": true, "builtIn": false, "description": "Milvago single sign-on first login"}, 201, nil); e != nil {
-		return e
+	if err := adminJSON(ctx, admin, "POST", "/authentication/flows", map[string]any{"alias": ssoFirstLoginFlow, "providerId": "basic-flow", "topLevel": true, "builtIn": false, "description": "Milvago single sign-on first login"}, 201, nil); err != nil {
+		return err
 	}
 	parents := []string{ssoFirstLoginFlow}
 	for _, step := range ssoFirstLoginSteps {
 		parents = parents[:step.level+1]
-		parent := parents[step.level]
-		var before []map[string]any
-		if e := adminJSON(ctx, admin, "GET", flowExecutionsPath(parent), nil, 200, &before); e != nil {
-			return e
-		}
-		known := map[any]bool{}
-		for _, x := range before {
-			known[x["id"]] = true
+		if err := addSSOFirstLoginStep(ctx, admin, parents[step.level], step); err != nil {
+			return err
 		}
 		if step.subflow {
-			if e := adminJSON(ctx, admin, "POST", flowExecutionsPath(parent)+"/flow", map[string]any{"alias": step.name, "type": "basic-flow", "provider": "registration-page-form", "description": step.name}, 201, nil); e != nil {
-				return e
-			}
 			parents = append(parents, step.name)
-		} else if e := adminJSON(ctx, admin, "POST", flowExecutionsPath(parent)+"/execution", map[string]any{"provider": step.name}, 201, nil); e != nil {
-			return e
-		}
-		var after []map[string]any
-		if e := adminJSON(ctx, admin, "GET", flowExecutionsPath(parent), nil, 200, &after); e != nil {
-			return e
-		}
-		var added map[string]any
-		for _, x := range after {
-			if !known[x["id"]] {
-				added = x
-			}
-		}
-		if added == nil {
-			return errSSOFlowForeign
-		}
-		added["requirement"] = step.requirement
-		// Keycloak answers 202 or 204 depending on the release.
-		status, _, _, e := admin.call(ctx, "PUT", flowExecutionsPath(parent), added)
-		if e != nil {
-			return e
-		}
-		if status != http.StatusAccepted && status != http.StatusNoContent {
-			return apiError{502, "identity_unavailable", "The identity provider refused the single sign-on sign-in flow."}
-		}
-		if step.config != nil {
-			id, _ := added["id"].(string)
-			if e := adminJSON(ctx, admin, "POST", "/authentication/executions/"+url.PathEscape(id)+"/config", map[string]any{"alias": ssoFirstLoginFlow + "-pending-invitation", "config": step.config}, 201, nil); e != nil {
-				return e
-			}
 		}
 	}
 	return nil
@@ -224,10 +238,7 @@ func invitationProvider(ctx context.Context, admin *identityAdmin, email string)
 			continue
 		}
 		enabled, _ := current["enabled"].(bool)
-		owned := ssoConfigValue(current, "hostedDomain")
-		if alias == "microsoft" {
-			owned = ssoConfigValue(current, ssoInvitationDomain)
-		}
+		owned := providerDomain(alias, current)
 		if enabled && current["firstBrokerLoginFlowAlias"] == ssoFirstLoginFlow && owned != "" && strings.EqualFold(domain, owned) {
 			return true, nil
 		}

@@ -3,7 +3,7 @@ package app
 import (
 	"archive/zip"
 	"bytes"
-	_ "embed"
+	_ "embed" // Required for the go:embed directive below.
 	"encoding/json"
 	"errors"
 	"io"

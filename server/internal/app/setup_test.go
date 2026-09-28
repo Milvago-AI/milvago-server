@@ -395,15 +395,19 @@ func (f *setupWizardFixture) testSetupCompensation(t *testing.T) {
 }
 
 func (f *setupWizardFixture) testSetupConcurrentCompletion(t *testing.T) {
-	call := f.call
-	open := f.open
-	completion := f.completion
-	adminIssuer := f.adminIssuer
-	p := f.p
-	origin := f.origin
+	defer f.adminIssuer()()
+	cookie, csrf := f.open(t)
+	codes, responses := f.runConcurrentSetupCompletions(cookie, csrf)
+	assertSetupLoginOrigins(t, codes, responses)
+	slices.Sort(codes)
+	// The loser finds its session consumed (401) or setup closed (404).
+	if codes[0] != 200 || (codes[1] != 401 && codes[1] != 404) {
+		t.Fatalf("concurrent completions answered %v", codes)
+	}
+	assertOneConcurrentSetupAdmin(t, f.p)
+}
 
-	defer adminIssuer()()
-	cookie, csrf := open(t)
+func (f *setupWizardFixture) runConcurrentSetupCompletions(cookie *http.Cookie, csrf string) ([]int, []string) {
 	codes := make([]int, 2)
 	responses := make([]string, 2)
 	var wg sync.WaitGroup
@@ -411,25 +415,29 @@ func (f *setupWizardFixture) testSetupConcurrentCompletion(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			body := completion()
+			body := f.completion()
 			if i == 1 {
 				body.Admin.Email = "second@example.test"
 			}
-			response := call("POST", "/api/setup/complete", body, cookie, csrf, origin)
+			response := f.call("POST", "/api/setup/complete", body, cookie, csrf, f.origin)
 			codes[i], responses[i] = response.Code, response.Body.String()
 		}()
 	}
 	wg.Wait()
+	return codes, responses
+}
+
+func assertSetupLoginOrigins(t *testing.T, codes []int, responses []string) {
+	t.Helper()
 	for i, code := range codes {
 		if code == 200 && !strings.Contains(responses[i], "https://milvago.example.test/auth/login?mfa=1") {
 			t.Fatalf("setup login did not use the confirmed public origin: %s", responses[i])
 		}
 	}
-	slices.Sort(codes)
-	// The loser finds its session consumed (401) or setup closed (404).
-	if codes[0] != 200 || (codes[1] != 401 && codes[1] != 404) {
-		t.Fatalf("concurrent completions answered %v", codes)
-	}
+}
+
+func assertOneConcurrentSetupAdmin(t *testing.T, p *testIdentity) {
+	t.Helper()
 	p.mu.Lock()
 	created := 0
 	for _, u := range p.users {

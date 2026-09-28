@@ -179,6 +179,16 @@ export type SsoSettings = {
   editable: boolean;
   providers: Record<SsoProvider, SsoProviderView>;
 };
+export type SsoDomain = {
+  domain: string;
+  record_name: string;
+  record_value: string;
+  verified: boolean;
+};
+export type SsoDomains = {
+  editable: boolean;
+  domains: SsoDomain[];
+};
 export type DirectoryUser = {
   subject: string;
   username: string;

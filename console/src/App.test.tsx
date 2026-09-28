@@ -37,7 +37,7 @@ describe('Console workflows', () => {
     vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: false }));
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(reply({ error: 'unauthorized' }, 401));
     const first = render(<App />);
-    await screen.findByRole('link', { name: /Se connecter/ });
+    await screen.findByRole('button', { name: /Se connecter/ });
     expect(document.documentElement.dataset.theme).toBe('dark');
     first.unmount();
     document.cookie = 'milvago_theme=light;Path=/;SameSite=Lax';
@@ -222,7 +222,7 @@ describe('Console workflows', () => {
     await user.click(await screen.findByRole('button', { name: 'Déconnexion' }));
     await waitFor(() => expect(navigate).toHaveBeenCalledWith(logoutUrl));
     expect(fetchMock).toHaveBeenCalledWith('/auth/logout', expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ 'X-CSRF-Token': 'session-csrf' }) }));
-    expect(await screen.findByRole('link', { name: /Se connecter/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Se connecter/ })).toBeInTheDocument();
   });
   it('keeps the console visible and does not redirect when logout fails', async () => {
     const navigate = vi.spyOn(navigation, 'navigate').mockImplementation(() => {});
@@ -236,8 +236,27 @@ describe('Console workflows', () => {
   it('offers identity login when the session is absent', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(reply({ error: 'unauthorized' }, 401));
     render(<App />);
-    expect(await screen.findByRole('link', { name: /Se connecter/ })).toHaveAttribute('href', '/auth/login?lang=fr');
+    // E-mail first: a GET form to /auth/login carrying the address and the language.
+    const signIn = await screen.findByRole('button', { name: /Se connecter/ });
+    const form = signIn.closest('form') as HTMLFormElement;
+    expect(form).toHaveAttribute('action', '/auth/login');
+    expect(form).toHaveAttribute('method', 'get');
+    expect(within(form).getByRole('textbox', { name: 'E-mail ou identifiant' })).toHaveAttribute('name', 'login_hint');
+    expect(form.querySelector('input[name=lang]')).toHaveValue('fr');
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
+    // Navigated, not submitted: the CSP form-action would block the redirect to the
+    // identity provider that follows a submission.
+    const assign = vi.fn();
+    vi.stubGlobal('location', { ...window.location, assign });
+    await userEvent.setup().type(within(form).getByRole('textbox', { name: 'E-mail ou identifiant' }), 'someone@example.org');
+    fireEvent.submit(form);
+    expect(assign).toHaveBeenCalledWith('/auth/login?lang=fr&login_hint=someone%40example.org');
+    // A sign-in name works as well as an address.
+    const field = within(form).getByRole('textbox', { name: 'E-mail ou identifiant' });
+    fireEvent.change(field, { target: { value: 'jdoe' } });
+    fireEvent.submit(form);
+    expect(assign).toHaveBeenLastCalledWith('/auth/login?lang=fr&login_hint=jdoe');
+    vi.unstubAllGlobals();
   });
   it('names the commercial edition Enterprise in the shell and on the entry page', async () => {
     serve({ '/api/overview': { period_hours: 24, events: 0, navigations: 0, blocked: 0, devices: 0, active_devices: 0, providers: [], timeline: [] }, '/api/bootstrap': { default_language: 'fr', edition: 'commercial' } }, url => url === '/api/session' ? reply({ ...session, edition: 'commercial' }) : undefined);
@@ -248,7 +267,7 @@ describe('Console workflows', () => {
     shell.unmount();
     serve({ '/api/bootstrap': { default_language: 'fr', edition: 'commercial' } }, url => url === '/api/session' ? reply({ error: 'unauthorized' }, 401) : undefined);
     render(<App />);
-    await screen.findByRole('link', { name: /Se connecter/ });
+    await screen.findByRole('button', { name: /Se connecter/ });
     expect(await screen.findByText('Enterprise')).toBeInTheDocument();
     expect(screen.queryByText('Community · Commercial')).not.toBeInTheDocument();
   });

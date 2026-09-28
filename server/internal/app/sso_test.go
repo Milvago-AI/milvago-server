@@ -15,37 +15,58 @@ import (
 // stored one when an update carries the mask. p.mu is held by admin().
 func (p *testIdentity) adminProviders(w http.ResponseWriter, r *http.Request, path string) {
 	if path == "/authentication/required-actions/idp_link" {
-		switch r.Method {
-		case "GET":
-			reply(w, 200, map[string]any{"alias": "idp_link", "name": "Linking Identity Provider", "enabled": p.idpLink})
-		case "PUT":
-			var action struct {
-				Enabled bool `json:"enabled"`
-			}
-			if json.NewDecoder(r.Body).Decode(&action) != nil {
-				w.WriteHeader(400)
-				return
-			}
-			p.idpLink = action.Enabled
-			w.WriteHeader(204)
-		default:
-			http.NotFound(w, r)
-		}
+		p.adminIDPLink(w, r)
 		return
 	}
 	alias := strings.TrimPrefix(strings.TrimPrefix(path, "/identity-provider/instances"), "/")
 	if name, ok := strings.CutSuffix(alias, "/mappers"); ok && r.Method == "GET" {
-		mappers, _ := p.providers[name]["mappers"].([]any)
-		reply(w, 200, append([]any{}, mappers...))
+		p.adminProviderMappers(w, name)
 		return
 	}
-	var incoming map[string]any
-	if r.Method == "POST" || r.Method == "PUT" {
-		if json.NewDecoder(r.Body).Decode(&incoming) != nil {
+	incoming, ok := decodeProviderRequest(w, r)
+	if !ok {
+		return
+	}
+	p.adminProvider(w, r, alias, incoming)
+}
+
+func (p *testIdentity) adminIDPLink(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		reply(w, 200, map[string]any{"alias": "idp_link", "name": "Linking Identity Provider", "enabled": p.idpLink})
+	case "PUT":
+		var action struct {
+			Enabled bool `json:"enabled"`
+		}
+		if json.NewDecoder(r.Body).Decode(&action) != nil {
 			w.WriteHeader(400)
 			return
 		}
+		p.idpLink = action.Enabled
+		w.WriteHeader(204)
+	default:
+		http.NotFound(w, r)
 	}
+}
+
+func (p *testIdentity) adminProviderMappers(w http.ResponseWriter, name string) {
+	mappers, _ := p.providers[name]["mappers"].([]any)
+	reply(w, 200, append([]any{}, mappers...))
+}
+
+func decodeProviderRequest(w http.ResponseWriter, r *http.Request) (map[string]any, bool) {
+	if r.Method != "POST" && r.Method != "PUT" {
+		return nil, true
+	}
+	var incoming map[string]any
+	if json.NewDecoder(r.Body).Decode(&incoming) != nil {
+		w.WriteHeader(400)
+		return nil, false
+	}
+	return incoming, true
+}
+
+func (p *testIdentity) adminProvider(w http.ResponseWriter, r *http.Request, alias string, incoming map[string]any) {
 	stored, exists := p.providers[alias]
 	switch {
 	case alias == "" && r.Method == "POST":
@@ -90,7 +111,7 @@ type ssoSettingsView struct {
 }
 
 func (f *identityScenarioFixture) testSSOSettings(t *testing.T) {
-	owner, p, db, ctx := f.owner, f.identity, f.admin, context.Background()
+	owner := f.owner
 	read := func(t *testing.T) ssoSettingsView {
 		t.Helper()
 		w := owner("GET", "/api/settings/sso", nil)
@@ -129,6 +150,17 @@ func (f *identityScenarioFixture) testSSOSettings(t *testing.T) {
 		requireHTTP(t, f.call("DELETE", "/api/settings/sso/google", nil, f.adminRoleCookie, f.adminRoleCSRF), 403)
 	}
 	// A provider decides who signs in to every organization: a recent second factor first.
+	f.checkSSOInvalidSettings(t, google, microsoft)
+
+	f.checkSSOGoogleSettings(t, google)
+
+	f.checkSSOMicrosoftSettings(t, google, microsoft, read)
+
+	f.checkSSORevocation(t, google, read)
+}
+
+func (f *identityScenarioFixture) checkSSOInvalidSettings(t *testing.T, google, microsoft func(map[string]any) map[string]any) {
+	owner, p, db, ctx := f.owner, f.identity, f.admin, context.Background()
 	w := owner("PUT", "/api/settings/sso/google", google(nil))
 	requireHTTP(t, w, 403)
 	if !strings.Contains(w.Body.String(), "fresh_mfa_required") || p.provider("google") != nil {
@@ -143,6 +175,34 @@ func (f *identityScenarioFixture) testSSOSettings(t *testing.T) {
 		}
 	})
 
+	f.proveSSOTestDomains(t, google)
+	f.checkSSOInvalidSubmissions(t, google, microsoft)
+}
+
+func (f *identityScenarioFixture) proveSSOTestDomains(t *testing.T, google func(map[string]any) map[string]any) {
+	owner, p, db, ctx := f.owner, f.identity, f.admin, context.Background()
+	if Edition == "commercial" {
+		// In Enterprise a provider answers only for a domain its organization proved.
+		w := owner("PUT", "/api/settings/sso/google", google(nil))
+		requireHTTP(t, w, 409)
+		if !strings.Contains(w.Body.String(), "domain_not_verified") || p.provider("google") != nil {
+			t.Fatal("an unproven domain was accepted", w.Body.String())
+		}
+		for _, domain := range []string{"example.test", "contoso.test"} {
+			if e := tenantExec(ctx, db, f.org, `INSERT INTO sso_domains(organization_id,domain,challenge,verified_at) VALUES($1,$2,$3,now())`, f.org, domain, strings.Repeat("c", 43)); e != nil {
+				t.Fatal(e)
+			}
+		}
+		t.Cleanup(func() {
+			if e := tenantExec(ctx, db, f.org, `DELETE FROM sso_domains WHERE organization_id=$1`, f.org); e != nil {
+				t.Errorf("proven domains not removed: %v", e)
+			}
+		})
+	}
+}
+
+func (f *identityScenarioFixture) checkSSOInvalidSubmissions(t *testing.T, google, microsoft func(map[string]any) map[string]any) {
+	owner, p := f.owner, f.identity
 	for _, provider := range []string{"github", "Google", "google%2F..", "..%2Fgoogle"} {
 		requireHTTP(t, owner("PUT", "/api/settings/sso/"+provider, google(nil)), 404)
 	}
@@ -168,8 +228,11 @@ func (f *identityScenarioFixture) testSSOSettings(t *testing.T) {
 	if p.provider("google") != nil || p.provider("microsoft") != nil || !p.idpLink {
 		t.Fatal("a refused submission reached the identity provider")
 	}
+}
 
-	w = owner("PUT", "/api/settings/sso/google", google(nil))
+func (f *identityScenarioFixture) checkSSOGoogleSettings(t *testing.T, google func(map[string]any) map[string]any) {
+	owner, p := f.owner, f.identity
+	w := owner("PUT", "/api/settings/sso/google", google(nil))
 	requireHTTP(t, w, 200)
 	if strings.Contains(w.Body.String(), "synthetic-secret") {
 		t.Fatal("the save echoed the client secret")
@@ -202,11 +265,14 @@ func (f *identityScenarioFixture) testSSOSettings(t *testing.T) {
 		t.Fatalf("masked save did not keep the secret: %v", config)
 	}
 	requireHTTP(t, owner("PUT", "/api/settings/sso/google", google(map[string]any{"client_secret": "", "client_id": "other.apps.googleusercontent.com"})), 400)
+}
 
+func (f *identityScenarioFixture) checkSSOMicrosoftSettings(t *testing.T, google, microsoft func(map[string]any) map[string]any, read func(*testing.T) ssoSettingsView) {
+	owner, p, db, ctx := f.owner, f.identity, f.admin, context.Background()
 	requireHTTP(t, owner("PUT", "/api/settings/sso/microsoft", microsoft(map[string]any{"invitation_domain": "https://contoso.test"})), 400)
 	requireHTTP(t, owner("PUT", "/api/settings/sso/microsoft", microsoft(map[string]any{"invitation_domain": " Contoso.TEST "})), 200)
-	stored = p.provider("microsoft")
-	config = ssoConfig(stored)
+	stored := p.provider("microsoft")
+	config := ssoConfig(stored)
 	if stored["firstBrokerLoginFlowAlias"] != ssoFirstLoginFlow || config[ssoInvitationDomain] != "contoso.test" {
 		t.Fatalf("unexpected Microsoft invitation settings: %v", stored)
 	}
@@ -215,7 +281,7 @@ func (f *identityScenarioFixture) testSSOSettings(t *testing.T) {
 		config["jwksUrl"] != tenant+"/discovery/v2.0/keys" || config["validateSignature"] != "true" || config["clientId"] != "0000000a-0000-0000-0000-00000000000a" {
 		t.Fatalf("unexpected Microsoft representation: %v", stored)
 	}
-	view = read(t)
+	view := read(t)
 	if g, m := view.Providers["google"], view.Providers["microsoft"]; !g.Configured || g.Enabled || g.HostedDomain != "example.test" || !m.Configured || !m.Enabled || m.TenantID != "0000000b-0000-0000-0000-00000000000b" || m.InvitationDomain != "contoso.test" {
 		t.Fatalf("unexpected configured view: %+v", view)
 	}
@@ -224,7 +290,10 @@ func (f *identityScenarioFixture) testSSOSettings(t *testing.T) {
 	if e := db.QueryRow(ctx, `SELECT count(*) FROM audit WHERE action='sso.update' AND target IN ('google','microsoft')`).Scan(&audits); e != nil || audits != 4 {
 		t.Fatal("sso.update not audited once per save", audits, e)
 	}
+}
 
+func (f *identityScenarioFixture) checkSSORevocation(t *testing.T, google func(map[string]any) map[string]any, read func(*testing.T) ssoSettingsView) {
+	owner, p, db, ctx := f.owner, f.identity, f.admin, context.Background()
 	if tag, e := db.Exec(ctx, `UPDATE sessions SET mfa_verified_at=clock_timestamp()-interval '6 minutes' WHERE token_hash=$1`, hash(f.cookie.Value)); e != nil || tag.RowsAffected() != 1 {
 		t.Fatal("stale MFA fixture missing", e)
 	}
@@ -237,7 +306,7 @@ func (f *identityScenarioFixture) testSSOSettings(t *testing.T) {
 	if p.provider("google") != nil || p.provider("microsoft") != nil {
 		t.Fatal("providers were not removed")
 	}
-	if view = read(t); view.Providers["google"].Configured || view.Providers["microsoft"].Configured {
+	if view := read(t); view.Providers["google"].Configured || view.Providers["microsoft"].Configured {
 		t.Fatalf("providers still reported after removal: %+v", view)
 	}
 
@@ -251,7 +320,7 @@ func (f *identityScenarioFixture) testSSOSettings(t *testing.T) {
 		p.mu.Lock()
 		p.providers["google"] = foreign
 		p.mu.Unlock()
-		w = owner("PUT", "/api/settings/sso/google", google(nil))
+		w := owner("PUT", "/api/settings/sso/google", google(nil))
 		requireHTTP(t, w, 409)
 		if stored := p.provider("google"); ssoConfig(stored)["clientSecret"] != nil || stored["firstBrokerLoginFlowAlias"] != nil {
 			t.Fatal("a foreign provider was modified", stored)
@@ -283,17 +352,7 @@ func (f *identityScenarioFixture) testSSOInvitations(t *testing.T, google func(m
 	p.mu.Unlock()
 	t.Cleanup(func() { p.mu.Lock(); p.mailsSucceed = false; p.mu.Unlock() })
 	invite := func(email string) (string, []string, bool) {
-		t.Helper()
-		requireHTTP(t, owner("POST", "/api/members/invitations", map[string]string{"email": email, "role": "viewer"}), 201)
-		p.mu.Lock()
-		defer p.mu.Unlock()
-		for id, u := range p.users {
-			if strings.EqualFold(u.Email, email) {
-				return id, p.mailActions, p.userRoles[id][ssoPendingRole]
-			}
-		}
-		t.Fatal("invited account not created", email)
-		return "", nil, false
+		return f.inviteSSOUser(t, email)
 	}
 	for _, email := range []string{"direct@Example.test", "someone@contoso.test"} {
 		if _, actions, pending := invite(email); !pending || strings.Join(actions, ",") != "VERIFY_EMAIL" {
@@ -339,6 +398,21 @@ func (f *identityScenarioFixture) testSSOInvitations(t *testing.T, google func(m
 	p.mu.Unlock()
 }
 
+func (f *identityScenarioFixture) inviteSSOUser(t *testing.T, email string) (string, []string, bool) {
+	t.Helper()
+	requireHTTP(t, f.owner("POST", "/api/members/invitations", map[string]string{"email": email, "role": "viewer"}), 201)
+	p := f.identity
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for id, u := range p.users {
+		if strings.EqualFold(u.Email, email) {
+			return id, p.mailActions, p.userRoles[id][ssoPendingRole]
+		}
+	}
+	t.Fatal("invited account not created", email)
+	return "", nil, false
+}
+
 // fakeExecution is one entry of a fake authentication flow; a subflow names its own.
 type fakeExecution struct {
 	ID, Provider, Subflow, Requirement, Config string
@@ -348,6 +422,8 @@ type fakeExecution struct {
 // does, including the depth-first flattened execution listing. p.mu is held by admin().
 func (p *testIdentity) adminFlows(w http.ResponseWriter, r *http.Request, path string) {
 	switch {
+	case path == "/authentication/required-actions" && r.Method == "GET":
+		reply(w, 200, []map[string]any{{"alias": "idp_link", "enabled": p.idpLink, "defaultAction": false}})
 	case path == "/roles" && r.Method == "POST":
 		var role struct{ Name string }
 		_ = json.NewDecoder(r.Body).Decode(&role)
@@ -367,23 +443,78 @@ func (p *testIdentity) adminFlows(w http.ResponseWriter, r *http.Request, path s
 	case strings.HasPrefix(path, "/authentication/config/") && r.Method == "GET":
 		reply(w, 200, map[string]any{"config": p.configs[strings.TrimPrefix(path, "/authentication/config/")]})
 	case strings.HasPrefix(path, "/authentication/executions/") && strings.HasSuffix(path, "/config") && r.Method == "POST":
-		id := strings.TrimSuffix(strings.TrimPrefix(path, "/authentication/executions/"), "/config")
-		var config struct{ Config map[string]string }
-		_ = json.NewDecoder(r.Body).Decode(&config)
-		p.configs["config-"+id] = config.Config
-		for _, list := range p.flows {
-			for _, x := range list {
-				if x.ID == id {
-					x.Config = "config-" + id
-				}
-			}
-		}
+		p.addFlowConfig(r, path)
 		w.WriteHeader(201)
 	case strings.HasPrefix(path, "/authentication/flows/"):
 		p.flowExecutions(w, r, path)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (p *testIdentity) addFlowConfig(r *http.Request, path string) {
+	id := strings.TrimSuffix(strings.TrimPrefix(path, "/authentication/executions/"), "/config")
+	var config struct{ Config map[string]string }
+	_ = json.NewDecoder(r.Body).Decode(&config)
+	p.configs["config-"+id] = config.Config
+	for _, list := range p.flows {
+		for _, x := range list {
+			if x.ID == id {
+				x.Config = "config-" + id
+			}
+		}
+	}
+}
+
+func (p *testIdentity) flowExecutionList(alias string) []map[string]any {
+	out := []map[string]any{}
+	var walk func(string, int)
+	walk = func(flow string, level int) {
+		for _, x := range p.flows[flow] {
+			entry := map[string]any{"id": x.ID, "level": level, "requirement": x.Requirement}
+			if x.Subflow != "" {
+				entry["authenticationFlow"], entry["displayName"] = true, x.Subflow
+			} else {
+				entry["providerId"] = x.Provider
+			}
+			if x.Config != "" {
+				entry["authenticationConfig"] = x.Config
+			}
+			out = append(out, entry)
+			if x.Subflow != "" {
+				walk(x.Subflow, level+1)
+			}
+		}
+	}
+	walk(alias, 0)
+	return out
+}
+
+func (p *testIdentity) updateFlowExecution(r *http.Request, list []*fakeExecution) {
+	var update struct{ ID, Requirement string }
+	_ = json.NewDecoder(r.Body).Decode(&update)
+	for _, x := range list {
+		if x.ID == update.ID {
+			x.Requirement = update.Requirement
+		}
+	}
+}
+
+func (p *testIdentity) createFlowExecution(r *http.Request, alias, action string, list []*fakeExecution) {
+	var added struct{ Alias, Provider string }
+	_ = json.NewDecoder(r.Body).Decode(&added)
+	count := 0
+	for _, l := range p.flows {
+		count += len(l)
+	}
+	x := &fakeExecution{ID: "execution-" + strconv.Itoa(count), Requirement: "DISABLED"}
+	if action == "/flow" {
+		x.Subflow = added.Alias
+		p.flows[added.Alias] = []*fakeExecution{}
+	} else {
+		x.Provider = added.Provider
+	}
+	p.flows[alias] = append(list, x)
 }
 
 func (p *testIdentity) flowExecutions(w http.ResponseWriter, r *http.Request, path string) {
@@ -396,51 +527,12 @@ func (p *testIdentity) flowExecutions(w http.ResponseWriter, r *http.Request, pa
 	}
 	switch {
 	case action == "" && r.Method == "GET":
-		out := []map[string]any{}
-		var walk func(string, int)
-		walk = func(flow string, level int) {
-			for _, x := range p.flows[flow] {
-				entry := map[string]any{"id": x.ID, "level": level, "requirement": x.Requirement}
-				if x.Subflow != "" {
-					entry["authenticationFlow"], entry["displayName"] = true, x.Subflow
-				} else {
-					entry["providerId"] = x.Provider
-				}
-				if x.Config != "" {
-					entry["authenticationConfig"] = x.Config
-				}
-				out = append(out, entry)
-				if x.Subflow != "" {
-					walk(x.Subflow, level+1)
-				}
-			}
-		}
-		walk(alias, 0)
-		reply(w, 200, out)
+		reply(w, 200, p.flowExecutionList(alias))
 	case action == "" && r.Method == "PUT":
-		var update struct{ ID, Requirement string }
-		_ = json.NewDecoder(r.Body).Decode(&update)
-		for _, x := range list {
-			if x.ID == update.ID {
-				x.Requirement = update.Requirement
-			}
-		}
+		p.updateFlowExecution(r, list)
 		w.WriteHeader(204)
 	case (action == "/flow" || action == "/execution") && r.Method == "POST":
-		var added struct{ Alias, Provider string }
-		_ = json.NewDecoder(r.Body).Decode(&added)
-		count := 0
-		for _, l := range p.flows {
-			count += len(l)
-		}
-		x := &fakeExecution{ID: "execution-" + strconv.Itoa(count), Requirement: "DISABLED"}
-		if action == "/flow" {
-			x.Subflow = added.Alias
-			p.flows[added.Alias] = []*fakeExecution{}
-		} else {
-			x.Provider = added.Provider
-		}
-		p.flows[alias] = append(list, x)
+		p.createFlowExecution(r, alias, action, list)
 		w.WriteHeader(201)
 	default:
 		http.NotFound(w, r)
@@ -448,6 +540,10 @@ func (p *testIdentity) flowExecutions(w http.ResponseWriter, r *http.Request, pa
 }
 
 func (p *testIdentity) roleMappings(w http.ResponseWriter, r *http.Request, user string) {
+	if p.roleFail {
+		w.WriteHeader(500)
+		return
+	}
 	var roles []struct{ Name string }
 	if r.Method != "GET" && json.NewDecoder(r.Body).Decode(&roles) != nil {
 		w.WriteHeader(400)

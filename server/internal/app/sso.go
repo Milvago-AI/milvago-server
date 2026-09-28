@@ -13,9 +13,10 @@ import (
 )
 
 // Single sign-on is Keycloak identity brokering, configured from the console so that
-// nobody has to open the identity provider's own administration. The realm is shared
-// by every organization, so a provider is an instance setting under a fixed alias.
-// Keycloak is the only store: no table, and the client secret never comes back out.
+// nobody has to open the identity provider's own administration. Each organization has
+// its own realm (Enterprise), so a provider belongs to one organization under a fixed
+// alias. Keycloak is the only store of the providers, and the client secret never comes
+// back out.
 
 const (
 	ssoPath        = "/identity-provider/instances/"
@@ -53,30 +54,34 @@ type ssoView struct {
 func (a *App) registerSSORoutes() {
 	a.console("GET /api/settings/sso", permDirectoryManage, a.ssoSettings)
 	// Fresh second factor on both, so session-only: a provider decides who can sign in
-	// to every organization, and removing one locks its accounts out.
+	// to the organization, and removing one locks its accounts out.
 	a.sessionOnly("PUT /api/settings/sso/{provider}", permDirectoryManage, a.licensed(a.putSSO))
 	a.sessionOnly("DELETE /api/settings/sso/{provider}", permDirectoryManage, a.deleteSSO)
 }
 
-// publicIssuer is the realm URL browsers reach, which the confirmed public URL may
+// publicIssuer is the root realm URL browsers reach, which the confirmed public URL may
 // have changed since start-up.
 func (a *App) publicIssuer() string {
-	issuer := a.publicOIDC.Load().issuer
-	if !strings.Contains(issuer, "/realms/") {
-		issuer = a.config.Issuer
+	issuer := a.config.Issuer
+	if state := a.publicOIDC.Load(); state != nil && strings.Contains(state.issuer, "/realms/") {
+		issuer = state.issuer
 	}
 	return strings.TrimRight(issuer, "/")
 }
 
-// requireSSOOperator applies the directory's rule: in Enterprise the realm, and so
-// every provider, is shared by all tenants.
-func requireSSOOperator(ctx context.Context, tx pgx.Tx, s *Session) error {
-	operator, e := directoryOperator(ctx, tx, s)
-	if e != nil {
+// requireProvenDomain refuses, in Enterprise, a domain the organization has not proven
+// through DNS: a provider answers for its domain in sign-in routing and invitations,
+// and naming another organization's domain must not be enough for that.
+func requireProvenDomain(ctx context.Context, tx pgx.Tx, org, domain string) error {
+	if Edition != "commercial" || domain == "" {
+		return nil
+	}
+	var proven bool
+	if e := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM sso_domains WHERE organization_id=$1 AND domain=$2 AND verified_at IS NOT NULL)`, org, domain).Scan(&proven); e != nil {
 		return e
 	}
-	if !operator {
-		return apiError{403, "operator_required", "Only an owner of the root organization can configure single sign-on: every organization's sign-in offers it."}
+	if !proven {
+		return apiError{409, "domain_not_verified", "Verify this domain first: publish its DNS record, then check it under Domains."}
 	}
 	return nil
 }
@@ -115,8 +120,8 @@ func ssoConfigValue(current map[string]any, key string) string {
 	return v
 }
 
-func (a *App) ssoViewOf(alias string, current map[string]any) ssoView {
-	v := ssoView{RedirectURI: a.publicIssuer() + "/broker/" + alias + "/endpoint"}
+func (a *App) ssoViewOf(realm, alias string, current map[string]any) ssoView {
+	v := ssoView{RedirectURI: a.publicRealmIssuer(realm) + "/broker/" + alias + "/endpoint"}
 	if current == nil {
 		return v
 	}
@@ -133,11 +138,15 @@ func (a *App) ssoViewOf(alias string, current map[string]any) ssoView {
 }
 
 func (a *App) ssoSettings(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
-	editable, e := directoryOperator(r.Context(), tx, s)
+	editable, e := identityConfigurator(r.Context(), tx, s)
 	if e != nil {
 		return e
 	}
-	admin, e := a.identityAdmin(r.Context())
+	realm, e := a.organizationRealm(r.Context(), tx, s.OrganizationID)
+	if e != nil {
+		return e
+	}
+	admin, e := a.identityAdminFor(r.Context(), realm)
 	if e != nil {
 		return e
 	}
@@ -147,7 +156,7 @@ func (a *App) ssoSettings(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *
 		if e != nil {
 			return e
 		}
-		providers[alias] = a.ssoViewOf(alias, current)
+		providers[alias] = a.ssoViewOf(realm, alias, current)
 	}
 	reply(w, 200, map[string]any{"editable": editable, "providers": providers})
 	return nil
@@ -228,7 +237,7 @@ func (a *App) putSSO(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Sessi
 	if err != nil {
 		return err
 	}
-	if err = requireSSOOperator(r.Context(), tx, s); err != nil {
+	if err = requireIdentityConfigurator(r.Context(), tx, s); err != nil {
 		return err
 	}
 	var body ssoBody
@@ -241,7 +250,16 @@ func (a *App) putSSO(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Sessi
 	if err = a.requireFreshMFA(r, tx, s); err != nil {
 		return err
 	}
-	admin, err := a.identityAdmin(r.Context())
+	for _, domain := range []string{body.HostedDomain, body.InvitationDomain} {
+		if err = requireProvenDomain(r.Context(), tx, s.OrganizationID, domain); err != nil {
+			return err
+		}
+	}
+	realm, err := a.organizationRealm(r.Context(), tx, s.OrganizationID)
+	if err != nil {
+		return err
+	}
+	admin, err := a.identityAdminFor(r.Context(), realm)
 	if err != nil {
 		return err
 	}
@@ -296,7 +314,7 @@ func (a *App) putSSO(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Sessi
 	if err != nil {
 		return err
 	}
-	reply(w, 200, a.ssoViewOf(alias, current))
+	reply(w, 200, a.ssoViewOf(realm, alias, current))
 	return nil
 }
 
@@ -354,13 +372,13 @@ func (a *App) deleteSSO(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Se
 	if err != nil {
 		return err
 	}
-	if err = requireSSOOperator(r.Context(), tx, s); err != nil {
+	if err = requireIdentityConfigurator(r.Context(), tx, s); err != nil {
 		return err
 	}
 	if err = a.requireFreshMFA(r, tx, s); err != nil {
 		return err
 	}
-	admin, err := a.identityAdmin(r.Context())
+	admin, err := a.organizationAdmin(r.Context(), tx, s.OrganizationID)
 	if err != nil {
 		return err
 	}

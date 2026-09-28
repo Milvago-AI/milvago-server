@@ -26,6 +26,8 @@ func (p *testIdentity) admin(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasPrefix(path, "/users"):
 		p.adminUsers(w, r, path)
+	case path == "/partial-export" && r.Method == "POST":
+		reply(w, 200, map[string]any{"authenticationFlows": []any{map[string]any{"id": "flow-1", "alias": "milvago-browser", "builtIn": false}, map[string]any{"alias": "browser", "builtIn": true}}, "authenticatorConfig": []any{}})
 	case path == "/client-scopes" || strings.HasPrefix(path, "/default-") || strings.HasPrefix(path, "/clients"):
 		p.adminClientScopes(w, r, path)
 	case strings.HasPrefix(path, "/components"):
@@ -524,6 +526,8 @@ func testIdentitySubsystem(t *testing.T, f subsystemFixture) {
 
 	t.Run("sso settings", scenario.testSSOSettings)
 
+	t.Run("organization realms", scenario.testOrganizationRealms)
+
 	t.Run("directory import", scenario.testDirectoryImport)
 
 	t.Run("organization creation requires prior mfa", scenario.testOrganizationCreationMFA)
@@ -941,18 +945,38 @@ func (f *identityScenarioFixture) assertLDAPChildAuthority(t *testing.T, otherOr
 	if e != nil {
 		t.Fatal(e)
 	}
-	for _, c := range []struct {
+	// Each organization configures its own sign-in: a direct member holding
+	// directory.manage there does, a right that only flows from the parent does not.
+	cases := []struct {
 		name string
 		s    *Session
 		want bool
 	}{
-		{"child owner", &Session{UserID: childOwner, OrganizationID: otherOrg, Role: "owner"}, false},
-		{"root owner in the child", &Session{UserID: rootOwner, OrganizationID: otherOrg, Role: "owner"}, true},
+		{"child owner", &Session{UserID: childOwner, OrganizationID: otherOrg, Role: "owner"}, true},
+		{"root owner in the child, inherited right only", &Session{UserID: rootOwner, OrganizationID: otherOrg, Role: "owner"}, false},
 		{"root owner's key", &Session{UserID: rootOwner, OrganizationID: otherOrg, Role: "owner", APIKeyID: "synthetic"}, false},
-	} {
-		if got, e := directoryOperator(ctx, childTx, c.s); e != nil || got != c.want {
-			t.Fatalf("%s: directory operator %v, want %v (%v)", c.name, got, c.want, e)
+		{"child owner's key", &Session{UserID: childOwner, OrganizationID: otherOrg, Role: "owner", APIKeyID: "synthetic"}, false},
+	}
+	check := func() {
+		for _, c := range cases {
+			if got, e := identityConfigurator(ctx, childTx, c.s); e != nil || got != c.want {
+				t.Fatalf("%s: configurator %v, want %v (%v)", c.name, got, c.want, e)
+			}
 		}
+	}
+	check()
+	// A person of the parent who is also a direct member of the child, with the right.
+	if _, e = childTx.Exec(ctx, `INSERT INTO memberships(organization_id,user_id,role) VALUES($1,$2,'owner')`, otherOrg, rootOwner); e != nil {
+		t.Fatal(e)
+	}
+	cases[1] = struct {
+		name string
+		s    *Session
+		want bool
+	}{"root owner also a direct owner of the child", &Session{UserID: rootOwner, OrganizationID: otherOrg, Role: "owner"}, true}
+	check()
+	if _, e = childTx.Exec(ctx, `DELETE FROM memberships WHERE organization_id=$1 AND user_id=$2`, otherOrg, rootOwner); e != nil {
+		t.Fatal(e)
 	}
 	childSession := &Session{UserID: childOwner, OrganizationID: otherOrg, Role: "owner"}
 	if e := guardParentControl(ctx, childTx, childSession, rootOwner); e == nil || !strings.Contains(e.Error(), "parent organization") {
@@ -963,6 +987,33 @@ func (f *identityScenarioFixture) assertLDAPChildAuthority(t *testing.T, otherOr
 	}
 	if guardParentControl(ctx, childTx, childSession, adminMember) == nil {
 		t.Fatal("a root admin reached the child through the parent yet the child owner may shadow them")
+	}
+	// The permission decides, not the role name: a child admin lacks it, a custom role of
+	// the child carrying it has it.
+	var childAdmin, childCustom string
+	for _, u := range []struct {
+		subject string
+		id      *string
+	}{{"identity-child-admin", &childAdmin}, {"identity-child-custom", &childCustom}} {
+		if e := f.admin.QueryRow(ctx, `INSERT INTO users(subject,email,display_name) VALUES($1,$1||'@example.test','Synthetic child member') RETURNING id`, u.subject).Scan(u.id); e != nil {
+			t.Fatal(e)
+		}
+	}
+	t.Cleanup(func() {
+		_, _ = f.admin.Exec(ctx, `DELETE FROM users WHERE subject IN ('identity-child-admin','identity-child-custom')`)
+	})
+	if _, e = childTx.Exec(ctx, `INSERT INTO roles(organization_id,name,permissions) VALUES($1,'identity-custom',$2)`, otherOrg, []string{permDirectoryManage}); e != nil {
+		t.Fatal(e)
+	}
+	for id, role := range map[string]string{childAdmin: "admin", childCustom: "identity-custom"} {
+		if _, e = childTx.Exec(ctx, `INSERT INTO memberships(organization_id,user_id,role) VALUES($1,$2,$3)`, otherOrg, id, role); e != nil {
+			t.Fatal(e)
+		}
+	}
+	for id, want := range map[string]bool{childAdmin: false, childCustom: true} {
+		if got, e := identityConfigurator(ctx, childTx, &Session{UserID: id, OrganizationID: otherOrg, Role: "admin"}); e != nil || got != want {
+			t.Fatalf("configurator %v for %s, want %v (%v)", got, id, want, e)
+		}
 	}
 	childTx.Rollback(ctx)
 }
@@ -1167,7 +1218,8 @@ func (f *identityScenarioFixture) testDirectoryRejectedInputs(t *testing.T) {
 		requireHTTP(t, owner("GET", "/api/members/directory?query="+url.QueryEscape(q), nil), 400)
 	}
 	// A subject can never change the admin API path (dot segments, slashes, escapes).
-	for _, s := range []string{"..", ".", "../clients", "..%2fclients", "%2e%2e", "", "a/b", "-x"} {
+	// A leading "-" or "_" is allowed: Keycloak 26 identifiers are base64url.
+	for _, s := range []string{"..", ".", "../clients", "..%2fclients", "%2e%2e", "", "a/b", ".x"} {
 		requireHTTP(t, owner("POST", "/api/members/directory", map[string]string{"subject": s, "role": "viewer"}), 400)
 	}
 

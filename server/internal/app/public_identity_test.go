@@ -2,10 +2,31 @@ package app
 
 import (
 	"context"
+	"net/http/httptest"
 	"testing"
 
 	"golang.org/x/oauth2"
 )
+
+func TestCookieSecurityFollowsPublicOrigin(t *testing.T) {
+	for _, tc := range []struct {
+		origin string
+		secure bool
+	}{
+		{"https://console.example.test", true},
+		{"http://192.0.2.10:4020", false},
+	} {
+		t.Run(tc.origin, func(t *testing.T) {
+			a := &App{config: Config{AppURL: tc.origin}}
+			w := httptest.NewRecorder()
+			a.cookie(w, cookieName("session"), "opaque", 60)
+			cookies := w.Result().Cookies()
+			if len(cookies) != 1 || cookies[0].Secure != tc.secure {
+				t.Fatalf("cookie Secure for %s = %v", tc.origin, cookies)
+			}
+		})
+	}
+}
 
 func TestPublicIdentityConfiguration(t *testing.T) {
 	provider := identityProvider(t)
@@ -48,12 +69,20 @@ func TestPublicIdentityConfiguration(t *testing.T) {
 func TestConfirmedPublicOriginChangesOIDCClient(t *testing.T) {
 	f := newSetupWizardFixture(t)
 	before, err := f.a.currentOIDC(context.Background())
-	if err != nil { t.Fatal(err) }
-	if before.origin != f.origin { t.Fatalf("initial origin = %q", before.origin) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.origin != f.origin {
+		t.Fatalf("initial origin = %q", before.origin)
+	}
 	const public = "https://console.example.test"
-	if _, err := f.admin.Exec(context.Background(), "UPDATE app_config SET public_url=$1, public_url_confirmed=true", public); err != nil { t.Fatal(err) }
+	if _, err := f.admin.Exec(context.Background(), "UPDATE app_config SET public_url=$1, public_url_confirmed=true", public); err != nil {
+		t.Fatal(err)
+	}
 	after, err := f.a.currentOIDC(context.Background())
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if after == before || after.origin != public || after.oauth.RedirectURL != public+"/auth/callback" {
 		t.Fatalf("OIDC client did not move to confirmed origin: %q", after.oauth.RedirectURL)
 	}
@@ -67,7 +96,9 @@ func TestPublicSettingsUpdateReconfiguresLogin(t *testing.T) {
 	f.loginOwner(t)
 	const public = "https://console.example.test"
 	var days int
-	if err := f.admin.QueryRow(context.Background(), "SELECT retention_days FROM settings WHERE organization_id=$1", f.session.Organization.ID).Scan(&days); err != nil { t.Fatal(err) }
+	if err := f.admin.QueryRow(context.Background(), "SELECT retention_days FROM settings WHERE organization_id=$1", f.session.Organization.ID).Scan(&days); err != nil {
+		t.Fatal(err)
+	}
 	w := f.call("PUT", "/api/settings", map[string]any{
 		"name": "Test organization", "event_retention_days": days, "public_url": public,
 	}, f.sessionCookie, f.session.CSRF, f.config.AppURL, "")
@@ -75,11 +106,17 @@ func TestPublicSettingsUpdateReconfiguresLogin(t *testing.T) {
 	f.p.mu.Lock()
 	client := f.p.clients["console"]
 	redirect := ""
-	if len(client.RedirectURIs) == 1 { redirect = client.RedirectURIs[0] }
+	if len(client.RedirectURIs) == 1 {
+		redirect = client.RedirectURIs[0]
+	}
 	f.p.mu.Unlock()
-	if redirect != public+"/auth/callback" { t.Fatalf("Keycloak redirect = %q", redirect) }
+	if redirect != public+"/auth/callback" {
+		t.Fatalf("Keycloak redirect = %q", redirect)
+	}
 	state, err := f.a.currentOIDC(context.Background())
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if state.origin != public || state.oauth.RedirectURL != redirect || !f.a.browserSecure() {
 		t.Fatalf("login origin did not change: %q", state.origin)
 	}

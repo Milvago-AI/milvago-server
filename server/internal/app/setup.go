@@ -677,5 +677,12 @@ func (a *App) completeSetup(ctx context.Context, body setupRequest) (err error) 
 	if e = applySetupSettings(ctx, tx, org, body); e != nil {
 		return e
 	}
+	// Kept sealed for the organization realms created later: Keycloak never returns
+	// the password.
+	if body.SMTP != nil {
+		if e = a.storeSMTP(ctx, tx, body.SMTP.keycloak()); e != nil {
+			return e
+		}
+	}
 	return tx.Commit(ctx)
 }

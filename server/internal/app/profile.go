@@ -57,7 +57,7 @@ func (a *App) profile(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Sess
 	// Whether an OTP credential exists is only known to Keycloak; report null
 	// when identity administration is unavailable rather than guessing.
 	var mfaConfigured any
-	if admin, e := a.identityAdmin(r.Context()); e == nil {
+	if admin, e := a.identityAdminFor(r.Context(), s.Realm); e == nil {
 		if u, e := admin.user(r.Context(), s.Subject); e == nil && u != nil {
 			first, last = strings.TrimSpace(u.FirstName), strings.TrimSpace(u.LastName)
 		}
@@ -120,7 +120,7 @@ func (a *App) updateProfileName(r *http.Request, tx pgx.Tx, s *Session, first, l
 	changed := false
 	// Keycloak owns the name: the ID token's "name" claim overwrites the local
 	// copy at the next session refresh, so the provider must be updated first.
-	admin, e := a.identityAdmin(r.Context())
+	admin, e := a.identityAdminFor(r.Context(), s.Realm)
 	if e != nil {
 		return false, e
 	}

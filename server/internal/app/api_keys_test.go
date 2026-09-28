@@ -1133,7 +1133,25 @@ func testAPIKeyOrganizationPin(t *testing.T, s *apiKeyTestState) {
 	if _, e := admin.Exec(ctx, `UPDATE sessions SET mfa=true,mfa_verified_at=clock_timestamp() WHERE token_hash=$1`, hash(ownerCookie.Value)); e != nil {
 		t.Fatal(e)
 	}
+	// The accounts of its realm go with it, never one another organization still uses.
+	var stray string
+	if e := admin.QueryRow(ctx, `INSERT INTO users(subject,email,display_name,realm) VALUES('deleted-realm-subject','gone@example.test','Synthetic gone',$1) RETURNING id`, childRealm(child.ID)).Scan(&stray); e != nil {
+		t.Fatal(e)
+	}
+	if e := tenantExec(ctx, admin, org, `INSERT INTO memberships(organization_id,user_id,role) VALUES($1,$2,'viewer')`, org, stray); e != nil {
+		t.Fatal(e)
+	}
+	if w := owner("DELETE", "/api/organizations/"+child.ID, nil); w.Code != 409 || !strings.Contains(w.Body.String(), "accounts_in_use") {
+		t.Fatalf("an account another organization uses was deleted with its realm: HTTP %d %s", w.Code, w.Body.String())
+	}
+	if e := tenantExec(ctx, admin, org, `DELETE FROM memberships WHERE user_id=$1`, stray); e != nil {
+		t.Fatal(e)
+	}
 	want(t, owner("DELETE", "/api/organizations/"+child.ID, nil), 200)
+	var left bool
+	if e := admin.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1)`, stray).Scan(&left); e != nil || left {
+		t.Fatal("an account of the deleted realm was left behind", e)
+	}
 	if _, e := admin.Exec(ctx, `UPDATE sessions SET mfa=false,mfa_verified_at=NULL WHERE token_hash=$1`, hash(ownerCookie.Value)); e != nil {
 		t.Fatal(e)
 	}

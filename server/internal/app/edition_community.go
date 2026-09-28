@@ -44,8 +44,3 @@ func (a *App) bearerTx(r *http.Request, mode credentialMode) (pgx.Tx, *Session, 
 	return a.apiKeyTx(r)
 }
 func (a *App) bearerChallenge(r *http.Request) string { return `Bearer realm="Milvago"` }
-
-// warnTenantDirectories: one organization in Community, nothing to warn about.
-func (a *App) warnTenantDirectories(context.Context) {
-	// Community has a single organization and no child directories.
-}

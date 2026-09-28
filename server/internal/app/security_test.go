@@ -99,7 +99,17 @@ type testIdentity struct {
 	// mailsSucceed makes execute-actions-email answer 204; mailActions is the last list.
 	mailsSucceed bool
 	mailActions  []string
+	// Organization realms created through the provisioning account, by name, with the
+	// representation each was created from. Their administration shares this state.
+	realms map[string]map[string]any
+	// roleFail makes every user role-mapping request fail, as an unreachable
+	// identity provider would.
+	roleFail bool
 }
+
+// fakeProvisionerSecret is the master-realm client secret the fake accepts for realm
+// creation.
+const fakeProvisionerSecret = "test-provisioner-secret"
 
 type fakeClient struct {
 	ClientID                 string
@@ -158,8 +168,9 @@ func identityProvider(t *testing.T) *testIdentity {
 		idpLink:    true,
 		roles:      map[string]bool{},
 		userRoles:  map[string]map[string]bool{},
-		flows:      map[string][]*fakeExecution{},
+		flows:      map[string][]*fakeExecution{"reset credentials": {}},
 		configs:    map[string]map[string]string{},
+		realms:     map[string]map[string]any{},
 		clients:    map[string]*fakeClient{"console": {ClientID: "test-console", Attributes: map[string]string{}}}}
 	p.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { p.serveHTTP(t, w, r) }))
 	t.Cleanup(p.server.Close)
@@ -167,6 +178,9 @@ func identityProvider(t *testing.T) *testIdentity {
 }
 
 func (p *testIdentity) serveHTTP(t *testing.T, w http.ResponseWriter, r *http.Request) {
+	if p.serveRealms(w, r) {
+		return
+	}
 	switch {
 	case r.URL.Path == "/.well-known/openid-configuration":
 		reply(w, 200, map[string]any{"issuer": p.server.URL, "authorization_endpoint": p.server.URL + "/authorize", "token_endpoint": p.server.URL + "/token", "end_session_endpoint": p.server.URL + "/logout", "jwks_uri": p.server.URL + "/keys", "id_token_signing_alg_values_supported": []string{"RS256"}})
@@ -190,6 +204,87 @@ func (p *testIdentity) serveHTTP(t *testing.T, w http.ResponseWriter, r *http.Re
 		http.NotFound(w, r)
 	}
 }
+
+// serveRealms answers what realm provisioning asks: discovery of a realm by name, the
+// provisioning account's token and realm creation, and the service-account token and
+// administration of a created realm, which reuse the "test" realm's handlers and state.
+func (p *testIdentity) serveRealms(w http.ResponseWriter, r *http.Request) bool {
+	path := r.URL.Path
+	if name, ok := strings.CutPrefix(path, "/realms/"); ok {
+		name, rest, _ := strings.Cut(name, "/")
+		p.mu.Lock()
+		_, created := p.realms[name]
+		p.mu.Unlock()
+		switch {
+		case rest == ".well-known/openid-configuration" && name != "test":
+			if !created {
+				http.NotFound(w, r)
+				return true
+			}
+			reply(w, 200, map[string]any{"issuer": p.server.URL + "/realms/" + name})
+			return true
+		case rest == "protocol/openid-connect/token" && name == "master":
+			r.ParseForm()
+			if r.Form.Get("client_secret") != fakeProvisionerSecret {
+				reply(w, 401, map[string]string{"error": "unauthorized_client"})
+				return true
+			}
+			reply(w, 200, map[string]string{"access_token": "test-provisioner-token"})
+			return true
+		case rest == "protocol/openid-connect/token" && created:
+			reply(w, 200, map[string]string{"access_token": "test-administration-token"})
+			return true
+		}
+		return false
+	}
+	if path == "/admin/realms" && r.Method == "POST" {
+		if r.Header.Get("Authorization") != "Bearer test-provisioner-token" {
+			w.WriteHeader(403)
+			return true
+		}
+		var rep map[string]any
+		if json.NewDecoder(r.Body).Decode(&rep) != nil {
+			w.WriteHeader(400)
+			return true
+		}
+		name, _ := rep["realm"].(string)
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if _, taken := p.realms[name]; taken || name == "" {
+			w.WriteHeader(409)
+			return true
+		}
+		p.realms[name] = rep
+		w.WriteHeader(201)
+		return true
+	}
+	if rest, ok := strings.CutPrefix(path, "/admin/realms/"); ok {
+		name, sub, _ := strings.Cut(rest, "/")
+		p.mu.Lock()
+		_, created := p.realms[name]
+		p.mu.Unlock()
+		if !created {
+			return false
+		}
+		if sub == "" && r.Method == "DELETE" {
+			p.mu.Lock()
+			delete(p.realms, name)
+			p.mu.Unlock()
+			w.WriteHeader(204)
+			return true
+		}
+		// The created realm is administered through the test realm's handlers.
+		r.URL.Path = "/admin/realms/test" + strings.TrimSuffix("/"+sub, "/")
+	}
+	return false
+}
+
+func (p *testIdentity) createdRealm(name string) map[string]any {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.realms[name]
+}
+
 func (p *testIdentity) serveToken(t *testing.T, w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 	if r.Form.Get("grant_type") == "client_credentials" {
@@ -343,7 +438,7 @@ func newSecurityFixture(t *testing.T) *securityFixture {
 	p := identityProvider(t)
 	block, _ := aes.NewCipher(make([]byte, 32))
 	gcm, _ := cipher.NewGCM(block)
-	c := Config{DatabaseURL: runtimeURL, MigrationURL: migrationURL, RuntimeRole: "milvago_runtime", OrganizationName: "Test organization", BootstrapEmail: "admin@example.test", AppURL: "http://localhost:4020", Issuer: p.server.URL, ClientID: "test-console", ClientSecret: "test-client-secret", AdminClientID: "test-management", AdminClientSecret: "test-secret", SessionCipher: gcm, ContentKeys: testContentKeys(), ContentVersion: 1, SigningKey: ed25519.NewKeyFromSeed(make([]byte, 32))}
+	c := Config{DatabaseURL: runtimeURL, MigrationURL: migrationURL, RuntimeRole: "milvago_runtime", OrganizationName: "Test organization", BootstrapEmail: "admin@example.test", AppURL: "http://localhost:4020", Issuer: p.server.URL, ClientID: "test-console", ClientSecret: "test-client-secret", AdminClientID: "test-management", AdminClientSecret: "test-secret", ProvisionerClientID: "milvago-provisioner", ProvisionerClientSecret: fakeProvisionerSecret, SessionCipher: gcm, ContentKeys: testContentKeys(), ContentVersion: 1, SigningKey: ed25519.NewKeyFromSeed(make([]byte, 32))}
 	db, e := OpenDatabase(ctx, c)
 	if e != nil {
 		t.Fatal(e)

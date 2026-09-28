@@ -20,12 +20,15 @@ import (
 type Config struct {
 	// Role selects process responsibilities independently of the database role.
 	// Empty preserves the historical combined process for hand-built configs.
-	Role                                                                                         string
-	PublisherURL, PublisherCredential                                                            string
-	PublisherPublicKey                                                                           ed25519.PublicKey
-	MetricsToken                                                                                 string
-	OTelHTTPHosts                                                                                []string
-	AdminClientID, AdminClientSecret                                                             string
+	Role                              string
+	PublisherURL, PublisherCredential string
+	PublisherPublicKey                ed25519.PublicKey
+	MetricsToken                      string
+	OTelHTTPHosts                     []string
+	AdminClientID, AdminClientSecret  string
+	// ProvisionerClientID/Secret name a master-realm client that may create realms and
+	// nothing else (Enterprise: one realm per organization).
+	ProvisionerClientID, ProvisionerClientSecret                                                 string
 	DatabaseURL, MigrationURL, RuntimeRole, AppURL, Issuer, InternalOIDC, ClientID, ClientSecret string
 	BootstrapEmail, OrganizationName, StaticDir, Listen, PublicURL                               string
 	SessionCipher                                                                                cipher.AEAD
@@ -182,6 +185,8 @@ func loadAdminSetupConfig(c *Config) error {
 		c.SetupTokenHash = hash(raw)
 	}
 	c.AdminClientSecret = os.Getenv("OIDC_ADMIN_CLIENT_SECRET")
+	c.ProvisionerClientID = env("OIDC_PROVISIONER_CLIENT_ID", "milvago-provisioner")
+	c.ProvisionerClientSecret = os.Getenv("OIDC_PROVISIONER_CLIENT_SECRET")
 	return nil
 }
 

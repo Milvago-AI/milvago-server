@@ -42,11 +42,14 @@ type App struct {
 	// audience -- the endpoint itself as an OAuth resource -- on the same keys and the
 	// same rotation as the console's verifier. Built once at boot, and only in
 	// Enterprise: in Community nothing sets it and the endpoint does not exist.
-	mcpVerifier   *oidc.IDTokenVerifier
-	oidcClient    *http.Client
-	logoutURL     string
-	publicOIDC    atomic.Pointer[identityRuntime]
-	publicOIDCMu  sync.Mutex
+	mcpVerifier  *oidc.IDTokenVerifier
+	oidcClient   *http.Client
+	logoutURL    string
+	publicOIDC   atomic.Pointer[identityRuntime]
+	publicOIDCMu sync.Mutex
+	// realmOIDC holds the browser OIDC runtime of each organization realm other than the
+	// root one, which stays in publicOIDC (Enterprise: one Keycloak realm per organization).
+	realmOIDC     sync.Map
 	metrics       *appMetrics
 	metricsOnce   sync.Once
 	exportMetrics exportMetricSnapshot
@@ -65,10 +68,11 @@ type App struct {
 		sync.Mutex
 		at time.Time
 	}
+	// adminToken caches one service-account token per realm, keyed on what it was
+	// granted for.
 	adminToken struct {
 		sync.Mutex
-		key, value string
-		until      time.Time
+		tokens map[string]cachedAdminToken
 	}
 	quotaReservations quotaReservations
 	eventSlotsOnce    sync.Once
@@ -182,8 +186,10 @@ type Session struct {
 	// Subject is the identity provider account ID; IdentityType is the last
 	// known account source ('local', 'sso' or 'ldap') derived from Keycloak.
 	Subject, IdentityType string
-	MFA                   bool
-	Permissions           []string
+	// Realm is the stored Keycloak realm of the account ("" for the root one).
+	Realm       string
+	MFA         bool
+	Permissions []string
 	// APIKeyID is empty for a browser session and holds the key's identity when
 	// the request authenticated with a bearer API key. The zero value is the
 	// unprivileged reading: nothing has to be set for a session to stay safe.

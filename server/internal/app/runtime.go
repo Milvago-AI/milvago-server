@@ -18,7 +18,7 @@ const (
 	RoleMaintenance = "maintenance"
 	RoleMigrate     = "migrate"
 
-	runtimeSchemaVersion = 2026091903
+	runtimeSchemaVersion = 2026092801
 )
 
 func (c Config) ProcessRole() string {
@@ -67,7 +67,7 @@ func (a *App) initializeInstance(ctx context.Context) error {
 	// The existing best-effort MCP policy remains unchanged: API-key access still
 	// works if identity administration is unavailable.
 	a.ensureMCPIdentity(ctx)
-	a.warnTenantDirectories(ctx)
+	a.ensureOrganizationRealms(ctx)
 	return nil
 }
 

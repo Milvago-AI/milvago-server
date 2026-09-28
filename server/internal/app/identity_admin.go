@@ -81,7 +81,20 @@ func (u identityUser) displayName() string {
 	return identityText(strings.TrimSpace(strings.TrimSpace(u.FirstName) + " " + strings.TrimSpace(u.LastName)))
 }
 
+type cachedAdminToken struct {
+	value string
+	until time.Time
+}
+
+// identityAdmin administers the root organization's realm.
 func (a *App) identityAdmin(ctx context.Context) (*identityAdmin, error) {
+	return a.identityAdminFor(ctx, "")
+}
+
+// identityAdminFor administers one realm ("" is the root one) with that realm's own
+// management service account: an organization's credential never reaches another
+// organization's realm.
+func (a *App) identityAdminFor(ctx context.Context, realm string) (*identityAdmin, error) {
 	if a.config.AdminClientID == "" || a.config.AdminClientSecret == "" {
 		return nil, apiError{503, "identity_admin_unavailable", "Identity administration is not configured."}
 	}
@@ -93,25 +106,33 @@ func (a *App) identityAdmin(ctx context.Context) (*identityAdmin, error) {
 	if len(parts) != 2 || parts[0] != "realms" {
 		return nil, apiError{503, "identity_admin_unavailable", "Keycloak realm URL is required for identity administration."}
 	}
+	root := realm == "" || realm == parts[1]
+	if root {
+		realm = parts[1]
+	}
+	realmPath := "/realms/" + url.PathEscape(realm)
 	baseOrigin := issuer.Scheme + "://" + issuer.Host
 	client := a.oidcClient
 	tokenURL := a.oauth.Endpoint.TokenURL
+	if !root {
+		tokenURL = baseOrigin + realmPath + "/protocol/openid-connect/token"
+	}
 	if a.config.InternalOIDC != "" {
 		baseOrigin = a.config.InternalOIDC
 		client = &http.Client{Timeout: 15 * time.Second}
-		tokenURL = baseOrigin + issuer.Path + "/protocol/openid-connect/token"
+		tokenURL = baseOrigin + realmPath + "/protocol/openid-connect/token"
 	}
-	base := baseOrigin + "/admin/realms/" + url.PathEscape(parts[1])
+	base := baseOrigin + "/admin" + realmPath
 	// The service-account token is reused until shortly before it expires: one grant
 	// per call let any member drive three identity-provider requests per profile read
 	// (audit of 2026-09-24). Keyed on what it was granted for, so a changed
-	// configuration never reuses another account's token.
+	// configuration or another realm never reuses another account's token.
 	cacheKey := a.config.AdminClientID + "\x00" + a.config.AdminClientSecret + "\x00" + tokenURL
+	forget := func() { a.forgetAdminToken(cacheKey) }
 	a.adminToken.Lock()
-	if a.adminToken.key == cacheKey && time.Now().Before(a.adminToken.until) {
-		cached := a.adminToken.value
+	if cached, ok := a.adminToken.tokens[cacheKey]; ok && time.Now().Before(cached.until) {
 		a.adminToken.Unlock()
-		return &identityAdmin{reset: a.forgetAdminToken, client: client, token: cached, base: base}, nil
+		return &identityAdmin{reset: forget, client: client, token: cached.value, base: base}, nil
 	}
 	a.adminToken.Unlock()
 	form := url.Values{"grant_type": {"client_credentials"}, "client_id": {a.config.AdminClientID}, "client_secret": {a.config.AdminClientSecret}}
@@ -136,15 +157,18 @@ func (a *App) identityAdmin(ctx context.Context) (*identityAdmin, error) {
 	// stops being usable soon, and a token is never presented near its expiry.
 	if life := min(time.Duration(token.ExpiresIn)*time.Second/2, 5*time.Minute); life > 0 {
 		a.adminToken.Lock()
-		a.adminToken.key, a.adminToken.value, a.adminToken.until = cacheKey, token.AccessToken, time.Now().Add(life)
+		if a.adminToken.tokens == nil {
+			a.adminToken.tokens = map[string]cachedAdminToken{}
+		}
+		a.adminToken.tokens[cacheKey] = cachedAdminToken{token.AccessToken, time.Now().Add(life)}
 		a.adminToken.Unlock()
 	}
-	return &identityAdmin{reset: a.forgetAdminToken, client: client, token: token.AccessToken, base: base}, nil
+	return &identityAdmin{reset: forget, client: client, token: token.AccessToken, base: base}, nil
 }
 
-func (a *App) forgetAdminToken() {
+func (a *App) forgetAdminToken(key string) {
 	a.adminToken.Lock()
-	a.adminToken.value, a.adminToken.until = "", time.Time{}
+	delete(a.adminToken.tokens, key)
 	a.adminToken.Unlock()
 }
 

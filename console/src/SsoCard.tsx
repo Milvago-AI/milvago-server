@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useContext, useState } from "react";
 import type { SubmitEvent } from "react";
-import type { SsoProvider, SsoProviderView, SsoSettings } from "./api";
+import type { SsoDomain, SsoDomains, SsoProvider, SsoProviderView, SsoSettings } from "./api";
 import {
+  Badge,
   Button,
   Card,
+  Context,
   Dialog,
   ErrorNotice,
   Field,
@@ -37,6 +39,96 @@ function fromView(view: SsoProviderView): ProviderForm {
 type NoticeState = { tone: "success" | "danger"; text: string };
 
 export function SsoCard() {
+  const { session } = useContext(Context);
+  return (
+    <>
+      {/* Enterprise: each organization proves the e-mail domains its sign-in answers for. */}
+      {session.edition === "commercial" && <DomainsCard />}
+      <ProvidersCard />
+    </>
+  );
+}
+
+function DomainsCard() {
+  const t = useText();
+  const resource = useResource<SsoDomains>("/api/settings/sso/domains");
+  const [domain, setDomain] = useState("");
+  const mutation = useMutation();
+  async function add(e: SubmitEvent) {
+    e.preventDefault();
+    try {
+      await mutation.run("/api/settings/sso/domains", "POST", { domain });
+      setDomain("");
+      resource.reload();
+    } catch {
+      /* Displayed via mutation.error below. */
+    }
+  }
+  async function act(path: string, method: string) {
+    try {
+      await mutation.run(path, method);
+      resource.reload();
+    } catch {
+      /* Displayed via mutation.error below. */
+    }
+  }
+  return (
+    <Card title={t("ssoDomains")} description={t("ssoDomainsDescription")}>
+      <ResourceView resource={resource}>
+        {(data) => (
+          <>
+            {data.domains.length === 0 && <p>{t("ssoDomainNone")}</p>}
+            {data.domains.map((d: SsoDomain) => (
+              <section key={d.domain} className="sso-domain">
+                <div className="sso-domain-head">
+                  <h3>
+                    {d.domain} <Badge tone={d.verified ? "success" : "warning"}>{t(d.verified ? "ssoDomainVerified" : "ssoDomainPending")}</Badge>
+                  </h3>
+                  {data.editable && (
+                    <div className="actions">
+                      {!d.verified && (
+                        <Button variant="primary" type="button" disabled={mutation.pending} onClick={() => void act(`/api/settings/sso/domains/${encodeURIComponent(d.domain)}/verify`, "POST")}>
+                          {t("ssoDomainVerify")}
+                        </Button>
+                      )}
+                      <Button variant="danger" type="button" disabled={mutation.pending} onClick={() => void act(`/api/settings/sso/domains/${encodeURIComponent(d.domain)}`, "DELETE")}>
+                        {t("ssoDomainRemove")}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+                {!d.verified && (
+                  <Field label={t("ssoDomainRecord")}>
+                    <input readOnly value={`${d.record_name} TXT "${d.record_value}"`} onFocus={(e) => e.target.select()} />
+                  </Field>
+                )}
+              </section>
+            ))}
+            {data.editable && (
+              <form onSubmit={add}>
+                <fieldset disabled={mutation.pending}>
+                  <div className="directory-fields">
+                    <Field label={t("ssoDomainName")}>
+                      <input required placeholder="example.com" maxLength={253} value={domain} onChange={(e) => setDomain(e.target.value)} />
+                    </Field>
+                  </div>
+                </fieldset>
+                <div className="dialog-actions">
+                  <Button variant="primary" type="submit" disabled={mutation.pending}>
+                    {t("ssoDomainAdd")}
+                  </Button>
+                </div>
+              </form>
+            )}
+            <ErrorNotice error={mutation.error} />
+          </>
+        )}
+      </ResourceView>
+    </Card>
+  );
+}
+
+function ProvidersCard() {
   const t = useText();
   const resource = useResource<SsoSettings>("/api/settings/sso");
   // Lives here, not in the child: reload() unmounts that child, and its state would go with it.

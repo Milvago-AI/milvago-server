@@ -236,6 +236,12 @@ func (p *projectionFixture) routes() []projectionRoute {
 		{pattern: "GET /api/settings/sso", path: "/api/settings/sso", optional: true},
 		{pattern: "PUT /api/settings/sso/{provider}", exempt: "mutation", optional: true},
 		{pattern: "DELETE /api/settings/sso/{provider}", exempt: "mutation", optional: true},
+		// Enterprise: e-mail domains an organization proves for single sign-on. The list
+		// names domains and DNS challenges, never a person.
+		{pattern: "GET /api/settings/sso/domains", path: "/api/settings/sso/domains", optional: true},
+		{pattern: "POST /api/settings/sso/domains", exempt: "mutation", optional: true},
+		{pattern: "POST /api/settings/sso/domains/{domain}/verify", exempt: "mutation", optional: true},
+		{pattern: "DELETE /api/settings/sso/domains/{domain}", exempt: "mutation", optional: true},
 		{pattern: "GET /api/members/directory", path: "/api/members/directory?query=sentinel", optional: true},
 		{pattern: "POST /api/members/directory", exempt: "mutation", optional: true},
 		{pattern: "GET /api/deployment-key", path: "/api/deployment-key"},

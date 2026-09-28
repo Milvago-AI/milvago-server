@@ -520,10 +520,41 @@ export function App() {
             </div>
           ) : (
             <div className="entry-cta">
-              <a className="button primary login-button" href={t("authLoginLangEn")}>
-                {t("signIn")}
-                <Icon name="arrow" />
-              </a>
+              {/* E-mail or sign-in name first: what the person types decides the organization and its sign-in
+                  (its own provider for its proven domain). Navigated rather than
+                  submitted: the console's CSP (form-action 'self') also applies to the
+                  redirect a form submission follows, and /auth/login redirects to the
+                  identity provider. */}
+              <form
+                className="entry-signin"
+                method="get"
+                action="/auth/login"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const query = new URLSearchParams(new FormData(e.currentTarget) as unknown as Record<string, string>);
+                  globalThis.location.assign(`/auth/login?${query.toString()}`);
+                }}
+              >
+                <input type="hidden" name="lang" value={language} />
+                <label className="entry-signin-label" htmlFor="entry-email">{t("signInEmail")}</label>
+                <div className="entry-signin-row">
+                  <input
+                    id="entry-email"
+                    name="login_hint"
+                    type="text"
+                    required
+                    maxLength={254}
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    autoComplete="username"
+                    placeholder={t("signInEmailPlaceholder")}
+                  />
+                  <button className="button primary login-button" type="submit">
+                    {t("signIn")}
+                    <Icon name="arrow" />
+                  </button>
+                </div>
+              </form>
               <span className="entry-footnote">
                 <Icon name="lock" />
                 {t("secureAuthenticationThroughYourIdentityProvi")}

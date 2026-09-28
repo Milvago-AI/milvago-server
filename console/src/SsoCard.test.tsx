@@ -60,8 +60,37 @@ describe('Settings > SSO', () => {
     serve(session, { ...empty, editable: false });
     render(<App />); const user = userEvent.setup();
     await user.click(await screen.findByRole('button', { name: /SSO/ }));
-    expect(await screen.findByText(/seul un propriétaire de l’organisation racine/)).toBeInTheDocument();
+    expect(await screen.findByText(/seul un membre de cette organisation qui y détient le droit/i)).toBeInTheDocument();
     expect(screen.queryByLabelText('Secret client')).not.toBeInTheDocument();
+  });
+
+  it('lets an Enterprise organization prove its domains through DNS', async () => {
+    const enterprise: Session = { ...session, edition: 'commercial' };
+    const domains = { editable: true, domains: [{ domain: 'example.org', record_name: '_milvago-challenge.example.org', record_value: 'milvago-verification=synthetic', verified: false }] };
+    const base = serve(enterprise, empty);
+    base.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/session') return reply(enterprise);
+      if (url === '/api/settings/sso') return reply(empty);
+      if (url.startsWith('/api/settings/sso/domains') && init?.method === 'POST') return reply({ ...domains.domains[0], verified: true });
+      if (url === '/api/settings/sso/domains') return reply(domains);
+      if (url === '/api/settings') return reply(settingsBase);
+      return reply({ error: 'unexpected_request', message: url }, 404);
+    });
+    render(<App />); const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: /SSO/ }));
+    const card = (await screen.findByRole('heading', { name: 'Domaines' })).closest('section') as HTMLElement;
+    expect(within(card).getByDisplayValue('_milvago-challenge.example.org TXT "milvago-verification=synthetic"')).toBeInTheDocument();
+    await user.click(within(card).getByRole('button', { name: 'Vérifier l’enregistrement' }));
+    const reloaded = (await screen.findByRole('heading', { name: 'Domaines' })).closest('section') as HTMLElement;
+    await user.type(await within(reloaded).findByRole('textbox', { name: 'Domaine' }), 'second.example.org');
+    await user.click(within(reloaded).getByRole('button', { name: 'Ajouter le domaine' }));
+    await waitFor(() => {
+      const calls = base.mock.calls.map(([url, init]) => `${(init as RequestInit | undefined)?.method ?? 'GET'} ${String(url)}`);
+      expect(calls).toContain('POST /api/settings/sso/domains/example.org/verify');
+      const add = base.mock.calls.find(([url, init]) => url === '/api/settings/sso/domains' && (init as RequestInit | undefined)?.method === 'POST');
+      expect(JSON.parse(String((add?.[1] as RequestInit).body))).toEqual({ domain: 'second.example.org' });
+    });
   });
 
   it('is hidden without directory.manage or without a licence', async () => {

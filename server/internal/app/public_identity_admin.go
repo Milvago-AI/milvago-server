@@ -8,13 +8,39 @@ import (
 	"strings"
 )
 
-// syncPublicIdentity keeps the browser client and realm issuer aligned with the
-// instance URL. It uses the private identity service; public admin routes stay closed.
+// syncPublicIdentity keeps the browser client and realm issuer of every realm aligned
+// with the instance URL. It uses the private identity service; public admin routes stay
+// closed.
 func (a *App) syncPublicIdentity(ctx context.Context, origin string) error {
 	if !validOrigin(origin) {
 		return bad("Public URL must be an HTTP or HTTPS origin.")
 	}
-	admin, err := a.identityAdmin(ctx)
+	realms := []string{""}
+	if Edition == "commercial" && a.db != nil {
+		rows, e := a.db.Query(ctx, `SELECT o.id FROM organizations o, app_config c WHERE o.id<>c.organization_id`)
+		if e != nil {
+			return e
+		}
+		for rows.Next() {
+			var org string
+			if e = rows.Scan(&org); e != nil {
+				rows.Close()
+				return e
+			}
+			realms = append(realms, childRealm(org))
+		}
+		rows.Close()
+	}
+	for _, realm := range realms {
+		if e := a.syncRealmIdentity(ctx, origin, realm); e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
+func (a *App) syncRealmIdentity(ctx context.Context, origin, stored string) error {
+	admin, err := a.identityAdminFor(ctx, stored)
 	if err != nil {
 		return err
 	}
@@ -45,7 +71,7 @@ func (a *App) syncPublicIdentity(ctx context.Context, origin string) error {
 	client["webOrigins"] = []string{origin}
 	// Keycloak links its own pages to the base URL: once an invited account is ready,
 	// and on an expired link, the next step is signing in to the console.
-	client["baseUrl"] = origin + "/auth/login"
+	client["baseUrl"] = signInURL(origin, stored)
 	attributes, _ := client["attributes"].(map[string]any)
 	if attributes == nil {
 		attributes = map[string]any{}

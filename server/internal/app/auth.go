@@ -46,6 +46,9 @@ func (a *App) initOIDC(ctx context.Context) error {
 	return nil
 }
 func (a *App) cookie(w http.ResponseWriter, name, value string, maxAge int) {
+	// Secure follows the confirmed browser origin: HTTPS enables it, while
+	// deployments intentionally using plain HTTP (for example, on a trusted LAN)
+	// need a cookie that the browser can send over that origin.
 	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/", HttpOnly: true, Secure: a.browserSecure(), SameSite: http.SameSiteLaxMode, MaxAge: maxAge})
 }
 func cookieName(kind string) string { return "milvago_" + Edition + "_" + kind }
@@ -86,7 +89,7 @@ func (a *App) loginProfileAction(w http.ResponseWriter, r *http.Request) (string
 	}
 	if action == "manage_mfa" {
 		// Keycloak owns credential management; only the configured issuer receives this redirect.
-		accountURL := a.publicIssuer() + "/account/account-security/signing-in"
+		accountURL := a.publicRealmIssuer(session.Realm) + "/account/account-security/signing-in"
 		if language := r.URL.Query().Get("lang"); slices.Contains(consoleLanguages, language) {
 			accountURL += "?" + url.Values{"kc_locale": {language}}.Encode()
 		}
@@ -116,23 +119,34 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if e := a.startOIDCLogin(w, r, language, kcAction, r.URL.Query().Get("mfa") == "1", true); e != nil {
+	target, e := a.loginDestination(r)
+	if e != nil {
+		a.fail(w, e)
+		return
+	}
+	if e := a.startOIDCLogin(w, r, language, kcAction, r.URL.Query().Get("mfa") == "1", true, target); e != nil {
 		a.fail(w, e)
 	}
 }
 
-func (a *App) startOIDCLogin(w http.ResponseWriter, r *http.Request, language, kcAction string, stepUp, fresh bool) error {
-	identity, err := a.currentOIDC(r.Context())
+func (a *App) startOIDCLogin(w http.ResponseWriter, r *http.Request, language, kcAction string, stepUp, fresh bool, target loginTarget) error {
+	identity, err := a.currentOIDCFor(r.Context(), target.realm)
 	if err != nil {
 		return err
 	}
 	state, binding, nonce, verifier := randomToken(), randomToken(), randomToken(), oauth2.GenerateVerifier()
-	_, e := a.db.Exec(r.Context(), `INSERT INTO login_attempts(state_hash,binding_hash,verifier,nonce,expires_at,step_up) VALUES($1,$2,$3,$4,now()+interval '10 minutes',$5)`, hash(state), hash(binding), verifier, nonce, stepUp)
+	_, e := a.db.Exec(r.Context(), `INSERT INTO login_attempts(state_hash,binding_hash,verifier,nonce,expires_at,step_up,realm) VALUES($1,$2,$3,$4,now()+interval '10 minutes',$5,$6)`, hash(state), hash(binding), verifier, nonce, stepUp, target.realm)
 	if e != nil {
 		return e
 	}
 	a.cookie(w, a.cookieName("login"), binding, 600)
 	opts := []oauth2.AuthCodeOption{oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("ui_locales", language)}
+	if target.hint != "" {
+		opts = append(opts, oauth2.SetAuthURLParam("login_hint", target.hint))
+	}
+	if target.provider != "" && !stepUp && kcAction == "" {
+		opts = append(opts, oauth2.SetAuthURLParam("kc_idp_hint", target.provider))
+	}
 	if stepUp {
 		// A login continuation reuses the password already proved at level one.
 		// Explicit step-up for a sensitive action also forces fresh credentials.
@@ -153,10 +167,13 @@ type loginAttempt struct {
 	associationOrg, associationDevice *string
 	associationHash                   []byte
 	stepUp                            bool
+	// realm is the stored realm the sign-in was started in ("" for the root one).
+	realm string
 }
 
 type loginClaims struct {
 	Email    string   `json:"email"`
+	Username string   `json:"preferred_username"`
 	Name     string   `json:"name"`
 	Verified bool     `json:"email_verified"`
 	AMR      []string `json:"amr"`
@@ -171,8 +188,8 @@ func (a *App) consumeLoginAttempt(w http.ResponseWriter, r *http.Request) (login
 		return attempt, bad("The login attempt has expired.")
 	}
 	a.cookie(w, a.cookieName("login"), "", -1)
-	e = a.db.QueryRow(r.Context(), "DELETE FROM login_attempts WHERE state_hash=$1 AND binding_hash=$2 AND expires_at>now() RETURNING verifier,nonce,association_org,association_device,association_hash,step_up", hash(r.URL.Query().Get("state")), hash(cookie.Value)).
-		Scan(&attempt.verifier, &attempt.nonce, &attempt.associationOrg, &attempt.associationDevice, &attempt.associationHash, &attempt.stepUp)
+	e = a.db.QueryRow(r.Context(), "DELETE FROM login_attempts WHERE state_hash=$1 AND binding_hash=$2 AND expires_at>now() RETURNING verifier,nonce,association_org,association_device,association_hash,step_up,realm", hash(r.URL.Query().Get("state")), hash(cookie.Value)).
+		Scan(&attempt.verifier, &attempt.nonce, &attempt.associationOrg, &attempt.associationDevice, &attempt.associationHash, &attempt.stepUp, &attempt.realm)
 	if e != nil || r.URL.Query().Get("code") == "" {
 		return attempt, bad("Invalid or reused login attempt.")
 	}
@@ -216,9 +233,9 @@ func loginMFAEvidence(claims loginClaims) bool {
 	return false
 }
 
-func (a *App) loginIdentityKind(ctx context.Context, subject string) string {
+func (a *App) loginIdentityKind(ctx context.Context, realm, subject string) string {
 	// A lookup failure never blocks sign-in; the stored identity type survives.
-	admin, e := a.identityAdmin(ctx)
+	admin, e := a.identityAdminFor(ctx, realm)
 	if e != nil {
 		return ""
 	}
@@ -234,10 +251,6 @@ func (a *App) loginIdentityKind(ctx context.Context, subject string) string {
 	if e != nil {
 		a.log.Warn("identity type lookup failed", "error", e)
 		return ""
-	}
-	// The account has now signed in: a later provider account needs the usual proof.
-	if e = clearPendingInvitation(ctx, admin, subject); e != nil {
-		a.log.Warn("pending invitation role not cleared", "error", e)
 	}
 	return kind
 }
@@ -267,7 +280,7 @@ func (a *App) bootstrapLoginAccount(ctx context.Context, tx pgx.Tx, org, user, k
 	return user, nil
 }
 
-func (a *App) loadLoginUser(ctx context.Context, tx pgx.Tx, id *oidc.IDToken, claims loginClaims, kind string) (string, string, error) {
+func (a *App) loadLoginUser(ctx context.Context, tx pgx.Tx, realm string, id *oidc.IDToken, claims loginClaims, kind string) (string, string, error) {
 	var org, bootstrapEmail string
 	var consumed bool
 	if e := tx.QueryRow(ctx, "SELECT organization_id,bootstrap_email,bootstrap_consumed FROM app_config WHERE singleton FOR UPDATE").Scan(&org, &bootstrapEmail, &consumed); e != nil {
@@ -277,12 +290,13 @@ func (a *App) loadLoginUser(ctx context.Context, tx pgx.Tx, id *oidc.IDToken, cl
 		return "", "", e
 	}
 	var user string
-	if e := tx.QueryRow(ctx, "SELECT id FROM users WHERE subject=$1", id.Subject).Scan(&user); e != nil && !errors.Is(e, pgx.ErrNoRows) {
+	// The account of this realm only: a subject is an identifier within its realm.
+	if e := tx.QueryRow(ctx, "SELECT id FROM users WHERE subject=$1 AND realm=$2", id.Subject, realm).Scan(&user); e != nil && !errors.Is(e, pgx.ErrNoRows) {
 		return "", "", e
 	}
 	// An empty bootstrap address cannot match an account with no email.
 	// ASCII case is deliberate; Unicode folding can conflate different accounts.
-	if !consumed && bootstrapEmail != "" && asciiLower(claims.Email) == bootstrapEmail {
+	if realm == "" && !consumed && bootstrapEmail != "" && asciiLower(claims.Email) == bootstrapEmail {
 		var e error
 		user, e = a.bootstrapLoginAccount(ctx, tx, org, user, kind, id, claims)
 		if e != nil {
@@ -295,13 +309,19 @@ func (a *App) loadLoginUser(ctx context.Context, tx pgx.Tx, id *oidc.IDToken, cl
 	return user, org, nil
 }
 
-func (a *App) establishLoginAccount(ctx context.Context, tx pgx.Tx, id *oidc.IDToken, claims loginClaims, kind string) (string, string, error) {
-	user, org, e := a.loadLoginUser(ctx, tx, id, claims, kind)
+func (a *App) establishLoginAccount(ctx context.Context, tx pgx.Tx, realm string, id *oidc.IDToken, claims loginClaims, kind string) (string, string, error) {
+	user, org, e := a.loadLoginUser(ctx, tx, realm, id, claims, kind)
 	if e != nil {
 		return "", "", e
 	}
 	var identityType string
-	if e := tx.QueryRow(ctx, "UPDATE users SET email=$1,display_name=$2,identity_type=COALESCE(NULLIF($3,''),identity_type) WHERE id=$4 RETURNING identity_type", claims.Email, claims.Name, kind, user).Scan(&identityType); e != nil {
+	// The sign-in name too: the entry page routes a person who types it (lower case, as
+	// Keycloak keeps it; an unusable value is not stored).
+	username := asciiLower(claims.Username)
+	if loginName(username) == "" {
+		username = ""
+	}
+	if e := tx.QueryRow(ctx, "UPDATE users SET email=$1,display_name=$2,identity_type=COALESCE(NULLIF($3,''),identity_type),username=COALESCE(NULLIF($5,''),username) WHERE id=$4 RETURNING identity_type", claims.Email, claims.Name, kind, user, username).Scan(&identityType); e != nil {
 		return "", "", e
 	}
 	if identityType != "local" {
@@ -373,13 +393,14 @@ func (a *App) createLoginSession(ctx context.Context, tx pgx.Tx, org, user strin
 
 func (a *App) completeLogin(w http.ResponseWriter, r *http.Request, ctx context.Context, flow verifiedLogin) error {
 	mfa := loginMFAEvidence(flow.claims)
-	kind := a.loginIdentityKind(ctx, flow.id.Subject)
+	realm := flow.attempt.realm
+	kind := a.loginIdentityKind(ctx, realm, flow.id.Subject)
 	tx, e := a.db.Begin(ctx)
 	if e != nil {
 		return e
 	}
 	defer tx.Rollback(ctx)
-	user, org, e := a.establishLoginAccount(ctx, tx, flow.id, flow.claims, kind)
+	user, org, e := a.establishLoginAccount(ctx, tx, realm, flow.id, flow.claims, kind)
 	if e != nil {
 		return e
 	}
@@ -388,7 +409,7 @@ func (a *App) completeLogin(w http.ResponseWriter, r *http.Request, ctx context.
 		return e
 	}
 	if !requireMFA && !mfa {
-		admin, err := a.identityAdmin(ctx)
+		admin, err := a.identityAdminFor(ctx, realm)
 		if err != nil {
 			return apiError{503, "identity_admin_unavailable", "Could not verify the account MFA configuration."}
 		}
@@ -409,7 +430,10 @@ func (a *App) completeLogin(w http.ResponseWriter, r *http.Request, ctx context.
 		if e = tx.Rollback(ctx); e != nil {
 			return e
 		}
-		return a.startOIDCLogin(w, r, language, "", true, false)
+		return a.startOIDCLogin(w, r, language, "", true, false, loginTarget{realm: realm})
+	}
+	if e = a.endPendingInvitation(ctx, tx, realm, user, flow.id.Subject); e != nil {
+		return e
 	}
 	session, expiry, e := a.createLoginSession(ctx, tx, org, user, flow, mfa)
 	if e != nil {
@@ -434,7 +458,8 @@ func (a *App) callback(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, e)
 		return
 	}
-	identity, e := a.currentOIDC(r.Context())
+	// The realm the attempt was started in: its code, keys and issuer only.
+	identity, e := a.currentOIDCFor(r.Context(), attempt.realm)
 	if e != nil {
 		a.fail(w, e)
 		return
@@ -479,7 +504,7 @@ func (a *App) logout(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Sessi
 		return e
 	}
 	a.cookie(w, a.cookieName("session"), "", -1)
-	identity, err := a.currentOIDC(r.Context())
+	identity, err := a.currentOIDCFor(r.Context(), s.Realm)
 	if err != nil {
 		return err
 	}

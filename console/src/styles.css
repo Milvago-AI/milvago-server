@@ -430,6 +430,9 @@ output.notice{margin-top:1em}
 .profile-rows dt{color:var(--text-2)}.profile-rows dd{margin:0;overflow-wrap:anywhere}
 .directory-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
 .sso-provider + .sso-provider{margin-top:28px;padding-top:20px;border-top:1px solid var(--border)}
+.sso-domain{padding:12px 0;border-bottom:1px solid var(--border)}
+.sso-domain-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.sso-domain-head h3{margin:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;overflow-wrap:anywhere}
 
 /* ---------- Entry page ---------- */
 .entry{min-height:100vh;display:grid;grid-template-columns:minmax(0,3fr) minmax(0,1fr);grid-template-rows:72px minmax(0,1fr) 64px;padding:0 72px;background:var(--bg)}
@@ -451,6 +454,10 @@ output.notice{margin-top:1em}
 .entry-description{font-size:16px;line-height:1.65;color:var(--text-2);max-width:480px;margin:0}
 .entry-cta{display:flex;flex-direction:column;gap:16px;align-items:flex-start}
 .login-button{height:44px;padding:0 20px;font-size:14px;gap:14px}
+.entry-signin{display:flex;flex-direction:column;gap:8px;width:100%;max-width:460px}
+.entry-signin-label{font-size:13px;font-weight:600}
+.entry-signin-row{display:flex;gap:8px;flex-wrap:wrap}
+.entry-signin-row input{flex:1 1 220px;min-width:0;height:44px;padding:0 12px;font-size:14px}
 .entry-footnote{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--text-3)}
 .entry-footnote svg{width:14px;height:14px}
 .entry-aside{border-left:1px solid var(--border);display:flex;flex-direction:column;justify-content:center;gap:28px;padding:40px 0 40px 40px}

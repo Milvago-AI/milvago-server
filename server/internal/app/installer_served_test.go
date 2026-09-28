@@ -544,30 +544,64 @@ func (x servedInstallerFixture) prepareMode(t *testing.T, ctx context.Context, i
 
 func (x servedInstallerFixture) downloadModeMSI(t *testing.T, state *installerModeState) {
 	cookie, mode, bundle, output := state.cookie, state.mode, x.bundle, x.output
+	download := x.downloadWindowsPackage(t, cookie, state.token)
+	defer download.Body.Close()
+	data := readWindowsPackage(t, download.Body)
+	archive, e := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if e != nil || len(archive.File) != 4 {
+		t.Fatal("ZIP must contain exactly four files", e)
+	}
+	files := readWindowsPackageFiles(t, archive)
+	assertWindowsPackageReadme(t, files["README.md"])
+	msiBytes := files["milvago-windows-installer.msi"]
+	if len(msiBytes) < 8 || !bytes.Equal(msiBytes[:8], []byte{0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1}) {
+		t.Fatal("ZIP MSI response invalid")
+	}
+	msi := Edition + "-" + mode + ".msi"
+	path := filepath.Join(output, msi)
+	if e = os.WriteFile(path, msiBytes, 0600); e != nil {
+		t.Fatal(e)
+	}
+	state.msi, state.path, state.digest = msi, path, sha256.Sum256(msiBytes)
+	assertWindowsPackageScript(t, files["milvago-windows-install.ps1"], bundle)
+	state.provision = Edition + "-" + mode + ".json"
+	if e = os.WriteFile(filepath.Join(output, state.provision), files["milvago-provision.json"], 0600); e != nil {
+		t.Fatal(e)
+	}
+}
+
+func (x servedInstallerFixture) downloadWindowsPackage(t *testing.T, cookie *http.Cookie, token string) *http.Response {
+	t.Helper()
 	req, e := http.NewRequest("POST", "http://127.0.0.1:4020/api/installer/windows/package", nil)
 	if e != nil {
 		t.Fatal(e)
 	}
 	req.AddCookie(cookie)
 	req.Header.Set("Origin", x.setup.config.AppURL)
-	req.Header.Set("X-CSRF-Token", state.token)
+	req.Header.Set("X-CSRF-Token", token)
 	client := &http.Client{Timeout: 100 * time.Second}
 	download, e := client.Do(req)
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer download.Body.Close()
-	if download.StatusCode != 200 || download.Header.Get("X-Milvago-Installer-Version") != bundle.Version || !strings.Contains(download.Header.Get("Cache-Control"), "no-store") || download.Header.Get("Content-Type") != "application/zip" || !strings.Contains(download.Header.Get("Content-Disposition"), windowsPackageName) {
+	if download.StatusCode != 200 || download.Header.Get("X-Milvago-Installer-Version") != x.bundle.Version || !strings.Contains(download.Header.Get("Cache-Control"), "no-store") || download.Header.Get("Content-Type") != "application/zip" || !strings.Contains(download.Header.Get("Content-Disposition"), windowsPackageName) {
+		download.Body.Close()
 		t.Fatal("real ZIP download failed", download.StatusCode)
 	}
-	data, e := io.ReadAll(io.LimitReader(download.Body, 129*1024*1024+1))
+	return download
+}
+
+func readWindowsPackage(t *testing.T, body io.Reader) []byte {
+	t.Helper()
+	data, e := io.ReadAll(io.LimitReader(body, 129*1024*1024+1))
 	if e != nil || len(data) < 4 || len(data) > 129*1024*1024 || !bytes.Equal(data[:2], []byte("PK")) {
 		t.Fatal("real ZIP response invalid")
 	}
-	archive, e := zip.NewReader(bytes.NewReader(data), int64(len(data)))
-	if e != nil || len(archive.File) != 4 {
-		t.Fatal("ZIP must contain exactly four files", e)
-	}
+	return data
+}
+
+func readWindowsPackageFiles(t *testing.T, archive *zip.Reader) map[string][]byte {
+	t.Helper()
 	wanted := map[string]bool{"milvago-windows-installer.msi": true, "milvago-windows-install.ps1": true, "milvago-provision.json": true, "README.md": true}
 	files := map[string][]byte{}
 	for _, entry := range archive.File {
@@ -585,30 +619,24 @@ func (x servedInstallerFixture) downloadModeMSI(t *testing.T, state *installerMo
 		}
 		files[entry.Name] = contents
 	}
-	readme := string(files["README.md"])
+	return files
+}
+
+func assertWindowsPackageReadme(t *testing.T, contents []byte) {
+	t.Helper()
+	readme := string(contents)
 	for _, instruction := range []string{"-MsiPath .\\milvago-windows-installer.msi", "-ProvisionPath .\\milvago-provision.json", "as Administrator"} {
 		if !strings.Contains(readme, instruction) {
 			t.Fatal("ZIP README is missing an installation instruction", instruction)
 		}
 	}
-	msiBytes := files["milvago-windows-installer.msi"]
-	if len(msiBytes) < 8 || !bytes.Equal(msiBytes[:8], []byte{0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1}) {
-		t.Fatal("ZIP MSI response invalid")
-	}
-	msi := Edition + "-" + mode + ".msi"
-	path := filepath.Join(output, msi)
-	if e = os.WriteFile(path, msiBytes, 0600); e != nil {
-		t.Fatal(e)
-	}
-	state.msi, state.path, state.digest = msi, path, sha256.Sum256(msiBytes)
-	script := files["milvago-windows-install.ps1"]
+}
+
+func assertWindowsPackageScript(t *testing.T, script []byte, bundle InstallerBundle) {
+	t.Helper()
 	scriptHash := sha256.Sum256(script)
 	if hex.EncodeToString(scriptHash[:]) != bundle.ScriptSHA256 || int64(len(script)) != bundle.ScriptSize {
 		t.Fatal("ZIP deployment script differs from release")
-	}
-	state.provision = Edition + "-" + mode + ".json"
-	if e = os.WriteFile(filepath.Join(output, state.provision), files["milvago-provision.json"], 0600); e != nil {
-		t.Fatal(e)
 	}
 }
 

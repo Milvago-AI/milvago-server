@@ -79,8 +79,9 @@ func (a *App) refreshSession(ctx context.Context, tx pgx.Tx, s *Session, encrypt
 	}
 	token := stored.Token
 	token.Expiry = time.Now().Add(-time.Minute)
-	identity := a.publicOIDC.Load()
-	if identity == nil {
+	// The account's own realm: a refresh token of one realm is never sent to another.
+	identity, e := a.currentOIDCFor(ctx, s.Realm)
+	if e != nil {
 		return apiError{503, "identity_unavailable", "Identity configuration is unavailable."}
 	}
 	oidcCtx := oidc.ClientContext(ctx, identity.client)
@@ -151,7 +152,7 @@ func (a *App) loadSession(r *http.Request, opaque string) (*Session, error) {
 	var encrypted []byte
 	var identityExpiry time.Time
 	var nonce string
-	e = tx.QueryRow(ctx, `SELECT s.user_id,u.email,u.display_name,s.organization_id,s.csrf_token,s.mfa,s.encrypted_tokens,s.identity_expires_at,u.subject,u.identity_type,s.oidc_nonce FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now() FOR UPDATE OF s`, s.TokenHash).Scan(&s.UserID, &s.Email, &s.DisplayName, &s.OrganizationID, &s.CSRF, &s.MFA, &encrypted, &identityExpiry, &s.Subject, &s.IdentityType, &nonce)
+	e = tx.QueryRow(ctx, `SELECT s.user_id,u.email,u.display_name,s.organization_id,s.csrf_token,s.mfa,s.encrypted_tokens,s.identity_expires_at,u.subject,u.identity_type,u.realm,s.oidc_nonce FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now() FOR UPDATE OF s`, s.TokenHash).Scan(&s.UserID, &s.Email, &s.DisplayName, &s.OrganizationID, &s.CSRF, &s.MFA, &encrypted, &identityExpiry, &s.Subject, &s.IdentityType, &s.Realm, &nonce)
 	if e != nil {
 		return nil, apiError{401, "unauthenticated", "Sign in to continue."}
 	}

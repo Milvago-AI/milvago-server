@@ -48,6 +48,13 @@ func (o *orgSlots) release(org string) {
 const fileProvisionJSON = "provision.json"
 const msgInstallerBusy = "Installer preparation is busy. Try again shortly."
 
+const (
+	headerCacheControl       = "Cache-Control"
+	headerContentDisposition = "Content-Disposition"
+	installerCacheControl    = "no-store, private"
+	installerNoSniff         = "nosniff"
+)
+
 func (a *App) downloadInstaller(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
 	provision, err := a.installerProvision(r.Context(), tx, s.OrganizationID, r.PathValue("platform"))
 	if err != nil {
@@ -154,12 +161,12 @@ func (a *App) downloadInstaller(w http.ResponseWriter, r *http.Request, tx pgx.T
 		media = "application/x-rpm"
 	}
 	name := fmt.Sprintf("milvago-%s-%s-%s.%s", Edition, provision.Version, provision.ProfileID[:8], extension)
-	w.Header().Set("Content-Type", media)
-	w.Header().Set("Cache-Control", "no-store, private")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set(headerContentType, media)
+	w.Header().Set(headerCacheControl, installerCacheControl)
+	w.Header().Set(headerXContentTypeOptions, installerNoSniff)
 	// This value is read by the console only after it has received this verified release.
 	w.Header().Set("X-Milvago-Installer-Version", bundle.Version)
-	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	w.Header().Set(headerContentDisposition, `attachment; filename="`+name+`"`)
 	http.ServeContent(w, r, name, info.ModTime(), file)
 	return nil
 }
@@ -189,10 +196,10 @@ func (a *App) downloadWindowsProvision(w http.ResponseWriter, r *http.Request, t
 	if err = tx.Commit(r.Context()); err != nil {
 		return err
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Content-Disposition", `attachment; filename="milvago-provision.json"`)
-	w.Header().Set("Cache-Control", "no-store, private")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set(headerContentType, "application/json")
+	w.Header().Set(headerContentDisposition, `attachment; filename="milvago-provision.json"`)
+	w.Header().Set(headerCacheControl, installerCacheControl)
+	w.Header().Set(headerXContentTypeOptions, installerNoSniff)
 	return json.NewEncoder(w).Encode(provision)
 }
 
@@ -206,10 +213,10 @@ func (a *App) downloadWindowsScript(w http.ResponseWriter, r *http.Request, tx p
 	if err != nil {
 		return err
 	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="milvago-windows-install.ps1"`)
-	w.Header().Set("Cache-Control", "no-store, private")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set(headerContentType, "text/plain; charset=utf-8")
+	w.Header().Set(headerContentDisposition, `attachment; filename="milvago-windows-install.ps1"`)
+	w.Header().Set(headerCacheControl, installerCacheControl)
+	w.Header().Set(headerXContentTypeOptions, installerNoSniff)
 	_, err = w.Write(body)
 	return err
 }

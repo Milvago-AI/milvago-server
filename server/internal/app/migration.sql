@@ -14,6 +14,9 @@ ALTER TABLE app_config ADD COLUMN IF NOT EXISTS default_language text NOT NULL D
 ALTER TABLE app_config ALTER COLUMN default_language SET DEFAULT 'en';
 -- The instance licence, a signed JWT verified on every read (license.go).
 ALTER TABLE app_config ADD COLUMN IF NOT EXISTS license text NOT NULL DEFAULT '';
+-- The SMTP settings chosen at setup, sealed: Keycloak never returns the password, and
+-- every organization realm created later needs it to send its invitations.
+ALTER TABLE app_config ADD COLUMN IF NOT EXISTS smtp_sealed bytea;
 -- Dropped and re-added rather than declared inline: an inline CHECK is only
 -- applied when the column is created, so widening the language set would never
 -- reach a database that already has the column.
@@ -30,6 +33,15 @@ ALTER TABLE users ADD CONSTRAINT users_identity_type_check CHECK (identity_type 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS language text NOT NULL DEFAULT '';
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_language_check;
 ALTER TABLE users ADD CONSTRAINT users_language_check CHECK (language IN ('','fr','en','es','pt-BR'));
+-- The Keycloak realm holding the account, empty for the root organization's: in
+-- Enterprise each organization has its own realm, and a person one account (realm.go).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS realm text NOT NULL DEFAULT '';
+-- The account's sign-in name in its realm (lower case, as Keycloak keeps it), so that the
+-- entry page routes a person who types it rather than an e-mail address.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS username text NOT NULL DEFAULT '';
+-- Until when an account created by an invitation may link a provider account of the
+-- organization's domain without further proof; NULL once used or expired.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_invitation_until timestamptz;
 CREATE TABLE IF NOT EXISTS memberships (
  organization_id uuid NOT NULL REFERENCES organizations, user_id uuid NOT NULL REFERENCES users,
  role text NOT NULL, PRIMARY KEY (organization_id,user_id)
@@ -62,6 +74,8 @@ CREATE TABLE IF NOT EXISTS login_attempts (
  state_hash bytea PRIMARY KEY, binding_hash bytea NOT NULL, verifier text NOT NULL, nonce text NOT NULL, expires_at timestamptz NOT NULL
 );
 ALTER TABLE login_attempts ADD COLUMN IF NOT EXISTS step_up boolean NOT NULL DEFAULT false;
+-- The realm the sign-in was started in, empty for the root one.
+ALTER TABLE login_attempts ADD COLUMN IF NOT EXISTS realm text NOT NULL DEFAULT '';
 -- First-run setup wizard (setup.go): short sessions opened by the setup token.
 -- Instance-level, like login_attempts: no organization owns them yet.
 CREATE TABLE IF NOT EXISTS setup_sessions (

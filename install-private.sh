@@ -210,7 +210,8 @@ detect_host_ip() {
 host_ip=$(detect_host_ip)
 public_origin=${MILVAGO_PUBLIC_URL:-http://$host_ip:4020}
 valid_public_origin() {
-  [[ "$1" =~ ^https?://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?$ ]]
+  local origin=$1
+  [[ "$origin" =~ ^https?://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?$ ]]
 }
 valid_public_origin "$public_origin" || fail "MILVAGO_PUBLIC_URL must be a bare HTTP or HTTPS origin."
 

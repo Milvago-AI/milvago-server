@@ -49,7 +49,7 @@ type directoryBody struct {
 
 type directoryView struct {
 	Configured bool `json:"configured"`
-	// Editable: the caller may change it (see directoryOperator).
+	// Editable: the caller may change it (see identityConfigurator).
 	Editable bool `json:"editable"`
 	directoryConfig
 	UpdatedAt time.Time `json:"updated_at"`
@@ -69,7 +69,8 @@ var (
 	ldapHostPattern = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?)*$`)
 	// Keycloak account IDs (UUID or f:<component>:<external>); the leading
 	// alphanumeric rules out dot segments that would alter the admin API path.
-	ldapSubjectPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9:_.-]{0,127}$`)
+	// Keycloak identifiers: UUIDs, or base64url strings, which may start with "_" or "-".
+	ldapSubjectPattern = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9:_.-]{0,127}$`)
 	ldapVendors        = map[string]bool{"ad": true, "rhds": true, "tivoli": true, "edirectory": true, "other": true}
 	directoryColumns   = "name,vendor,connection_url,bind_dn,users_dn,username_attribute,rdn_attribute,uuid_attribute,user_object_classes,custom_filter,search_scope,auth_type,start_tls,use_truststore,connection_timeout_ms,read_timeout_ms,pagination"
 )
@@ -317,39 +318,41 @@ func saveDirectory(ctx context.Context, tx pgx.Tx, org, component string, d dire
 	return e
 }
 
-// directoryOperator reports whether the caller may create, change, test or delete a
-// directory. In Enterprise the Keycloak realm is shared by every tenant, and Keycloak
-// consults every LDAP component of it when anyone signs in with a name it has not
-// imported yet: a tenant owner pointing a component at a server that answers yes to
-// every name received other tenants' passwords in clear, and the connection test
-// probed the operator's network (audit of 2026-09-24). A directory is therefore
-// instance infrastructure there, configured by an owner of the root organization --
-// for the root or, acting in it, for a child. Community has one organization.
-func directoryOperator(ctx context.Context, tx pgx.Tx, s *Session) (bool, error) {
+// identityConfigurator reports whether the caller may configure the current
+// organization's sign-in: its directory and its single sign-on providers. In
+// Enterprise each organization has its own realm, and the right is held through a
+// membership of that very organization carrying directory.manage there. A right that
+// only flows from a parent organization does not count: a parent never imposes its
+// sign-in configuration on a child, unless one of its people is also a member of the
+// child with that right. A pinned credential (API key) never configures sign-in.
+// Community has one organization.
+func identityConfigurator(ctx context.Context, tx pgx.Tx, s *Session) (bool, error) {
 	if Edition != "commercial" {
 		return true, nil
 	}
 	if s.pinned() {
 		return false, nil
 	}
-	var operator bool
-	e := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM app_config c, effective_access($1,c.organization_id) e WHERE e.role='owner')`, s.UserID).Scan(&operator)
-	return operator, e
+	var direct bool
+	e := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM memberships m JOIN roles r ON r.organization_id=m.organization_id AND r.name=m.role WHERE m.organization_id=$1 AND m.user_id=$2 AND $3=ANY(r.permissions))`, s.OrganizationID, s.UserID, permDirectoryManage).Scan(&direct)
+	return direct, e
 }
 
-func requireDirectoryOperator(ctx context.Context, tx pgx.Tx, s *Session) error {
-	operator, e := directoryOperator(ctx, tx, s)
+var errConfiguratorRequired = apiError{403, "direct_membership_required", "Only a member of this organization holding the directory permission in it can configure its sign-in."}
+
+func requireIdentityConfigurator(ctx context.Context, tx pgx.Tx, s *Session) error {
+	direct, e := identityConfigurator(ctx, tx, s)
 	if e != nil {
 		return e
 	}
-	if !operator {
-		return apiError{403, "operator_required", "Only an owner of the root organization can configure a directory: every organization's sign-in consults it."}
+	if !direct {
+		return errConfiguratorRequired
 	}
 	return nil
 }
 
 func (a *App) directory(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
-	editable, e := directoryOperator(r.Context(), tx, s)
+	editable, e := identityConfigurator(r.Context(), tx, s)
 	if e != nil {
 		return e
 	}
@@ -367,7 +370,7 @@ func (a *App) directory(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Se
 }
 
 func (a *App) readDirectoryAdminBody(w http.ResponseWriter, r *http.Request, tx pgx.Tx, session *Session) (directoryBody, error) {
-	if err := requireDirectoryOperator(r.Context(), tx, session); err != nil {
+	if err := requireIdentityConfigurator(r.Context(), tx, session); err != nil {
 		return directoryBody{}, err
 	}
 	var body directoryBody
@@ -380,6 +383,17 @@ func (a *App) readDirectoryAdminBody(w http.ResponseWriter, r *http.Request, tx 
 	if invalidSecret(body.BindCredential) {
 		return directoryBody{}, bad("Bind password is too long or malformed.")
 	}
+	// Keycloak connects from inside the platform's network and names the failure
+	// (closed port, TLS on another service, unknown host): a sub-organization's owner
+	// could map that network through the test. Their directory is a named or routable
+	// server on an LDAP port; the root organization's, the platform's own, is not bound.
+	if realm, err := a.organizationRealm(r.Context(), tx, session.OrganizationID); err != nil {
+		return directoryBody{}, err
+	} else if realm != "" {
+		if err := tenantDirectoryTarget(body.ConnectionURL); err != nil {
+			return directoryBody{}, err
+		}
+	}
 	// Both operations can use a stored bind credential.
 	if err := a.requireFreshMFA(r, tx, session); err != nil {
 		return directoryBody{}, err
@@ -387,12 +401,38 @@ func (a *App) readDirectoryAdminBody(w http.ResponseWriter, r *http.Request, tx 
 	return body, nil
 }
 
+// tenantLDAPPorts are the LDAP, LDAPS and global catalog ports ("" is the scheme's own).
+var tenantLDAPPorts = map[string]bool{"": true, "389": true, "636": true, "3268": true, "3269": true}
+
+// tenantDirectoryTarget bounds a sub-organization's directory server: a standard LDAP
+// port, and a fully qualified name or an address outside this host and its link.
+func tenantDirectoryTarget(connection string) error {
+	u, e := url.Parse(connection)
+	if e != nil {
+		return bad("Connection URL must be ldap://host[:port] or ldaps://host[:port].")
+	}
+	if !tenantLDAPPorts[u.Port()] {
+		return bad("A sub-organization's directory uses a standard LDAP port: 389, 636, 3268 or 3269.")
+	}
+	host := strings.ToLower(u.Hostname())
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsMulticast() {
+			return bad("A sub-organization's directory cannot be on this host or its local link.")
+		}
+		return nil
+	}
+	if !strings.Contains(host, ".") || host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return bad("Enter the directory server's fully qualified name, such as ldap.example.com.")
+	}
+	return nil
+}
+
 func (a *App) putDirectory(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
 	body, err := a.readDirectoryAdminBody(w, r, tx, s)
 	if err != nil {
 		return err
 	}
-	admin, err := a.identityAdmin(r.Context())
+	admin, err := a.organizationAdmin(r.Context(), tx, s.OrganizationID)
 	if err != nil {
 		return err
 	}
@@ -519,7 +559,7 @@ func persistDirectoryUpdate(ctx context.Context, tx pgx.Tx, s *Session, admin *i
 }
 
 func (a *App) deleteDirectory(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
-	if e := requireDirectoryOperator(r.Context(), tx, s); e != nil {
+	if e := requireIdentityConfigurator(r.Context(), tx, s); e != nil {
 		return e
 	}
 	if e := a.requireFreshMFA(r, tx, s); e != nil {
@@ -535,7 +575,7 @@ func (a *App) deleteDirectory(w http.ResponseWriter, r *http.Request, tx pgx.Tx,
 	if e != nil {
 		return e
 	}
-	admin, e := a.identityAdmin(r.Context())
+	admin, e := a.organizationAdmin(r.Context(), tx, s.OrganizationID)
 	if e != nil {
 		return e
 	}
@@ -568,7 +608,7 @@ func (a *App) testDirectory(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s
 	if err != nil {
 		return err
 	}
-	admin, err := a.identityAdmin(r.Context())
+	admin, err := a.organizationAdmin(r.Context(), tx, s.OrganizationID)
 	if err != nil {
 		return err
 	}
@@ -649,7 +689,7 @@ func (a *App) searchDirectory(w http.ResponseWriter, r *http.Request, tx pgx.Tx,
 	if n := len([]rune(query)); n < 2 || n > 64 || hasControl(query) || strings.ContainsAny(query, `()\`) {
 		return bad("Search text must contain 2 to 64 characters.")
 	}
-	admin, e := a.identityAdmin(r.Context())
+	admin, e := a.organizationAdmin(r.Context(), tx, s.OrganizationID)
 	if e != nil {
 		return e
 	}
@@ -780,7 +820,7 @@ func (a *App) importDirectoryMember(w http.ResponseWriter, r *http.Request, tx p
 	if e != nil {
 		return e
 	}
-	admin, e := a.identityAdmin(r.Context())
+	admin, e := a.organizationAdmin(r.Context(), tx, s.OrganizationID)
 	if e != nil {
 		return e
 	}
@@ -814,8 +854,17 @@ func (a *App) importDirectoryMember(w http.ResponseWriter, r *http.Request, tx p
 	if existing {
 		return apiError{409, "already_member", "This account is already a member."}
 	}
+	realm, e := a.organizationRealm(r.Context(), tx, s.OrganizationID)
+	if e != nil {
+		return e
+	}
 	var user string
-	if e = tx.QueryRow(r.Context(), `INSERT INTO users(subject,email,display_name,identity_type) VALUES($1,$2,$3,'ldap') ON CONFLICT(subject) DO UPDATE SET email=excluded.email,display_name=excluded.display_name,identity_type='ldap' RETURNING id`, u.ID, email, u.displayName()).Scan(&user); e != nil {
+	// The account lives in this organization's realm; a subject already recorded for
+	// another realm is not this person.
+	if e = tx.QueryRow(r.Context(), `INSERT INTO users(subject,email,display_name,identity_type,realm,username) VALUES($1,$2,$3,'ldap',$4,$5) ON CONFLICT(subject) DO UPDATE SET email=excluded.email,display_name=excluded.display_name,identity_type='ldap',username=COALESCE(NULLIF(excluded.username,''),users.username) WHERE users.realm=excluded.realm RETURNING id`, u.ID, email, u.displayName(), realm, loginName(u.Username)).Scan(&user); e != nil {
+		if errors.Is(e, pgx.ErrNoRows) {
+			return apiError{409, "already_member", "This account is already a member."}
+		}
 		return e
 	}
 	if e = guardParentControl(r.Context(), tx, s, user); e != nil {
