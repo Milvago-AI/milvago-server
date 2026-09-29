@@ -136,14 +136,18 @@ type V2Event struct {
 	Tool           string    `json:"tool"`
 	Model          string    `json:"model,omitempty"`
 	Effort         string    `json:"effort,omitempty"`
-	ConversationID string    `json:"conversation_id,omitempty"`
-	CorrelationID  string    `json:"correlation_id,omitempty"`
-	URL            string    `json:"url,omitempty"`
-	Action         string    `json:"action"`
-	Characters     int       `json:"characters"`
-	Labels         []string  `json:"labels"`
-	Prompt         *string   `json:"prompt,omitempty"`
-	Response       *string   `json:"response,omitempty"`
+	// "signed_in" or "signed_out", as the signed catalogue states for the send route the
+	// browser observed. Signed-out ChatGPT names no model, so this is what the console
+	// shows instead of an empty model.
+	Session        string   `json:"session,omitempty"`
+	ConversationID string   `json:"conversation_id,omitempty"`
+	CorrelationID  string   `json:"correlation_id,omitempty"`
+	URL            string   `json:"url,omitempty"`
+	Action         string   `json:"action"`
+	Characters     int      `json:"characters"`
+	Labels         []string `json:"labels"`
+	Prompt         *string  `json:"prompt,omitempty"`
+	Response       *string  `json:"response,omitempty"`
 	// Names of the files attached to a request. Names only, never contents; the
 	// signed policy is what turns them on, so a device cannot start sending them.
 	Files []string `json:"files,omitempty"`
@@ -174,7 +178,7 @@ func normalizeEventURL(raw, provider string) (string, error) {
 		return "", bad("Browser URL must use the provider HTTPS origin.")
 	}
 	path := "/"
-	for _, prefix := range []string{"/c/", "/chat/", "/chats/", "/a/chat/s/", "/app/", "/notebook/", "/search/"} {
+	for _, prefix := range []string{"/c/", "/uc/", "/chat/", "/chats/", "/a/chat/s/", "/app/", "/notebook/", "/search/"} {
 		if strings.HasPrefix(u.Path, prefix) {
 			path = prefix + ":conversation"
 			break
@@ -267,11 +271,16 @@ func validateEventIdentity(v *V2Event, now time.Time) error {
 	return nil
 }
 
+var eventSessions = []string{"", "signed_in", "signed_out"}
+
 func validateEventContent(v *V2Event) error {
 	for _, s := range []string{v.Model, v.Effort, v.ConversationID, v.CorrelationID} {
 		if s != "" && !validMetadata(s, 200) {
 			return bad("Invalid optional metadata.")
 		}
+	}
+	if !slices.Contains(eventSessions, v.Session) {
+		return bad("Invalid session state.")
 	}
 	for _, s := range v.Labels {
 		if !categoryPattern.MatchString(s) {
@@ -392,6 +401,7 @@ type V2Completion struct {
 	Effort         string `json:"effort,omitempty"`
 	ConversationID string `json:"conversation_id,omitempty"`
 	BodyBytes      *int64 `json:"body_bytes,omitempty"`
+	Session        string `json:"session,omitempty"`
 }
 
 func (a *App) v2Complete(w http.ResponseWriter, r *http.Request) {
@@ -415,8 +425,11 @@ func validateCompletion(c V2Completion) error {
 	if c.BodyBytes != nil && (*c.BodyBytes < 0 || *c.BodyBytes > 1e12) {
 		return bad("Invalid measurement.")
 	}
+	if !slices.Contains(eventSessions, c.Session) {
+		return bad("Invalid session state.")
+	}
 	// An empty completion cannot count as an applied observation.
-	if c.Model == "" && c.Effort == "" && c.ConversationID == "" && c.BodyBytes == nil {
+	if c.Model == "" && c.Effort == "" && c.ConversationID == "" && c.BodyBytes == nil && c.Session == "" {
 		return bad("A completion must carry at least one observation.")
 	}
 	return nil
@@ -463,9 +476,10 @@ func (a *App) v2CompleteRequest(w http.ResponseWriter, r *http.Request) error {
 			effort=CASE WHEN effort='' AND $5<>'' THEN $5 ELSE effort END,
 			conversation_id=CASE WHEN conversation_id='' AND $6<>'' THEN $6 ELSE conversation_id END,
 			body_bytes=CASE WHEN body_bytes IS NULL THEN $7 ELSE body_bytes END,
+			session=CASE WHEN session='' AND $8<>'' THEN $8 ELSE session END,
 			detector=CASE WHEN detector='dom' THEN 'both' ELSE detector END
 			WHERE organization_id=$1 AND device_id=$2 AND id=$3`,
-			org, device, c.ID, c.Model, c.Effort, c.ConversationID, c.BodyBytes)
+			org, device, c.ID, c.Model, c.Effort, c.ConversationID, c.BodyBytes, c.Session)
 		if e != nil {
 			return e
 		}
@@ -594,15 +608,15 @@ func (a *App) sealAndQueueIngestEvent(r *http.Request, tx pgx.Tx, state *ingestB
 	// replay cannot recreate purged content or overwrite the original record.
 	// Association remains resolved at the event's timestamp under tenant RLS.
 	state.writes.Queue(`WITH inserted AS (
- INSERT INTO shadow_events(organization_id,device_id,id,occurred_at,kind,provider,source,tool,model,effort,conversation_id,correlation_id,url,action,characters,labels,policy_revision,collaborator_id,sensitivity,platform_id,decision_reason,files,"user",user_key,detector,catalog_revision,input_tokens,output_tokens,body_bytes,characters_known)
+ INSERT INTO shadow_events(organization_id,device_id,id,occurred_at,kind,provider,source,tool,model,effort,conversation_id,correlation_id,url,action,characters,labels,policy_revision,collaborator_id,sensitivity,platform_id,decision_reason,files,"user",user_key,detector,catalog_revision,input_tokens,output_tokens,body_bytes,characters_known,session)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
   (SELECT collaborator_id FROM device_collaborators WHERE device_id=$2 AND bound_at<=$18::timestamptz AND expires_at>$18::timestamptz AND expires_at>now()),
-  $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
+  $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$33)
  ON CONFLICT DO NOTHING RETURNING organization_id,device_id,id
 )
 INSERT INTO shadow_content(organization_id,device_id,event_id,encrypted,expires_at)
  SELECT organization_id,device_id,id,$31::bytea,now()+make_interval(days=>$32)
- FROM inserted WHERE $31::bytea IS NOT NULL`, state.org, state.device, v.ID, v.OccurredAt, v.Kind, v.Provider, v.Source, v.Tool, v.Model, v.Effort, v.ConversationID, v.CorrelationID, v.URL, v.Action, v.Characters, labels, v.PolicyRevision, v.OccurredAt, sensitivity, v.PlatformID, v.DecisionReason, files, v.User, userKey, v.Detector, v.CatalogRevision, v.InputTokens, v.OutputTokens, v.BodyBytes, v.CharactersKnown == nil || *v.CharactersKnown, content, state.cfg.Config.Collection.ContentRetentionDays)
+ FROM inserted WHERE $31::bytea IS NOT NULL`, state.org, state.device, v.ID, v.OccurredAt, v.Kind, v.Provider, v.Source, v.Tool, v.Model, v.Effort, v.ConversationID, v.CorrelationID, v.URL, v.Action, v.Characters, labels, v.PolicyRevision, v.OccurredAt, sensitivity, v.PlatformID, v.DecisionReason, files, v.User, userKey, v.Detector, v.CatalogRevision, v.InputTokens, v.OutputTokens, v.BodyBytes, v.CharactersKnown == nil || *v.CharactersKnown, content, state.cfg.Config.Collection.ContentRetentionDays, v.Session)
 	state.accepted = append(state.accepted, v.ID)
 	return nil
 }

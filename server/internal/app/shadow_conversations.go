@@ -50,6 +50,7 @@ type ConversationView struct {
 	HasAttachment bool            `json:"has_attachment"`
 	Model         string          `json:"model"`
 	Effort        string          `json:"effort"`
+	Session       string          `json:"session"`
 	Latest        ShadowEventView `json:"latest"`
 }
 
@@ -194,9 +195,9 @@ func (a *App) shadowConversations(w http.ResponseWriter, r *http.Request, tx pgx
 	// the number under the pager can never describe a different set than the rows.
 	countArgs := append([]any{}, args...)
 	args = append(args, limit+1, offset)
-	groups := `WITH scoped AS (SELECT e.id,e.device_id,e.occurred_at,e.kind,e.action,e.model,e.effort,e.conversation_id,e.correlation_id,jsonb_array_length(e.files)>0 AS has_files` + shadowJoins + `WHERE ` + f.Where + ` AND NOT ` + attachmentOnly("e") + `),
+	groups := `WITH scoped AS (SELECT e.id,e.device_id,e.occurred_at,e.kind,e.action,e.model,e.effort,e.session,e.conversation_id,e.correlation_id,jsonb_array_length(e.files)>0 AS has_files` + shadowJoins + `WHERE ` + f.Where + ` AND NOT ` + attachmentOnly("e") + `),
 	link AS (SELECT device_id,correlation_id,min(conversation_id) AS conversation_id FROM shadow_events WHERE ` + window + ` AND correlation_id<>'' AND conversation_id<>'' GROUP BY 1,2),
-	keyed AS (SELECT s.id,s.device_id,s.occurred_at,s.kind,s.action,s.model,s.effort,s.has_files,
+	keyed AS (SELECT s.id,s.device_id,s.occurred_at,s.kind,s.action,s.model,s.effort,s.session,s.has_files,
 		CASE WHEN s.conversation_id<>'' THEN 'conv:'||s.conversation_id
 		     WHEN l.conversation_id IS NOT NULL THEN 'conv:'||l.conversation_id
 		     -- No identifier anywhere in the exchange: the correlation the extension
@@ -222,7 +223,8 @@ func (a *App) shadowConversations(w http.ResponseWriter, r *http.Request, tx pgx
 		-- record: a navigation closing the exchange carries none, and the thread still
 		-- has one. The value is a label the site displays, so no shape is assumed.
 		(array_agg(model ORDER BY occurred_at DESC,id DESC) FILTER (WHERE model<>''))[1] AS model,
-		(array_agg(effort ORDER BY occurred_at DESC,id DESC) FILTER (WHERE effort<>''))[1] AS effort
+		(array_agg(effort ORDER BY occurred_at DESC,id DESC) FILTER (WHERE effort<>''))[1] AS effort,
+		(array_agg(session ORDER BY occurred_at DESC,id DESC) FILTER (WHERE session<>''))[1] AS session
 		FROM keyed GROUP BY device_id,group_key
 		-- A group carrying no request and no response is a bare navigation: the fact
 		-- that a site was opened, not a conversation. Filtered in the aggregate, not
@@ -232,7 +234,7 @@ func (a *App) shadowConversations(w http.ResponseWriter, r *http.Request, tx pgx
 		-- 2026-09-14).
 		HAVING count(*) FILTER (WHERE kind IN ('prompt','response'))>0)
 	`
-	query := groups + `SELECT ` + shadowProjection + `,g.group_key,g.started_at,g.last_at,g.prompts,g.responses,g.navigations,g.blocked,g.redirected,coalesce(g.has_attachment,false),coalesce(g.model,''),coalesce(g.effort,'')
+	query := groups + `SELECT ` + shadowProjection + `,g.group_key,g.started_at,g.last_at,g.prompts,g.responses,g.navigations,g.blocked,g.redirected,coalesce(g.has_attachment,false),coalesce(g.model,''),coalesce(g.effort,''),coalesce(g.session,'')
 	FROM g JOIN shadow_events e ON e.device_id=g.device_id AND e.id=g.latest
 	JOIN devices d ON d.organization_id=e.organization_id AND d.id=e.device_id
 	LEFT JOIN collaborators c ON c.organization_id=e.organization_id AND c.id=e.collaborator_id` + cursorWhere +
@@ -245,7 +247,7 @@ func (a *App) shadowConversations(w http.ResponseWriter, r *http.Request, tx pgx
 	items := []ConversationView{}
 	for rows.Next() {
 		var v ConversationView
-		dest := append(shadowDest(&v.Latest), &v.Key, &v.StartedAt, &v.LastAt, &v.Prompts, &v.Responses, &v.Navigations, &v.Blocked, &v.Redirected, &v.HasAttachment, &v.Model, &v.Effort)
+		dest := append(shadowDest(&v.Latest), &v.Key, &v.StartedAt, &v.LastAt, &v.Prompts, &v.Responses, &v.Navigations, &v.Blocked, &v.Redirected, &v.HasAttachment, &v.Model, &v.Effort, &v.Session)
 		if e = rows.Scan(dest...); e != nil {
 			return e
 		}

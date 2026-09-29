@@ -60,6 +60,18 @@
           "host": "chatgpt.com",
           "path": "/unauth-mweb/image-uploads/process",
           "kind": "file"
+        },
+        {
+          "method": "POST",
+          "host": "chatgpt.com",
+          "path": "/backend-anon/files",
+          "kind": "file"
+        },
+        {
+          "method": "POST",
+          "host": "chatgpt.com",
+          "path": "/backend-anon/files/process_upload_stream",
+          "kind": "file"
         }
       ],
       "qualified_at": "2026-09-11T00:00:00Z"

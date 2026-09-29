@@ -41,10 +41,9 @@ export function DiscoveryPage() {
   const catalog = useResource<PublishedCatalog>("/api/detection/catalog");
   const mutation = useMutation();
   const frozen = readOnly(session);
-  // Which machines reached a platform or a candidate domain is Enterprise's answer:
-  // the two routes exist only there, so Community keeps plain text rather than a
-  // control that would answer 404.
-  const [inspected, setInspected] = useState<{ title: string; path: string } | null>(null);
+  // Which machines reached a known platform is answered in both editions . Which reached a candidate domain stays Enterprise's answer: that route
+  // exists only there, so Community keeps plain text rather than a control answering 404.
+  const [inspected, setInspected] = useState<{ title: string; path: string; platform: boolean } | null>(null);
   const inventoried = session.edition === "commercial";
   // Read from the resource rather than from inside ResourceView: its children unmount on
   // every reload, and the page a reader had reached would go with them.
@@ -60,17 +59,15 @@ export function DiscoveryPage() {
         Which machine and which OS account are behind a visit are read through
         Conversations, where identities stay under the organization's pseudonymisation. */}
     <Card title={t("knownPlatforms")} actions={data.platforms?.length ? <div className="heading-controls"><span className="muted">{t("resultsCount", [data.platforms.length])}</span><PageSize value={platforms.size} label={t("perPage")} change={platforms.resize} /></div> : undefined}>
-      <Notice>{t("knownPlatformsNotice")}{session.edition === "commercial" ? " " + t("knownPlatformsEnterprise") : ""}</Notice>
+      <Notice>{t("knownPlatformsNotice")} {t("knownPlatformsEnterprise")}</Notice>
       {data.platforms?.length
         ? <><div className="table-scroll"><table className="privacy-table">
-          <thead><tr><th>{t("service")}</th><th>{t("visits")}</th><th>{t("devices")}</th>{session.edition === "commercial" && <th>{t("osAccounts")}</th>}<th>{t("lastSeen")}</th></tr></thead>
+          <thead><tr><th>{t("service")}</th><th>{t("visits")}</th><th>{t("devices")}</th><th>{t("osAccounts")}</th><th>{t("lastSeen")}</th></tr></thead>
           <tbody>{platforms.rows.map(platform => <tr key={platform.provider}>
-            <td>{inventoried
-              ? <button type="button" className="text-link" title={t("reachedByDevices")} onClick={() => setInspected({ title: platform.provider, path: `/api/detection/platforms/${encodeURIComponent(platform.provider)}/devices` })}><strong>{platform.provider}</strong></button>
-              : <strong>{platform.provider}</strong>}</td>
+            <td><button type="button" className="text-link" title={t("reachedByDevices")} onClick={() => setInspected({ title: platform.provider, path: `/api/detection/platforms/${encodeURIComponent(platform.provider)}/devices`, platform: true })}><strong>{platform.provider}</strong></button></td>
             <td>{platform.visits}</td>
             <td>{platform.devices}</td>
-            {session.edition === "commercial" && <td>{platform.accounts}</td>}
+            <td>{platform.accounts}</td>
             <td><DateValue value={platform.last_seen} /></td>
           </tr>)}</tbody>
         </table></div>
@@ -84,7 +81,7 @@ export function DiscoveryPage() {
         <thead><tr><th>{t("domain")}</th><th>{t("detectionObservations")}</th><th>{t("actions")}</th></tr></thead>
         <tbody>{domains.rows.map(row => <tr key={row.domain}>
           <td>{inventoried
-            ? <button type="button" className="text-link" title={t("reachedByDevices")} onClick={() => setInspected({ title: row.domain, path: `/api/detection/candidates/${encodeURIComponent(row.domain)}/devices` })}>{row.domain}</button>
+            ? <button type="button" className="text-link" title={t("reachedByDevices")} onClick={() => setInspected({ title: row.domain, path: `/api/detection/candidates/${encodeURIComponent(row.domain)}/devices`, platform: false })}>{row.domain}</button>
             : row.domain}</td>
           <td>{row.count}</td>
           {/* A demo instance shows the discovered domains and does not
@@ -101,7 +98,7 @@ export function DiscoveryPage() {
       // organization turned it on, and nothing else on this page would say so.
       : <Empty title={t("discoveryNoCandidates")}><a className="text-link" href="#shadow">{t("discoveryDisabledHint")}</a></Empty>}
     </Card>
-    {inspected && <ReachedByDialog title={inspected.title} path={inspected.path} close={() => setInspected(null)} />}
+    {inspected && <ReachedByDialog title={inspected.title} path={inspected.path} platform={inspected.platform} close={() => setInspected(null)} />}
   </>}</ResourceView>;
 }
 
@@ -113,7 +110,7 @@ export function DiscoveryPage() {
  * its presence events. One dialog, two routes, because a reader asking "who reached
  * this" does not care which table holds the answer.
  */
-function ReachedByDialog({ title, path, close }: Readonly<{ title: string; path: string; close: () => void }>) {
+function ReachedByDialog({ title, path, platform, close }: Readonly<{ title: string; path: string; platform: boolean; close: () => void }>) {
   const t = useText();
   const devices = useResource<CandidateDevices>(path);
   // A platform reached by an entire fleet yields hundreds of rows: the
@@ -126,7 +123,9 @@ function ReachedByDialog({ title, path, close }: Readonly<{ title: string; path:
   const paged = usePaged(items);
   return <Dialog title={title} close={close} side="list">
     <ResourceView resource={devices}>{data => <div className="dialog-body">
-      <Notice>{t("candidateDevicesWindow", [data.window_days])}</Notice>
+      {/* A platform counts presence events, kept for the organization's retention; a
+          candidate domain counts detector reports, purged at thirty days. */}
+      <Notice>{t(platform ? "platformDevicesWindow" : "candidateDevicesWindow", [data.window_days])}</Notice>
       {data.items.length ? <>
         <div className="dialog-toolbar">
           <label className="dialog-search"><Icon name="search" /><input type="search" value={query} onChange={event => setQuery(event.target.value)} aria-label={t("candidateDevicesSearch")} placeholder={t("candidateDevicesSearchPlaceholder")} maxLength={100} /></label>

@@ -183,7 +183,7 @@ const osAccountLimit = 500
 
 var osActorPattern = regexp.MustCompile(`^os:[0-9a-f]{64}$`)
 
-const shadowProjection = `e.id,e.kind,e.occurred_at,e.provider,e.source,e.tool,e.model,e.effort,e.conversation_id,e.correlation_id,e.url,e.action,e.platform_id,e.decision_reason,e.characters,e.labels,e.policy_revision,e.device_id,d.hostname,d.hostname_ciphertext,coalesce(e.collaborator_id::text,'unknown'),coalesce(c.alias,'Unattributed'),e.sensitivity,e.files,e."user",e.detector,e.catalog_revision,e.input_tokens,e.output_tokens,e.body_bytes,e.characters_known,EXISTS(SELECT 1 FROM shadow_content sc WHERE sc.organization_id=e.organization_id AND sc.device_id=e.device_id AND sc.event_id=e.id AND sc.expires_at>now()),` + actorBucket
+const shadowProjection = `e.id,e.kind,e.occurred_at,e.provider,e.source,e.tool,e.model,e.effort,e.session,e.conversation_id,e.correlation_id,e.url,e.action,e.platform_id,e.decision_reason,e.characters,e.labels,e.policy_revision,e.device_id,d.hostname,d.hostname_ciphertext,coalesce(e.collaborator_id::text,'unknown'),coalesce(c.alias,'Unattributed'),e.sensitivity,e.files,e."user",e.detector,e.catalog_revision,e.input_tokens,e.output_tokens,e.body_bytes,e.characters_known,EXISTS(SELECT 1 FROM shadow_content sc WHERE sc.organization_id=e.organization_id AND sc.device_id=e.device_id AND sc.event_id=e.id AND sc.expires_at>now()),` + actorBucket
 
 // A submission accompanied by a file leaves TWO records under the same correlation: the
 // file leaves for the provider as soon as it is attached, so it is recorded before the
@@ -247,7 +247,7 @@ func (v ShadowEventView) MarshalJSON() ([]byte, error) {
 // caller that selects extra columns after the projection appends its own
 // destinations to this slice rather than restating the thirty-odd of them.
 func shadowDest(v *ShadowEventView) []any {
-	return []any{&v.ID, &v.Kind, &v.OccurredAt, &v.Provider, &v.Source, &v.Tool, &v.Model, &v.Effort, &v.ConversationID, &v.CorrelationID, &v.URL, &v.Action, &v.PlatformID, &v.DecisionReason, &v.Characters, &v.Labels, &v.PolicyRevision, &v.DeviceID, &v.Hostname, &v.HostnameCiphertext, &v.ActorID, &v.ActorName, &v.Sensitivity, &v.Files, &v.User, &v.Detector, &v.CatalogRevision, &v.InputTokens, &v.OutputTokens, &v.BodyBytes, &v.CharactersKnown, &v.HasContent, &v.AuditSubject}
+	return []any{&v.ID, &v.Kind, &v.OccurredAt, &v.Provider, &v.Source, &v.Tool, &v.Model, &v.Effort, &v.Session, &v.ConversationID, &v.CorrelationID, &v.URL, &v.Action, &v.PlatformID, &v.DecisionReason, &v.Characters, &v.Labels, &v.PolicyRevision, &v.DeviceID, &v.Hostname, &v.HostnameCiphertext, &v.ActorID, &v.ActorName, &v.Sensitivity, &v.Files, &v.User, &v.Detector, &v.CatalogRevision, &v.InputTokens, &v.OutputTokens, &v.BodyBytes, &v.CharactersKnown, &v.HasContent, &v.AuditSubject}
 }
 
 // finishShadow applies the edition rules every read path owes a scanned row.

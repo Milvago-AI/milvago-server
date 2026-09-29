@@ -73,20 +73,28 @@ type DetectionNetwork struct {
 	// file-upload block seals and observation ignores -- the observer would otherwise
 	// produce a zero-character request event.
 	Kind string `json:"kind,omitempty"`
-	// `omitempty` on both, like `conversation_url_segment` and for the same reason:
+	// The account state the route itself implies: "signed_out" for a send route only
+	// reachable without an account (anonymous ChatGPT's `/unauth-mweb/`), "signed_in"
+	// for one that requires it. A property of the measured route, never of the page.
+	Session string `json:"session,omitempty"`
+	// `omitempty` on all of these, like `conversation_url_segment` and for the same reason:
 	// `Network` refuses unknown fields on the agent side, so a catalogue that always
 	// carried them would be rejected outright by every earlier agent.
 }
 type DetectionProvider struct {
-	ID                  string             `json:"id"`
-	Label               string             `json:"label"`
-	Domains             []string           `json:"domains"`
-	Aliases             []string           `json:"aliases"`
-	ConversationPath    string             `json:"conversation_path"`
-	ConversationSegment int                `json:"conversation_segment"`
-	DOM                 DetectionDOM       `json:"dom"`
-	Network             []DetectionNetwork `json:"network"`
-	QualifiedAt         string             `json:"qualified_at"`
+	ID                  string   `json:"id"`
+	Label               string   `json:"label"`
+	Domains             []string `json:"domains"`
+	Aliases             []string `json:"aliases"`
+	ConversationPath    string   `json:"conversation_path"`
+	ConversationSegment int      `json:"conversation_segment"`
+	// Further page paths of a conversation, same segment: signed-out ChatGPT moves to
+	// `/uc/<id>` where an account uses `/c/<id>`. `omitempty` for the reason given on
+	// `Network`: only a catalogue that names one carries the key.
+	ConversationPaths []string           `json:"conversation_paths,omitempty"`
+	DOM               DetectionDOM       `json:"dom"`
+	Network           []DetectionNetwork `json:"network"`
+	QualifiedAt       string             `json:"qualified_at"`
 	// Hosts the provider's page is allowed to LOAD under content control, in addition
 	// to its own domain and subdomains: claude.ai serves its interface from
 	// `assets-proxy.anthropic.com`, a different registrable domain. Loaded, never
@@ -226,6 +234,14 @@ func validateDetectionProvider(p DetectionProvider, ids, domains, assetHosts map
 	if p.ConversationPath != "" && (!detectionPath.MatchString(p.ConversationPath) || strings.Count(p.ConversationPath, "*") > 8) {
 		return bad("Invalid conversation path.")
 	}
+	if len(p.ConversationPaths) > 4 {
+		return bad("Invalid conversation path.")
+	}
+	for _, path := range p.ConversationPaths {
+		if path == "" || !detectionPath.MatchString(path) || strings.Count(path, "*") > 8 {
+			return bad("Invalid conversation path.")
+		}
+	}
 	if e := validateProviderDomains(p, domains); e != nil {
 		return e
 	}
@@ -277,7 +293,7 @@ func validateProviderNetworkRule(p DetectionProvider, n DetectionNetwork) error 
 	if !slices.Contains([]string{"POST", "PUT"}, n.Method) || !domainPattern.MatchString(n.Host) || (!slices.Contains(p.Domains, n.Host) && !slices.Contains(p.Aliases, n.Host)) || !detectionPath.MatchString(n.Path) || strings.Count(n.Path, "*") > 8 || !validDetectionJSONPath(n.TextPath) || !validDetectionTextPaths(n.TextPaths) || !validDetectionJSONPath(n.ModelPath) || !validDetectionJSONPath(n.EffortPath) || !validDetectionJSONPath(n.ConversationPath) {
 		return bad("Invalid network rule.")
 	}
-	if !validDetectionJSONPath(n.FilesPath) || len(n.JSONFields) > 4 || !slices.Contains([]string{"", "prompt", "file"}, n.Kind) {
+	if !validDetectionJSONPath(n.FilesPath) || len(n.JSONFields) > 4 || !slices.Contains([]string{"", "prompt", "file"}, n.Kind) || !slices.Contains(eventSessions, n.Session) {
 		return bad("Invalid network rule.")
 	}
 	if e := validateNetworkJSONFields(n.JSONFields); e != nil {
@@ -1173,4 +1189,6 @@ func (a *App) registerDetectionRoutes() {
 	a.sessionOnly("PATCH /api/detection/candidates", permPolicyManage, a.updateCandidate)
 	a.console("GET /api/detection/platforms", permPolicyManage, a.knownPlatformInventory)
 	a.sessionOnly("PATCH /api/detection/platforms", permPolicyManage, a.updateKnownPlatform)
+	// Which machines reached a known platform: both editions.
+	a.console("GET /api/detection/platforms/{provider}/devices", permPolicyManage, a.knownPlatformDevices)
 }

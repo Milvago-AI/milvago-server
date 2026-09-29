@@ -72,19 +72,19 @@ describe('Discovery', () => {
     await waitFor(() => expect(screen.getAllByRole('button', { name: 'Marquer le candidat publié comme promu' })).toHaveLength(1));
     expect(screen.getAllByRole('button', { name: 'Ignorer' })).toHaveLength(2);
   });
-  it('reports the known platforms reached, and names the OS accounts column only in Enterprise', async () => {
+  // Both editions keep the OS account of a visit and count it.
+  it('reports the known platforms reached with their OS accounts, in both editions', async () => {
     window.location.hash = '#discovery';
     const platforms = { items: [], platforms: [{ provider: 'aggregator.example.invalid', visits: 12, devices: 3, accounts: 2, last_seen: '2026-09-16T09:00:00Z' }] };
-    serve(base, { '/api/settings': settings, '/api/detection/catalog': catalog, '/api/detection/candidates': platforms });
-    const { unmount } = render(<App />);
-    expect(await screen.findByText('aggregator.example.invalid')).toBeInTheDocument();
-    // The promise the card makes, in the reader's own language.
-    expect(screen.getByText(/Aucun prompt, aucune réponse, aucune adresse/)).toBeInTheDocument();
-    expect(screen.queryByRole('columnheader', { name: 'Comptes OS' })).not.toBeInTheDocument();
-    unmount();
-    serve({ ...base, edition: 'commercial' }, { '/api/settings': settings, '/api/detection/catalog': catalog, '/api/detection/candidates': platforms });
-    render(<App />);
-    expect(await screen.findByRole('columnheader', { name: 'Comptes OS' })).toBeInTheDocument();
+    for (const session of [base, { ...base, edition: 'commercial' as const }]) {
+      serve(session, { '/api/settings': settings, '/api/detection/catalog': catalog, '/api/detection/candidates': platforms });
+      const { unmount } = render(<App />);
+      expect(await screen.findByText('aggregator.example.invalid')).toBeInTheDocument();
+      // The promise the card makes, in the reader's own language.
+      expect(screen.getByText(/Aucun prompt, aucune réponse, aucune adresse/)).toBeInTheDocument();
+      expect(screen.getByRole('columnheader', { name: 'Comptes OS' })).toBeInTheDocument();
+      unmount();
+    }
   });
   it('names the machines behind a candidate domain, in Enterprise only', async () => {
     window.location.hash = '#discovery';
@@ -109,26 +109,26 @@ describe('Discovery', () => {
     expect(await screen.findByRole('link', { name: 'LT-ENG-1042' })).toHaveAttribute('href', '#devices?id=10000000-0000-4000-8000-000000000001');
     expect(screen.getByText(/30 derniers jours/)).toBeInTheDocument();
   });
-  it('names the machines behind a platform reached, in Enterprise only', async () => {
+  // Both editions name the machines behind a platform reached.
+  it('names the machines behind a platform reached, in both editions', async () => {
     window.location.hash = '#discovery';
     const platforms = { items: [], platforms: [{ provider: 'aggregator.example.invalid', visits: 12, devices: 3, accounts: 2, last_seen: '2026-09-16T09:00:00Z' }] };
     const devices = { window_days: 90, items: [{ device_id: '20000000-0000-4000-8000-000000000002', hostname: 'LT-FIN-2051', observations: 12, last_seen: '2026-09-16T09:00:00Z' }] };
-    // Community reports the platform and nothing about who reached it.
-    serve(base, { '/api/settings': settings, '/api/detection/catalog': catalog, '/api/detection/candidates': platforms });
-    const { unmount } = render(<App />);
-    expect(await screen.findByText('aggregator.example.invalid')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'aggregator.example.invalid' })).not.toBeInTheDocument();
-    unmount();
-    serve({ ...base, edition: 'commercial' }, {
-      '/api/settings': settings, '/api/detection/catalog': catalog,
-      '/api/detection/platforms/aggregator.example.invalid/devices': devices,
-      '/api/detection/candidates': platforms,
-    });
-    render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: 'aggregator.example.invalid' }));
-    expect(await screen.findByRole('link', { name: 'LT-FIN-2051' })).toHaveAttribute('href', '#devices?id=20000000-0000-4000-8000-000000000002');
-    // The announced window is the organization's retention, not a fixed number.
-    expect(screen.getByText(/90 derniers jours/)).toBeInTheDocument();
+    for (const session of [base, { ...base, edition: 'commercial' as const }]) {
+      serve(session, {
+        '/api/settings': settings, '/api/detection/catalog': catalog,
+        '/api/detection/platforms/aggregator.example.invalid/devices': devices,
+        '/api/detection/candidates': platforms,
+      });
+      const { unmount } = render(<App />);
+      fireEvent.click(await screen.findByRole('button', { name: 'aggregator.example.invalid' }));
+      expect(await screen.findByRole('link', { name: 'LT-FIN-2051' })).toHaveAttribute('href', '#devices?id=20000000-0000-4000-8000-000000000002');
+      // The announced window is the organization's retention, not a fixed number, and
+      // not the detector purge that bounds a candidate domain.
+      expect(screen.getByText(/90 derniers jours, durée de conservation des événements/)).toBeInTheDocument();
+      expect(screen.queryByText(/relevés du détecteur/)).not.toBeInTheDocument();
+      unmount();
+    }
   });
   it('pages and filters the machines behind a platform, in the dialog itself', async () => {
     window.location.hash = '#discovery';

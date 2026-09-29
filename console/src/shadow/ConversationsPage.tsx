@@ -50,7 +50,14 @@ export function ConversationsPage() {
   // reveal expires and the list comes back aliased, the dialog does not keep the name.
   useEffect(() => { setOpen(current => current && resource.data?.items.find(item => item.key === current.key)); }, [resource.data]);
   function change(next: Criteria) { setCriteria(next); setPage(1); location.hash = conversationsLink(next); }
-  return <><PageBar title={t("conversations")} actions={<><ExportMenu criteria={criteria} /><RefreshButton onClick={resource.reload} /></>} info={t("aConversationGroupsTheRecordsOf")} /><Card><FilterBar criteria={criteria} change={change} /><SavedFilters criteria={criteria} apply={change} /></Card>{correctingPage ? <Loading /> : <ResourceView resource={resource}>{data => <section className="panel table-panel"><div className="section-heading"><h2>{t("conversations")}</h2><div className="heading-controls"><span className="muted">{t("resultsCount", [total])}</span><PageSize value={size} label={t("perPage")} change={value => { setSize(value); setPage(1); }} /></div></div>{data.items.length ? <div className="table-scroll"><table><thead><tr>{[t("toolService"), t("model"), t("device"), t("person"), t("lastActivity"), t("messages"), t("attachedFiles"), t("action"), ...(sensitivity ? [t("sensitivity")] : [])].map(label => <th key={label}>{label}</th>)}</tr></thead><tbody>{data.items.map(item => <ConversationRow key={item.key} item={item} sensitivity={sensitivity} open={() => setOpen(item)} />)}</tbody></table></div> : <Empty title={t("noConversationsMatchTheseFilters")}>{t("expandThePeriodOrRemoveA")}</Empty>}<PageNumbers page={currentPage} pages={pages} go={setPage} label={t("pagination")} /></section>}</ResourceView>}<p className="fine-print">{t("exportsContainMetadataMatchingTheExact")}</p>{open && <ConversationDialog conversation={open} close={() => setOpen(undefined)} />}</>;
+  return <><PageBar title={t("conversations")} actions={<><ExportMenu criteria={criteria} /><RefreshButton onClick={resource.reload} /></>} info={t("aConversationGroupsTheRecordsOf")} /><Card><FilterBar criteria={criteria} change={change} /><SavedFilters criteria={criteria} apply={change} /></Card>{correctingPage ? <Loading /> : <ResourceView resource={resource}>{data => <section className="panel table-panel"><div className="section-heading"><h2>{t("conversations")}</h2><div className="heading-controls"><span className="muted">{t("resultsCount", [total])}</span><PageSize value={size} label={t("perPage")} change={value => { setSize(value); setPage(1); }} /></div></div>{data.items.length ? <div className="table-scroll"><table><thead><tr>{[t("toolService"), t("model"), t("device"), t("person"), t("lastActivity"), t("messages"), t("attachedFiles"), t("action"), ...(sensitivity ? [t("sensitivity")] : [])].map(label => <th key={label}>{label}</th>)}</tr></thead><tbody>{data.items.map(item => <ConversationRow key={item.key} item={item} sensitivity={sensitivity} open={() => setOpen(item)} />)}</tbody></table></div> : <Empty title={t("noConversationsMatchTheseFilters")}>{t("expandThePeriodOrRemoveA")}</Empty>}<PageNumbers page={currentPage} pages={pages} go={setPage} label={t("pagination")} /></section>}</ResourceView>}<p className="fine-print conversations-export-note">{t("exportsContainMetadataMatchingTheExact")}</p>{open && <ConversationDialog conversation={open} close={() => setOpen(undefined)} />}</>;
+}
+
+// Signed-out services name no model: the tag says why the model is missing instead of
+// leaving an "unknown" that reads like a capture failure.
+function FreeTier({ session }: Readonly<{ session?: string }>) {
+  const t = useText();
+  return session === 'signed_out' ? <span title={t("signedOutModelHidden")}> <Badge>{t("freeTier")}</Badge></span> : null;
 }
 
 // The whole row opens the conversation, which is what a reader expects of a list
@@ -63,7 +70,7 @@ function ConversationRow({ item, sensitivity, open }: Readonly<{ item: Conversat
   if (item.redirected) action = <Badge tone="warning">{t("nRedirected", [String(item.redirected)])}</Badge>;
   if (item.blocked) action = <Badge tone="danger">{t("nBlocked", [String(item.blocked)])}</Badge>;
   return <tr className="conversation-row" onClick={open}><td><button type="button" className="row-open" onClick={click => { click.stopPropagation(); open(); }}>{event.provider}<span className="sr-only"> · {t("openTheConversation")} {item.key}</span></button><span className="cell-detail">{event.tool || t("unknown2")}</span></td>
-    <td>{item.model || <span className="muted">{t("unknown2")}</span>}{item.effort ? <span className="cell-detail">{t("effort")} : {item.effort}</span> : null}</td>
+    <td>{item.model || <span className="muted">{t("unknown2")}</span>}<FreeTier session={item.session} />{item.effort ? <span className="cell-detail">{t("effort")} : {item.effort}</span> : null}</td>
     <td><strong>{event.hostname || t("machineNameUnavailable")}</strong><span className="cell-detail mono" title={event.device_id}>{event.device_id.slice(0, 8)}</span></td>
     <td><Person event={event} /></td>
     <td className="nowrap"><DateValue value={item.last_at} /><span className="cell-detail">{t("startedAt")} <DateValue value={item.started_at} /></span></td>
@@ -105,8 +112,9 @@ function ConversationDialog({ conversation, close }: Readonly<{ conversation: Co
         <dl className="dl">
           <dt>{t("person")}</dt><dd><Person event={event} /></dd>
           <dt>{t("toolService")}</dt><dd>{event.tool || t("unknown2")}</dd>
-          <dt>{t("model")}</dt><dd>{conversation.model || <span className="muted">{t("unknown2")}</span>}</dd>
+          <dt>{t("model")}</dt><dd>{conversation.model || <span className="muted">{t("unknown2")}</span>}<FreeTier session={conversation.session} /></dd>
           {conversation.effort ? <><dt>{t("effort")}</dt><dd>{conversation.effort}</dd></> : null}
+          {conversation.session ? <><dt>{t("accountSession")}</dt><dd>{conversation.session === 'signed_out' ? t("signedOut") : t("signedIn")}</dd></> : null}
           <dt>{t("startedAt")}</dt><dd><DateValue value={conversation.started_at} /></dd>
           <dt>{t("lastActivity")}</dt><dd><DateValue value={conversation.last_at} /></dd>
           <dt>{t("messages")}</dt><dd>{exchanged === 1 ? t("oneMessage") : t("nMessages", [String(exchanged)])}</dd>
@@ -211,6 +219,7 @@ function Message({ message, open }: Readonly<{ message: ThreadMessage; open: () 
       <p className="bubble-meta">
         <DateValue value={message.occurred_at} />
         {message.model ? <span>{message.model}</span> : null}
+        <FreeTier session={message.session} />
         {message.action !== 'observed' ? <Status value={message.action} /> : null}
         <button type="button" className="icon-button" onClick={open} aria-label={`${t("messageDetail")} ${message.id}`}><Icon name="chevron-right" /></button>
       </p>

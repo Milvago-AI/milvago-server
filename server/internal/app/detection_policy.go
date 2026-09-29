@@ -185,10 +185,10 @@ func (b *detectionEventBatch) catalog(ctx context.Context, tx pgx.Tx, revision i
 // attached a URL, a prompt or a conversation identifier to a presence record must not
 // succeed in having it stored.
 //
-// The OS account is the one exception, and it is the edition boundary. Enterprise keeps
-// it -- the agent stamps the account behind the browser connection, so the record says
-// which person was signed in at the time rather than who is signed in now. Community
-// reports the platform alone.
+// The OS account is the one exception, in both editions: the agent stamps the account
+// behind the browser connection, so the record says which person was signed in at the
+// time rather than who is signed in now. It stays under the organization's
+// pseudonymisation like every other record's account.
 func reducedToPresence(v *V2Event) {
 	v.Detector = "presence"
 	v.URL = ""
@@ -196,6 +196,7 @@ func reducedToPresence(v *V2Event) {
 	v.CorrelationID = ""
 	v.Model = ""
 	v.Effort = ""
+	v.Session = ""
 	v.Characters = 0
 	v.Labels = nil
 	v.Files = nil
@@ -203,7 +204,4 @@ func reducedToPresence(v *V2Event) {
 	v.Response = nil
 	v.PlatformID = ""
 	v.DecisionReason = ""
-	if Edition != "commercial" {
-		v.User = ""
-	}
 }

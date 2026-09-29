@@ -120,14 +120,10 @@ func TestPresenceRecordIsReducedWhateverTheEndpointSent(t *testing.T) {
 	if v.Detector != "presence" {
 		t.Fatal("the record must describe how it was seen")
 	}
-	// The edition boundary: Enterprise keeps the OS account the agent stamped, so the
-	// record says who was signed in at the time; Community reports the platform alone.
-	if Edition == "commercial" {
-		if v.User != "an-os-account" {
-			t.Fatal("Enterprise must keep the OS account behind the visit")
-		}
-	} else if v.User != "" {
-		t.Fatal("Community must report the platform alone")
+	// Both editions keep the OS account the agent stamped, so the record says who was
+	// signed in at the time.
+	if v.User != "an-os-account" {
+		t.Fatal("the OS account behind the visit must be kept")
 	}
 }
 

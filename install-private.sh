@@ -443,10 +443,10 @@ import { join } from 'node:path';
 
 const root = '/work';
 const target = join(root, '.local/installers');
-const expectedArchive = '2dfeaf2ab76e6641079cba47c3aff14c676c44c3e31e5964a521790b249dbb0e';
+const expectedArchive = 'a7af04372d0416cc0b0a5ebf0eef2e04965d5f494232a41b5192d94befad1da7';
 const expected = {
-  windows: { name: 'milvago-community-0.6.0-windows.msi', size: 5840896, sha256: 'fd934b47d035ca3fb6ac09d8a75c5ec18c5fffe6c33d21dd9598f4006aab3ff3', format: 'msi', script: { name: 'milvago-community-0.6.0-windows-install.ps1', size: 3455, sha256: '8ab45dee9da768c4a4420072464598e5152f1120fedcd28b09cf6990f621e7c0' } },
-  linux: { name: 'milvago-community-0.6.0-linux.tar.gz', size: 5549545, sha256: '17670fee945e450213714af120312c6149cc8ded123071689f18a38840018b2c', format: 'binary' },
+  windows: { name: 'milvago-community-0.6.1-windows.msi', size: 5840896, sha256: '1344ac10fb314fc742ccad849d5057805fd5321e100bb3290df0385d3704aad2', format: 'msi', script: { name: 'milvago-community-0.6.1-windows-install.ps1', size: 3455, sha256: 'f0927d22e45b6e826290f0d006c24ea915532652301054e852ad2c8bb3385679' } },
+  linux: { name: 'milvago-community-0.6.1-linux.tar.gz', size: 5558762, sha256: '79bb23ad356d276bcd9bee68f3837a9255ada955ce951e9ecac40e927e4a517f', format: 'binary' },
 };
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const requireValue = (condition, message) => { if (!condition) throw Error(message); };
@@ -454,7 +454,7 @@ let stage;
 try {
   const token = readFileSync(0, 'utf8').trim();
   requireValue(/^[A-Za-z0-9_]+$/.test(token), 'GitHub token is missing');
-  const response = await fetch('https://api.github.com/repos/Milvago-AI/milvago-agent/releases/assets/596326648', {
+  const response = await fetch('https://api.github.com/repos/Milvago-AI/milvago-agent/releases/assets/597260568', {
     headers: { Authorization: 'Bearer ' + token, Accept: 'application/octet-stream', 'X-GitHub-Api-Version': '2022-11-28' },
     redirect: 'manual',
   });
@@ -493,11 +493,11 @@ try {
     const payload = Buffer.from(envelope.payload, 'base64');
     const release = JSON.parse(payload);
     requireValue(artifact.length === item.size && digest(artifact) === item.sha256 &&
-      manifest.version === '0.6.0' && manifest.artifact === item.name &&
+      manifest.version === '0.6.1' && manifest.artifact === item.name &&
       manifest.size === item.size && manifest.sha256 === item.sha256,
       'Community ' + platform + ' artifact verification failed');
     requireValue(verify(null, payload, key, Buffer.from(envelope.signature, 'base64')) &&
-      release.version === '0.6.0' && release.edition === 'community' && release.platform === platform &&
+      release.version === '0.6.1' && release.edition === 'community' && release.platform === platform &&
       release.format === item.format && release.sha256 === item.sha256 && release.size === item.size &&
       Date.parse(release.expires_at) > Date.now(),
       'Community ' + platform + ' update signature or release has expired');
@@ -520,7 +520,7 @@ try {
     chmodSync(next, 0o644);
     renameSync(next, join(target, name));
   }
-  console.log('Verified Community agent 0.6.0 for Windows and Linux.');
+  console.log('Verified Community agent 0.6.1 for Windows and Linux.');
 } catch (error) {
   console.error('Error: ' + error.message);
   process.exitCode = 1;

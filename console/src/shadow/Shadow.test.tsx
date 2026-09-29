@@ -245,6 +245,24 @@ describe('Shadow AI workflows', () => {
     fireEvent.click(row);
     expect(await screen.findByRole('button', { name: 'PROMPT CACHÉ · texte non conservé' })).toBeInTheDocument();
   });
+  // Signed-out ChatGPT names no model (measured 2026-09-29): the row says it is the free
+  // tier rather than leaving an unknown model that reads like a capture failure.
+  it('tags a signed-out conversation as the free tier and names the account state', async () => {
+    const signedOut: Conversation = { ...conversation, key: 'conv:free-1', model: '', effort: '', session: 'signed_out' };
+    serve(url => url.startsWith('/api/shadow/conversations?') ? reply({ items: [signedOut], next_cursor: null }) : url.startsWith('/api/shadow/conversation?') ? reply(thread([], '', false)) : undefined);
+    show(<ConversationsPage />);
+    const row = (await screen.findByText('Poste de test')).closest('tr')!;
+    expect(within(row).getByText('Non déterminé')).toBeInTheDocument();
+    expect(within(row).getByText('GRATUIT')).toBeInTheDocument();
+    fireEvent.click(row);
+    expect(await screen.findByText('Déconnecté')).toBeInTheDocument();
+  });
+  it('does not tag a signed-in conversation as free', async () => {
+    conversations(() => undefined);
+    show(<ConversationsPage />);
+    const row = (await screen.findByText('Poste de test')).closest('tr')!;
+    expect(within(row).queryByText('GRATUIT')).not.toBeInTheDocument();
+  });
   it('names the reason a message carries no readable text', async () => {
     conversations(url => url.startsWith('/api/shadow/conversation?') ? reply(thread([
       message(older, 'denied'), message(event, 'not_retained'), message(response, 'identity'),
@@ -406,6 +424,31 @@ describe('Shadow AI workflows', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('Configuration enregistrée.'); const call = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT')!; expect(JSON.parse(String(call[1]!.body))).toMatchObject({ revision: 5, config: { services: [{ id: 'chatgpt', mode: 'redirect', redirect_url: 'https://ai.example.org' }] } });
   });
 
+  // Community covers two services: Services says what Enterprise adds, as information,
+  // never as greyed-out services. Enterprise shows no offer.
+  it('offers Enterprise under Services in Community only', async () => {
+    serve(url => url === '/api/shadow/settings' ? reply(settings) : undefined);
+    const community = show(<ShadowAdministration />); const user = userEvent.setup();
+    await screen.findByRole('checkbox', { name: 'Activer la collecte' });
+    await user.click(screen.getByRole('button', { name: 'Services' }));
+    expect(screen.getByText('Couvrez davantage de services d’IA avec Milvago Enterprise')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Découvrir Enterprise' })).toHaveAttribute('href', 'https://www.milvago.ai');
+    community.unmount();
+    show(<ShadowAdministration />, { ...session, edition: 'commercial' });
+    await screen.findByRole('checkbox', { name: 'Activer la collecte' });
+    await user.click(screen.getByRole('button', { name: 'Services' }));
+    expect(screen.queryByText('Couvrez davantage de services d’IA avec Milvago Enterprise')).not.toBeInTheDocument();
+  });
+  // The purge deletes retained request and response text: it sits beside the setting that
+  // retains it, and not under local masking, which has nothing to do with it.
+  it('places the purge of retained text beside the retention setting', async () => {
+    serve(url => url === '/api/shadow/settings' ? reply(settings) : undefined);
+    show(<ShadowAdministration />, { ...session, permissions: [...session.permissions, 'content.purge'] }); const user = userEvent.setup();
+    await screen.findByRole('checkbox', { name: 'Activer la collecte' });
+    expect(screen.getByRole('heading', { name: 'Supprimer les contenus conservés' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Masquage local/ }));
+    expect(screen.queryByRole('heading', { name: 'Supprimer les contenus conservés' })).not.toBeInTheDocument();
+  });
   // Product decision of 2026-09-16: a label that its own expression matches is refused --
   // the `[LABEL]` placeholder inserted into the masked text would itself be masked again, endlessly. The
   // console explains it and withholds the save; the server refuses on its side.

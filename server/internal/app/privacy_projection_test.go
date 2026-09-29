@@ -216,7 +216,7 @@ func (p *projectionFixture) routes() []projectionRoute {
 		{pattern: "GET /api/detection/candidates", path: "/api/detection/candidates", expect: 200},
 		{pattern: "PATCH /api/detection/candidates", exempt: "mutation"},
 		{pattern: "GET /api/detection/candidates/{domain}/devices", exempt: "names the machines behind a candidate domain by design, under the same machineName projection as /api/devices; gates covered by TestCandidateDomainDevices", optional: true},
-		{pattern: "GET /api/detection/platforms/{provider}/devices", exempt: "names the machines behind a known platform by design, same projection and same gates; covered by TestKnownPlatformDevices", optional: true},
+		{pattern: "GET /api/detection/platforms/{provider}/devices", exempt: "names the machines behind a known platform by design, same projection and same gates; covered by TestKnownPlatformDevices"},
 		{pattern: "GET /api/detection/platforms", path: "/api/detection/platforms", expect: 200},
 		{pattern: "PATCH /api/detection/platforms", exempt: "mutation"},
 		{pattern: "GET /api/privacy", path: "/api/privacy", expect: 200},

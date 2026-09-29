@@ -153,6 +153,12 @@ func applyShadowDatabaseSchema(ctx context.Context, tx pgx.Tx, c Config) error {
 	if _, e = tx.Exec(ctx, `ALTER TABLE shadow_events ADD COLUMN IF NOT EXISTS effort text NOT NULL DEFAULT ''`); e != nil {
 		return e
 	}
+	// Signed in or signed out, as the catalogue states for the observed send route. Its
+	// own column because signed-out ChatGPT names no model at all: without it a free
+	// anonymous exchange reads like an account whose model is unknown.
+	if _, e = tx.Exec(ctx, `ALTER TABLE shadow_events ADD COLUMN IF NOT EXISTS session text NOT NULL DEFAULT ''`); e != nil {
+		return e
+	}
 	// Conversation reading groups records by thread and recovers the opening
 	// prompt, which carries no conversation identifier, through its correlation.
 	// Both indexes are partial: the empty string is the common case and indexing

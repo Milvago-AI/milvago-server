@@ -14,6 +14,7 @@
 .saved-filter-manage>div{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:12px 0;border-top:1px solid var(--border);font-size:13px}
 
 /* ---------- Export control ---------- */
+.fine-print.conversations-export-note{max-width:none}
 .export-control{display:flex;gap:8px;align-items:center;position:relative}
 .export-control select{width:96px}
 .export-control>.notice{position:absolute;right:0;top:44px;min-width:280px;z-index:5;box-shadow:var(--shadow)}
