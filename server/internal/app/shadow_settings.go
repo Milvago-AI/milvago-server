@@ -89,15 +89,17 @@ type OperationsConfig struct {
 	Updates        UpdateConfig        `json:"updates"`
 }
 type ShadowConfig struct {
-	Discovery      DiscoveryConfig      `json:"discovery"`
-	ModelAccess    []ModelAccessRule    `json:"model_access"`
-	Enrollment     EnrollmentConfig     `json:"enrollment"`
-	Collection     CollectionConfig     `json:"collection"`
-	Services       []ServiceConfig      `json:"services"`
-	Protection     ProtectionConfig     `json:"protection"`
-	Privacy        PrivacyConfig        `json:"privacy"`
-	Classification ClassificationConfig `json:"classification"`
-	Operations     OperationsConfig     `json:"operations"`
+	Discovery DiscoveryConfig `json:"discovery"`
+	// Enterprise only, derived from blocked_platforms on every read (enrichDetectionPolicy).
+	BlockedPlatforms []BlockedPlatform    `json:"blocked_platforms,omitempty"`
+	ModelAccess      []ModelAccessRule    `json:"model_access"`
+	Enrollment       EnrollmentConfig     `json:"enrollment"`
+	Collection       CollectionConfig     `json:"collection"`
+	Services         []ServiceConfig      `json:"services"`
+	Protection       ProtectionConfig     `json:"protection"`
+	Privacy          PrivacyConfig        `json:"privacy"`
+	Classification   ClassificationConfig `json:"classification"`
+	Operations       OperationsConfig     `json:"operations"`
 }
 type InheritedFrom struct {
 	OrganizationID string `json:"organization_id,omitempty"`
@@ -423,9 +425,9 @@ func overlayShadow(base ShadowConfig, sections map[string]json.RawMessage) (Shad
 	var m map[string]json.RawMessage
 	_ = json.Unmarshal(raw, &m)
 	for k, v := range sections {
-		if k == "discovery" {
+		if k == "discovery" || k == "blocked_platforms" {
 			continue
-		} // Derived exclusively from effective privacy settings.
+		} // Derived on every read: privacy settings, and the blocked_platforms table.
 		if !slices.Contains(shadowSections, k) {
 			return base, bad("Unknown configuration section.")
 		}
@@ -442,14 +444,7 @@ func overlayShadow(base ShadowConfig, sections map[string]json.RawMessage) (Shad
 	if base.Classification.MedicalTerms == nil {
 		base.Classification.MedicalTerms = defaultMedicalTerms()
 	}
-	if base.ModelAccess == nil {
-		base.ModelAccess = []ModelAccessRule{}
-	}
-	for i := range base.ModelAccess {
-		if base.ModelAccess[i].Models == nil {
-			base.ModelAccess[i].Models = []string{}
-		}
-	}
+	normalizeShadowModelAccess(&base)
 	return base, nil
 }
 func copyShadowSection(dst *ShadowConfig, src ShadowConfig, section string) {
@@ -506,29 +501,29 @@ func (a *App) readShadow(ctx context.Context, tx pgx.Tx, org string, depth int) 
 }
 
 func (a *App) readInheritedShadow(ctx context.Context, tx pgx.Tx, org string, depth int, out *ShadowSettings) error {
-	if Edition == "commercial" {
-		var parent *string
-		var name string
-		if e := tx.QueryRow(ctx, `SELECT parent_id FROM organizations WHERE id=$1`, org).Scan(&parent); e != nil {
-			return e
-		}
-		out.Capabilities["organization_inheritance"] = parent != nil
-		if parent != nil && len(out.InheritSections) > 0 {
-			p, parentName, e := a.readParentShadow(ctx, tx, org, *parent, depth+1)
-			if e != nil {
-				return e
-			}
-			name = parentName
-			for _, s := range out.InheritSections {
-				copyShadowSection(&out.Config, p.Config, s)
-				out.InheritedFrom[s] = InheritedFrom{OrganizationID: *parent, Name: name}
-				if origin, ok := p.InheritedFrom[s]; ok {
-					out.InheritedFrom[s] = origin
-				}
-			}
-			out.Revision = max(out.Revision, p.Revision)
+	if Edition != "commercial" {
+		return nil
+	}
+	var parent *string
+	if e := tx.QueryRow(ctx, `SELECT parent_id FROM organizations WHERE id=$1`, org).Scan(&parent); e != nil {
+		return e
+	}
+	out.Capabilities["organization_inheritance"] = parent != nil
+	if parent == nil || len(out.InheritSections) == 0 {
+		return nil
+	}
+	p, name, e := a.readParentShadow(ctx, tx, org, *parent, depth+1)
+	if e != nil {
+		return e
+	}
+	for _, section := range out.InheritSections {
+		copyShadowSection(&out.Config, p.Config, section)
+		out.InheritedFrom[section] = InheritedFrom{OrganizationID: *parent, Name: name}
+		if origin, ok := p.InheritedFrom[section]; ok {
+			out.InheritedFrom[section] = origin
 		}
 	}
+	out.Revision = max(out.Revision, p.Revision)
 	return nil
 }
 
@@ -698,6 +693,17 @@ func validateShadowInheritance(ctx context.Context, tx pgx.Tx, org string, secti
 	return nil
 }
 
+func normalizeShadowModelAccess(config *ShadowConfig) {
+	if config.ModelAccess == nil {
+		config.ModelAccess = []ModelAccessRule{}
+	}
+	for i := range config.ModelAccess {
+		if config.ModelAccess[i].Models == nil {
+			config.ModelAccess[i].Models = []string{}
+		}
+	}
+}
+
 func (a *App) putShadowSettings(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
 	var body struct {
 		Revision        int64        `json:"revision"`
@@ -710,14 +716,7 @@ func (a *App) putShadowSettings(w http.ResponseWriter, r *http.Request, tx pgx.T
 	if e := validateShadowInheritance(r.Context(), tx, s.OrganizationID, body.InheritSections); e != nil {
 		return e
 	}
-	if body.Config.ModelAccess == nil {
-		body.Config.ModelAccess = []ModelAccessRule{}
-	}
-	for i := range body.Config.ModelAccess {
-		if body.Config.ModelAccess[i].Models == nil {
-			body.Config.ModelAccess[i].Models = []string{}
-		}
-	}
+	normalizeShadowModelAccess(&body.Config)
 	if e := a.validateCatalogPolicy(r.Context(), tx, body.Config); e != nil {
 		return e
 	}

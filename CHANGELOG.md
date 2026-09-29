@@ -7,6 +7,7 @@ All notable changes to this repository are recorded here. The format follows
 ## [Unreleased]
 
 First public release of the Milvago Community server and console.
+The release pipeline is prepared for `1.0.0`; `v1.0.0` has not been published.
 
 ### Added
 

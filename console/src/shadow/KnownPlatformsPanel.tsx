@@ -1,11 +1,12 @@
 import { useContext, useMemo, useState } from 'react';
-import { Context, Empty, ErrorNotice, Notice, ResourceView, can, readOnly, useMutation, useResource, useText } from '../ui';
+import { Badge, Context, Empty, ErrorNotice, Notice, ResourceView, can, readOnly, useMutation, useResource, useText } from '../ui';
 import type { Privacy } from '../PrivacyDetectionPage';
 import { CATEGORY_LABELS, PLATFORM_CATEGORIES, PLATFORM_CATEGORY, type PlatformCategory } from './platformCategories';
 
 // The server sends what this edition does NOT capture in full: a platform it covers can
 // never reach Discovery, so a switch for it would decide nothing.
-type Platform = { id: string; label: string; domains: string[]; paths?: string[]; muted: boolean };
+// `blocked` is Enterprise: the Community server never reports it.
+type Platform = { id: string; label: string; domains: string[]; paths?: string[]; muted: boolean; blocked?: boolean };
 
 /** Which platforms Discovery is allowed to name, and whether Discovery runs at all.
  *
@@ -27,21 +28,30 @@ export function KnownPlatformsPanel() {
   // The server is the authority; this only keeps the checkbox from lagging a round trip
   // behind the click on a list this long.
   const [pending, setPending] = useState<Record<string, boolean>>({});
+  const [blockPending, setBlockPending] = useState<Record<string, boolean>>({});
+  // Blocking changes the signed policy the fleet enforces: Enterprise only.
+  const blockable = session.edition === 'commercial';
 
   async function toggle(platform: Platform, muted: boolean) {
     setPending(current => ({ ...current, [platform.id]: muted }));
     try { await mutation.run('/api/detection/platforms', 'PATCH', { id: platform.id, muted }); resource.reload(); }
     catch { setPending(current => { const next = { ...current }; delete next[platform.id]; return next; }); }
   }
+  async function block(platform: Platform, blocked: boolean) {
+    setBlockPending(current => ({ ...current, [platform.id]: blocked }));
+    try { await mutation.run(`/api/detection/platforms/${encodeURIComponent(platform.id)}/blocked`, 'PUT', { blocked }); resource.reload(); }
+    catch { setBlockPending(current => { const next = { ...current }; delete next[platform.id]; return next; }); }
+  }
 
   return <div className="platform-admin">
     <DiscoverySwitch />
     <Notice>{t('platformsNotice')}</Notice>
-    {session.edition === 'community' && <p className="field-help">{t('platformsEnterpriseBlocking')}</p>}
+    {blockable ? <Notice>{t('platformsBlockingNotice')}</Notice> : <p className="field-help">{t('platformsEnterpriseBlocking')}</p>}
     <ErrorNotice error={mutation.error} />
     <ResourceView resource={resource}>{data => <PlatformList
       platforms={data.platforms} query={query} setQuery={setQuery}
-      pending={pending} busy={mutation.pending || readOnly(session)} toggle={toggle} t={t} />}</ResourceView>
+      pending={pending} busy={mutation.pending || readOnly(session)} toggle={toggle}
+      blocking={blockable ? { pending: blockPending, block } : null} t={t} />}</ResourceView>
   </div>;
 }
 
@@ -88,10 +98,12 @@ function DiscoverySwitch() {
   </section>}</ResourceView>;
 }
 
-function PlatformList({ platforms, query, setQuery, pending, busy, toggle, t }: Readonly<{
+function PlatformList({ platforms, query, setQuery, pending, busy, toggle, blocking, t }: Readonly<{
   platforms: Platform[]; query: string; setQuery: (value: string) => void;
   pending: Record<string, boolean>; busy: boolean;
-  toggle: (platform: Platform, muted: boolean) => void; t: ReturnType<typeof useText>;
+  toggle: (platform: Platform, muted: boolean) => void;
+  blocking: { pending: Record<string, boolean>; block: (platform: Platform, blocked: boolean) => void } | null;
+  t: ReturnType<typeof useText>;
 }>) {
   const term = query.trim().toLowerCase();
   const groups = useMemo(() => {
@@ -113,6 +125,7 @@ function PlatformList({ platforms, query, setQuery, pending, busy, toggle, t }: 
   }, [platforms, term]);
 
   const hidden = platforms.filter(p => (pending[p.id] ?? p.muted)).length;
+  const isBlocked = (platform: Platform) => blocking ? (blocking.pending[platform.id] ?? !!platform.blocked) : false;
   if (!platforms.length) return <Empty title={t('platformsNone')}>{t('platformsNoneHint')}</Empty>;
 
   return <>
@@ -120,21 +133,26 @@ function PlatformList({ platforms, query, setQuery, pending, busy, toggle, t }: 
       <label className="platform-search">{t('platformsSearch')}
         <input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder={t('platformsSearchPlaceholder')} />
       </label>
-      <p className="muted">{t('platformsSummary', [platforms.length, hidden])}</p>
+      <p className="muted">{t('platformsSummary', [platforms.length, hidden])}{blocking ? ' · ' + t('platformsBlockedCount', [platforms.filter(isBlocked).length]) : ''}</p>
     </div>
     {groups.length
       ? groups.map(group => <section className="platform-group" key={group.category}>
         <h3>{group.category === 'other' ? t('platformCategoryOther') : t(CATEGORY_LABELS[group.category])}<span className="platform-count">{group.items.length}</span></h3>
         <ul>{group.items.map(platform => {
           const muted = pending[platform.id] ?? platform.muted;
+          const blocked = isBlocked(platform);
           return <li key={platform.id} className={muted ? 'platform-row muted-platform' : 'platform-row'}>
             <label className="checkbox-label">
               <input type="checkbox" aria-label={platform.label} checked={!muted} disabled={busy} onChange={event => toggle(platform, !event.target.checked)} />
               <span>
-                <strong>{platform.label}</strong>
+                <strong>{platform.label}</strong>{blocked && <> <Badge tone="danger">{t('platformBlocked')}</Badge></>}
                 <small>{platform.domains.join(', ')}{platform.paths?.length ? ' ' + platform.paths.join(' ') : ''}</small>
               </span>
             </label>
+            {blocking && <label className="checkbox-label">
+              <input type="checkbox" aria-label={`${t('blockPlatform')} ${platform.label}`} checked={blocked} disabled={busy} onChange={event => blocking.block(platform, event.target.checked)} />
+              <span>{t('blockPlatform')}</span>
+            </label>}
           </li>;
         })}</ul>
       </section>)

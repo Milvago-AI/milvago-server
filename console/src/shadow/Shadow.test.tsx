@@ -330,6 +330,17 @@ describe('Shadow AI workflows', () => {
     expect(bubble.querySelector('pre')!.compareDocumentPosition(files) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it('shows retained file names while request and response text is not retained', async () => {
+    conversations(url => url.startsWith('/api/shadow/conversation?') ? reply(thread([
+      message(attachment, 'not_retained'), message(sent, 'not_retained'),
+    ], '', false)) : undefined);
+    await openThread();
+    expect(await screen.findByText('schema-synthetique.png')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'PROMPT CACHÉ · texte non conservé' })).toBeInTheDocument();
+    expect(document.querySelectorAll('.bubble')).toHaveLength(1);
+    expect(document.querySelector('.bubble pre')).toBeNull();
+  });
+
   it('keeps a lone attachment as its own bubble, with no claim of a hidden text', async () => {
     conversations(url => url.startsWith('/api/shadow/conversation?') ? reply(thread([message(attachment, 'not_retained')])) : undefined);
     await openThread();
@@ -716,6 +727,34 @@ describe('AI platforms (05)', () => {
     // The identifier survives a catalogue revision that adds or drops a domain; the host
     // does not, and the server resolves one to the other.
     await waitFor(() => expect(sent).toEqual([{ id: 'fireflies', muted: true }]));
+  });
+  it('offers blocking in Community as an Enterprise feature only, with no switch', async () => {
+    servePlatforms(); show(<ShadowAdministration />);
+    await screen.findByRole('checkbox', { name: 'Activer la collecte' });
+    fireEvent.click(screen.getByRole('button', { name: /Plateformes IA/ }));
+    expect(await screen.findByText(/Avec Milvago Enterprise, vous pouvez bloquer/)).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: /^Bloquer / })).toBeNull();
+    expect(screen.getByText(/Affichage dans Découverte$/)).toBeInTheDocument();
+  });
+  it('blocks a platform in Enterprise by its catalogue identifier and marks it blocked', async () => {
+    const sent: { url: string; body: unknown }[] = [];
+    const blockedList = { platforms: platforms.platforms.map(p => p.id === 'poe' ? { ...p, blocked: true } : p) };
+    serve((url, init) => {
+      if (url === '/api/shadow/settings') return reply(settings);
+      if (url === '/api/privacy') return reply(privacy);
+      if (url === '/api/detection/platforms') return reply(blockedList);
+      if (url.endsWith('/blocked') && init?.method === 'PUT') { sent.push({ url, body: JSON.parse(String(init.body)) }); return reply({ ok: true }); }
+      return undefined;
+    });
+    show(<ShadowAdministration />, { ...session, edition: 'commercial' as const });
+    await screen.findByRole('checkbox', { name: 'Activer la collecte' });
+    fireEvent.click(screen.getByRole('button', { name: /Plateformes IA/ }));
+    expect(await screen.findByText('Bloquée')).toBeInTheDocument();
+    expect(screen.getByText(/Affichage dans Découverte et blocage/)).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Bloquer Poe' })).toBeChecked();
+    expect(screen.getByText('Plateformes : 3 · masquées de Découverte : 1 · bloquées : 1')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Bloquer GitHub Copilot' }));
+    await waitFor(() => expect(sent).toEqual([{ url: '/api/detection/platforms/github-copilot/blocked', body: { blocked: true } }]));
   });
   // Moved out of Privacy on the user's request the same day. It still writes through
   // PUT /api/privacy, so the written reason it demands moved with it.

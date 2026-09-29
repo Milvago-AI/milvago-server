@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // projectionSentinels are identity values planted in one organization. While
@@ -46,6 +48,15 @@ func newProjectionFixture(t *testing.T) *projectionFixture {
 	tag := fmt.Sprintf("%08X", time.Now().UnixNano()&0xFFFFFFFF)
 	p := &projectionFixture{observabilityFixture: f, sessions: map[string]*http.Cookie{}, csrfs: map[string]string{}}
 	p.s = projectionSentinels{name: "SENTINEL-NAME-" + tag, email: "sentinel-" + strings.ToLower(tag) + "@example.test", subject: "sentinel-oidc-" + tag, host: "SENTINEL-HOST-" + tag, osUser: "SENTINEL-OSUSER-" + tag, eventUser: "SENTINEL-EVENTUSER-" + tag, team: "SENTINEL-TEAM-" + tag, file: "SENTINEL-FILE-" + tag + ".docx"}
+	setupProjectionFixtureData(t, p, ctx)
+	setupProjectionFixtureActors(t, p, ctx)
+	setupProjectionFixtureKey(t, p)
+	return p
+}
+
+func setupProjectionFixtureData(t *testing.T, p *projectionFixture, ctx context.Context) {
+	t.Helper()
+	f := p.observabilityFixture
 	if tag, e := f.admin.Exec(ctx, "UPDATE sessions SET mfa_verified_at=clock_timestamp() WHERE token_hash=$1", hash(f.owner.Value)); e != nil || tag.RowsAffected() != 1 {
 		t.Fatal("fresh authentication fixture missing", e)
 	}
@@ -60,6 +71,17 @@ func newProjectionFixture(t *testing.T) *projectionFixture {
 	if tag, e := tx.Exec(ctx, "UPDATE collaborators SET team=$2 WHERE id=$1", p.subject, p.s.team); e != nil || tag.RowsAffected() != 1 {
 		t.Fatal("team fixture missing", e)
 	}
+	setupProjectionFixtureDevice(t, p, ctx, tx)
+	setupProjectionFixtureEvents(t, p, ctx, tx)
+	if e = tx.Commit(ctx); e != nil {
+		t.Fatal(e)
+	}
+}
+
+func setupProjectionFixtureDevice(t *testing.T, p *projectionFixture, ctx context.Context, tx pgx.Tx) {
+	t.Helper()
+	f := p.observabilityFixture
+	var e error
 	if e = tx.QueryRow(ctx, "INSERT INTO devices(organization_id,credential_hash,hostname,platform,version,status) VALUES($1,$2,'','test','0.5.0','approved') RETURNING id", f.org, hash(randomToken())).Scan(&p.device); e != nil {
 		t.Fatal(e)
 	}
@@ -80,6 +102,12 @@ func newProjectionFixture(t *testing.T) *projectionFixture {
 	if tag, e := tx.Exec(ctx, "UPDATE devices SET os_user=$2 WHERE id=$1", p.device, sealedUser); e != nil || tag.RowsAffected() != 1 {
 		t.Fatal("os user fixture missing", e)
 	}
+}
+
+func setupProjectionFixtureEvents(t *testing.T, p *projectionFixture, ctx context.Context, tx pgx.Tx) {
+	t.Helper()
+	f := p.observabilityFixture
+	var e error
 	files, _ := json.Marshal([]string{p.s.file})
 	if e = tx.QueryRow(ctx, "INSERT INTO shadow_events(organization_id,device_id,id,occurred_at,kind,provider,tool,source,action,policy_revision,characters,sensitivity,collaborator_id,files) VALUES($1,$2,gen_random_uuid(),now()-interval '1 minute','prompt','claude.ai','chrome','browser','observed',1,42,'unknown',$3,$4) RETURNING id", f.org, p.device, p.subject, files).Scan(&p.event); e != nil {
 		t.Fatal(e)
@@ -94,9 +122,12 @@ func newProjectionFixture(t *testing.T) *projectionFixture {
 	if _, e = tx.Exec(ctx, "INSERT INTO events(organization_id,device_id,id,occurred_at,provider,action,source,characters,labels) VALUES($1,$2,gen_random_uuid(),now(),'claude.ai','observed','browser',10,'[]')", f.org, p.device); e != nil {
 		t.Fatal(e)
 	}
-	if e = tx.Commit(ctx); e != nil {
-		t.Fatal(e)
-	}
+}
+
+func setupProjectionFixtureActors(t *testing.T, p *projectionFixture, ctx context.Context) {
+	t.Helper()
+	f := p.observabilityFixture
+	var e error
 	for _, role := range []string{"admin", "viewer", "reporter"} {
 		var user string
 		if e = f.admin.QueryRow(ctx, "INSERT INTO users(subject,email,display_name) VALUES($1,$2,$3) RETURNING id", "projection-"+role, role+"@example.test", "Projection "+role).Scan(&user); e != nil {
@@ -112,17 +143,21 @@ func newProjectionFixture(t *testing.T) *projectionFixture {
 		p.sessions[role] = &http.Cookie{Name: cookieName("session"), Value: token}
 		p.csrfs[role] = csrf
 	}
+}
+
+func setupProjectionFixtureKey(t *testing.T, p *projectionFixture) {
+	t.Helper()
+	f := p.observabilityFixture
 	p.sessions["owner"], p.csrfs["owner"] = f.owner, f.csrf
 	w := f.call("POST", "/api/profile/api-keys", map[string]any{"name": "projection audit", "expires_in_days": 30, "permissions": permissionCatalog}, f.csrf)
 	requireHTTP(t, w, 201)
 	var created struct {
 		Secret string `json:"secret"`
 	}
-	if e = json.Unmarshal(w.Body.Bytes(), &created); e != nil || created.Secret == "" {
+	if e := json.Unmarshal(w.Body.Bytes(), &created); e != nil || created.Secret == "" {
 		t.Fatal("api key fixture missing", e)
 	}
 	p.key = created.Secret
-	return p
 }
 
 // as performs one request as the named actor: a console session with its CSRF
@@ -219,6 +254,7 @@ func (p *projectionFixture) routes() []projectionRoute {
 		{pattern: "GET /api/detection/platforms/{provider}/devices", exempt: "names the machines behind a known platform by design, same projection and same gates; covered by TestKnownPlatformDevices"},
 		{pattern: "GET /api/detection/platforms", path: "/api/detection/platforms", expect: 200},
 		{pattern: "PATCH /api/detection/platforms", exempt: "mutation"},
+		{pattern: "PUT /api/detection/platforms/{id}/blocked", exempt: "mutation", optional: true},
 		{pattern: "GET /api/privacy", path: "/api/privacy", expect: 200},
 		{pattern: "PUT /api/privacy", exempt: "mutation"},
 		{pattern: "POST /api/subjects/{id}/reveal", exempt: "discloses by design under identity.reveal, fresh MFA and audit; covered by TestPrivacyIntegration"},
@@ -248,7 +284,9 @@ func (p *projectionFixture) routes() []projectionRoute {
 		{pattern: "POST /api/deployment-key/rotate", exempt: "mutation"},
 		{pattern: "POST /api/deployment-key/revoke", exempt: "mutation"},
 		{pattern: "GET /api/installer/{platform}", path: "/api/installer/windows"},
+		{pattern: "GET /api/installer/windows/script", path: "/api/installer/windows/script"},
 		{pattern: "POST /api/installer/windows/package", exempt: "mutation"},
+		{pattern: "POST /api/installer/windows/provision", exempt: "mutation"},
 		{pattern: "GET /api/organizations/{id}/deployment-key", path: "/api/organizations/" + p.org + "/deployment-key", optional: true},
 		{pattern: "POST /api/organizations/{id}/deployment-key/rotate", exempt: "mutation", optional: true},
 		{pattern: "POST /api/organizations/{id}/deployment-key/revoke", exempt: "mutation", optional: true},
@@ -343,6 +381,9 @@ func (p *projectionFixture) sweepRoute(t *testing.T, label string, aggregateOnly
 		if strings.HasPrefix(u.Path, "/api/shadow/events/") && u.Query().Get("identity") != "aliases" {
 			allowed = append(allowed, p.s.host)
 		}
+	}
+	if actor != "key" && u.Query().Get("identity") != "aliases" && (u.Path == "/api/shadow/conversation" || strings.HasPrefix(u.Path, "/api/shadow/events/")) {
+		allowed = append(allowed, p.s.file)
 	}
 	p.scan(t, label+": "+actor+" GET "+r.path, w.Body.Bytes(), allowed...)
 }

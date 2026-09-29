@@ -86,6 +86,18 @@ describe('Discovery', () => {
       unmount();
     }
   });
+  it('counts blocked attempts in Enterprise only, where blocking exists', async () => {
+    window.location.hash = '#discovery';
+    const platforms = { items: [], platforms: [{ provider: 'aggregator.example.invalid', visits: 12, blocked: 7, devices: 3, accounts: 2, last_seen: '2026-09-16T09:00:00Z' }] };
+    for (const [session, shown] of [[base, false], [{ ...base, edition: 'commercial' as const }, true]] as const) {
+      serve(session, { '/api/settings': settings, '/api/detection/catalog': catalog, '/api/detection/candidates': platforms });
+      const { unmount } = render(<App />);
+      expect(await screen.findByText('aggregator.example.invalid')).toBeInTheDocument();
+      expect(!!screen.queryByRole('columnheader', { name: 'Tentatives bloquées' })).toBe(shown);
+      expect(!!screen.queryByRole('cell', { name: '7' })).toBe(shown);
+      unmount();
+    }
+  });
   it('names the machines behind a candidate domain, in Enterprise only', async () => {
     window.location.hash = '#discovery';
     const candidates = { items: [{ domain: 'ai.example.invalid', count: 12, status: 'new' }] };

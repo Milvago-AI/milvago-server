@@ -20,6 +20,8 @@ import (
 //     gesture is captured. The extension keeps the same correlation identifier
 //     across the URL assignment and emits a navigation carrying both, so that
 //     opening prompt is recovered by correlation rather than left on its own.
+//     Without that bridge, ChatGPT joins the immediately preceding unnamed
+//     conversation on the same device, service and browser when an ID appears.
 //   - Records that can never carry one -- an isolated navigation, a command line
 //     refusal, a network filter block -- become threads of a single message
 //     instead of disappearing from the view.
@@ -181,12 +183,6 @@ func (a *App) shadowConversations(w http.ResponseWriter, r *http.Request, tx pgx
 		return e
 	}
 	args := append([]any{}, f.Args...)
-	// The correlation bridge is resolved over the period alone, not over the rest
-	// of the filter. The period is repeated as its own parameters rather than
-	// reusing the two the filter happens to add first, so a change of order in
-	// parseShadowFilter cannot silently point this window at another column.
-	args = append(args, f.From, f.To)
-	window := fmt.Sprintf("occurred_at>=$%d AND occurred_at<=$%d", len(args)-1, len(args))
 	args, cursorWhere, e := conversationCursorFilter(r, args)
 	if e != nil {
 		return e
@@ -195,18 +191,7 @@ func (a *App) shadowConversations(w http.ResponseWriter, r *http.Request, tx pgx
 	// the number under the pager can never describe a different set than the rows.
 	countArgs := append([]any{}, args...)
 	args = append(args, limit+1, offset)
-	groups := `WITH scoped AS (SELECT e.id,e.device_id,e.occurred_at,e.kind,e.action,e.model,e.effort,e.session,e.conversation_id,e.correlation_id,jsonb_array_length(e.files)>0 AS has_files` + shadowJoins + `WHERE ` + f.Where + ` AND NOT ` + attachmentOnly("e") + `),
-	link AS (SELECT device_id,correlation_id,min(conversation_id) AS conversation_id FROM shadow_events WHERE ` + window + ` AND correlation_id<>'' AND conversation_id<>'' GROUP BY 1,2),
-	keyed AS (SELECT s.id,s.device_id,s.occurred_at,s.kind,s.action,s.model,s.effort,s.session,s.has_files,
-		CASE WHEN s.conversation_id<>'' THEN 'conv:'||s.conversation_id
-		     WHEN l.conversation_id IS NOT NULL THEN 'conv:'||l.conversation_id
-		     -- No identifier anywhere in the exchange: the correlation the extension
-		     -- puts on one submission still holds its prompt, its response and the
-		     -- navigation together. Observed on real captures, where every URL is the
-		     -- bare provider origin and no conversation identifier is ever produced.
-		     WHEN s.correlation_id<>'' THEN 'corr:'||s.correlation_id
-		     ELSE 'event:'||s.id::text END AS group_key
-		FROM scoped s LEFT JOIN link l ON l.device_id=s.device_id AND l.correlation_id=s.correlation_id AND s.correlation_id<>''),
+	groups := conversationKeys("true") + `, keyed AS (SELECT e.id,e.device_id,e.occurred_at,e.kind,e.action,e.model,e.effort,e.session,jsonb_array_length(e.files)>0 AS has_files,k.group_key` + shadowJoins + ` JOIN conversation_keys k ON k.device_id=e.device_id AND k.id=e.id WHERE ` + f.Where + ` AND NOT ` + attachmentOnly("e") + `),
 	g AS (SELECT device_id,group_key,min(occurred_at) AS started_at,max(occurred_at) AS last_at,
 		count(*) FILTER (WHERE kind='prompt') AS prompts,
 		count(*) FILTER (WHERE kind='response') AS responses,
@@ -293,6 +278,28 @@ func (a *App) shadowConversations(w http.ResponseWriter, r *http.Request, tx pgx
 	return nil
 }
 
+// File names are retained metadata in the console detail, independent of text
+// access and personal identity. Explicit alias projections and API keys keep the
+// stricter projection. Recheck the live session before returning any names.
+func protectShadowDetail(r *http.Request, tx pgx.Tx, v *ShadowEventView) error {
+	files := v.Files
+	if e := protectShadow(r, tx, v); e != nil {
+		return e
+	}
+	s := privacyFor(r).session
+	if len(files) == 0 || s.APIKeyID != "" || r.URL.Query().Get("identity") == "aliases" {
+		return nil
+	}
+	var live bool
+	if e := tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM sessions WHERE token_hash=$1 AND organization_id=$2 AND user_id=$3 AND expires_at>clock_timestamp() FOR SHARE)`, s.TokenHash, s.OrganizationID, s.UserID).Scan(&live); e != nil {
+		return e
+	}
+	if live {
+		v.Files = files
+	}
+	return nil
+}
+
 // shadowConversation returns one page of a thread, newest page first but ordered
 // oldest to newest for reading. It deliberately ignores the list filters: those
 // choose which threads are shown, opening one shows all of it.
@@ -365,12 +372,19 @@ func (a *App) revealConversationContents(r *http.Request, tx pgx.Tx, s *Session,
 	if e = auditMany(r.Context(), tx, s.OrganizationID, s.UserID, "shadow.content.read", targets); e != nil {
 		return false, e
 	}
-	for actor, count := range seen {
-		if e = auditSubjectView(r, tx, actor, "conversation", count); e != nil {
-			return false, e
-		}
+	if e = auditConversationSubjects(r, tx, seen); e != nil {
+		return false, e
 	}
 	return grant, nil
+}
+
+func auditConversationSubjects(r *http.Request, tx pgx.Tx, subjects map[string]int) error {
+	for actor, count := range subjects {
+		if e := auditSubjectView(r, tx, actor, "conversation", count); e != nil {
+			return e
+		}
+	}
+	return nil
 }
 
 type conversationDetailRequest struct {
@@ -406,12 +420,7 @@ func parseConversationDetailRequest(r *http.Request) (conversationDetailRequest,
 		where = `e.device_id=$1 AND e.correlation_id=$2`
 	} else {
 		args = append(args, conversation)
-		// A record whose own identifier is empty belongs here only through the
-		// correlation the extension kept across the URL assignment. The bridge is
-		// not time bounded: a thread lasts as long as retention keeps it.
-		where = `e.device_id=$1 AND (e.conversation_id=$2 OR (e.conversation_id='' AND EXISTS(
-			SELECT 1 FROM shadow_events b WHERE b.device_id=e.device_id AND b.correlation_id=e.correlation_id
-			AND e.correlation_id<>'' AND b.conversation_id=$2)))`
+		where = `e.device_id=$1 AND k.group_key='conv:'||$2`
 	}
 	if raw := q.Get("cursor"); raw != "" {
 		if len(raw) > 400 {
@@ -438,7 +447,7 @@ func (a *App) shadowConversation(w http.ResponseWriter, r *http.Request, tx pgx.
 		return e
 	}
 	device, limit, args, where := request.device, request.limit, request.args, request.where
-	rows, e := tx.Query(r.Context(), `SELECT `+shadowProjection+shadowJoins+`WHERE `+where+
+	rows, e := tx.Query(r.Context(), conversationKeys("device_id=$1")+`SELECT `+shadowProjection+shadowJoins+` JOIN conversation_keys k ON k.device_id=e.device_id AND k.id=e.id WHERE `+where+
 		fmt.Sprintf(` ORDER BY e.occurred_at DESC,e.id DESC LIMIT $%d`, len(args)), args...)
 	if e != nil {
 		return e
@@ -468,7 +477,7 @@ func (a *App) shadowConversation(w http.ResponseWriter, r *http.Request, tx pgx.
 		return apiError{404, "not_found", "Conversation not found."}
 	}
 	for i := range items {
-		if e = protectShadow(r, tx, &items[i].ShadowEventView); e != nil {
+		if e = protectShadowDetail(r, tx, &items[i].ShadowEventView); e != nil {
 			return e
 		}
 	}

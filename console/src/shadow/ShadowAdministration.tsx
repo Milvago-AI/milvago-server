@@ -87,7 +87,7 @@ function SettingsEditor({ initial, path, scope, reload, dirtyChanged, capabiliti
     return <OperationsPanel {...props} />;
   }
   const panel = configPanel();
-  function platformView() { return <section className="panel shadow-config"><div className="section-heading"><div><h2>{names.platforms}</h2><p>{scopeName} · {t("platformsDisplayOnly")}</p></div></div><KnownPlatformsPanel /></section>; }
+  function platformView() { return <section className="panel shadow-config"><div className="section-heading"><div><h2>{names.platforms}</h2><p>{scopeName} · {t(session.edition === "commercial" ? "platformsDisplayAndBlocking" : "platformsDisplayOnly")}</p></div></div><KnownPlatformsPanel /></section>; }
   function toggleInheritance(section: ShadowSection, checked: boolean) {
     setSaved(false);
     setInherit(current => checked ? [...current, section] : current.filter(item => item !== section));

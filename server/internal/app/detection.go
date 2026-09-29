@@ -994,7 +994,7 @@ func (a *App) candidateDomains(w http.ResponseWriter, r *http.Request, tx pgx.Tx
 	return jsonQuery(w, r, tx, `SELECT jsonb_build_object(
  'items',coalesce((SELECT jsonb_agg(c) FROM (SELECT domain,count,first_seen,last_seen,status FROM candidate_domains WHERE domain<>ALL($3) ORDER BY last_seen DESC LIMIT 500) c),'[]'),
  'platforms',coalesce((SELECT jsonb_agg(p) FROM (
-   SELECT provider,count(*) visits,count(DISTINCT device_id) devices,count(DISTINCT user_key) FILTER(WHERE user_key<>'') accounts,max(occurred_at) last_seen
+   SELECT provider,count(*) visits,count(*) FILTER(WHERE action='blocked') blocked,count(DISTINCT device_id) devices,count(DISTINCT user_key) FILTER(WHERE user_key<>'') accounts,max(occurred_at) last_seen
    FROM shadow_events WHERE detector='presence' AND provider<>ALL($2) AND provider<>ALL($3) GROUP BY provider HAVING count(DISTINCT device_id)>=$1 ORDER BY max(occurred_at) DESC LIMIT 256) p),'[]'))`, floor, hidden, covered)
 }
 
@@ -1038,6 +1038,20 @@ func discoveryExclusions(ctx context.Context, tx pgx.Tx) (muted []string, covere
 	return muted, covered, nil
 }
 
+// coveredHosts is every domain and alias the catalogue's providers capture in full.
+func coveredHosts(cat DetectionContent) map[string]bool {
+	covered := map[string]bool{}
+	for _, p := range cat.Providers {
+		for _, d := range p.Domains {
+			covered[d] = true
+		}
+		for _, d := range p.Aliases {
+			covered[d] = true
+		}
+	}
+	return covered
+}
+
 // knownPlatformInventory lists what the catalogue names, so an administrator can silence
 // a platform the company sanctions. It is the catalogue's own list rather than what has
 // been reached: a platform must be silenceable before anyone visits it, not after the
@@ -1057,16 +1071,13 @@ func (a *App) knownPlatformInventory(w http.ResponseWriter, r *http.Request, tx 
 	// precedence with the same comparison, so the screen and the record cannot disagree
 	// about whether a platform is covered.
 	restrictEditionProviders(&cat)
-	covered := map[string]bool{}
-	for _, p := range cat.Providers {
-		for _, d := range p.Domains {
-			covered[d] = true
-		}
-		for _, d := range p.Aliases {
-			covered[d] = true
-		}
-	}
+	covered := coveredHosts(cat)
 	muted, e := mutedPlatformSet(r.Context(), tx)
+	if e != nil {
+		return e
+	}
+	// Blocking is Enterprise: Community reads an empty set and never reports the field.
+	blocked, e := blockedPlatformSet(r.Context(), tx)
 	if e != nil {
 		return e
 	}
@@ -1076,13 +1087,14 @@ func (a *App) knownPlatformInventory(w http.ResponseWriter, r *http.Request, tx 
 		Domains []string `json:"domains"`
 		Paths   []string `json:"paths,omitempty"`
 		Muted   bool     `json:"muted"`
+		Blocked bool     `json:"blocked,omitempty"`
 	}
 	items := []platform{}
 	for _, p := range cat.KnownPlatforms {
 		if slices.ContainsFunc(p.Domains, func(d string) bool { return covered[d] }) {
 			continue
 		}
-		items = append(items, platform{ID: p.ID, Label: p.Label, Domains: p.Domains, Paths: p.Paths, Muted: muted[p.ID]})
+		items = append(items, platform{ID: p.ID, Label: p.Label, Domains: p.Domains, Paths: p.Paths, Muted: muted[p.ID], Blocked: blocked[p.ID]})
 	}
 	reply(w, 200, map[string]any{"platforms": items})
 	return nil

@@ -17,6 +17,12 @@ work under that license — the [Developer Certificate of Origin](https://develo
 
 ## Before opening a pull request
 
+The repositories are private and use GitHub Free. Development work is pushed to `dev`. Open a
+pull request from `dev` to `main` only after CI is green; a maintainer must explicitly approve
+the merge. GitHub Free cannot enforce branch protections for private repositories, so this is a
+review procedure. Contributors without write access cannot push branches to these repositories.
+
+
 Run what your change touches:
 
 ```
@@ -42,3 +48,10 @@ only proof is a zero exit code proves nothing: assert on what the code actually 
 
 Open an issue with the version or commit, what you did, what happened and what you expected.
 For anything with a security dimension, follow `SECURITY.md` instead — not the issue tracker.
+
+## Release channels
+
+The release pipeline is prepared but has not published `v1.0.0`. A release from `main` publishes
+the anonymous public image `ghcr.io/milvago-ai/milvago-server:1.0.0`, pinned to its immutable
+digest and signed with cosign. It never publishes `latest`. Builds from `dev` use the separate
+private package `ghcr.io/milvago-ai/milvago-server-dev:sha-<full-commit>`.

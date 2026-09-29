@@ -369,6 +369,10 @@ func (a *App) versionedPolicyRequest(w http.ResponseWriter, r *http.Request, ver
 	if version < 3 || Edition != "commercial" {
 		delete(config, "model_access")
 	}
+	// Blocking a known platform is Enterprise: a Community device is never handed a list.
+	if Edition != "commercial" {
+		delete(config, "blocked_platforms")
+	}
 	now := time.Now().UTC()
 	raw, e := json.Marshal(map[string]any{"version": version, "revision": settings.Revision, "issued_at": now, "expires_at": now.Add(15 * time.Minute), "config": config, "capabilities": caps})
 	if e != nil {
@@ -621,6 +625,18 @@ INSERT INTO shadow_content(organization_id,device_id,event_id,encrypted,expires_
 	return nil
 }
 
+func (a *App) writeIngestBatch(r *http.Request, tx pgx.Tx, state *ingestBatchState, events []V2Event) error {
+	for _, v := range events {
+		if e := a.queueIngestEvent(r, tx, state, v); e != nil {
+			return e
+		}
+	}
+	if state.writes.Len() == 0 {
+		return nil
+	}
+	return tx.SendBatch(r.Context(), &state.writes).Close()
+}
+
 func (a *App) v2IngestRequest(w http.ResponseWriter, r *http.Request) error {
 	var body struct {
 		Events []V2Event `json:"events"`
@@ -673,15 +689,8 @@ func (a *App) v2IngestRequest(w http.ResponseWriter, r *http.Request) error {
 		org: org, device: device, deviceKind: deviceKind, cfg: cfg,
 		retainedAfter: retainedAfter, accepted: make([]string, 0, len(body.Events)),
 	}
-	for _, v := range body.Events {
-		if e = a.queueIngestEvent(r, tx, &state, v); e != nil {
-			return e
-		}
-	}
-	if state.writes.Len() > 0 {
-		if e = tx.SendBatch(r.Context(), &state.writes).Close(); e != nil {
-			return e
-		}
+	if e = a.writeIngestBatch(r, tx, &state, body.Events); e != nil {
+		return e
 	}
 	if _, e = tx.Exec(r.Context(), `UPDATE devices SET last_seen=now() WHERE id=$1`, device); e != nil {
 		return e
