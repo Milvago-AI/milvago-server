@@ -20,7 +20,7 @@ function usePaged<T>(items: T[], initial = 20) {
   };
 }
 
-type Platform = { provider: string; visits: number; devices: number; accounts: number; last_seen: string };
+type Platform = { provider: string; visits: number; blocked?: number; devices: number; accounts: number; last_seen: string };
 type Candidates = { items: { domain: string; count: number; status: string }[]; platforms?: Platform[] };
 type CandidateDevices = { items: { device_id: string; hostname: string; observations: number; last_seen: string }[]; window_days: number };
 // Only the published domains matter here, so the catalogue is read for those alone
@@ -62,10 +62,11 @@ export function DiscoveryPage() {
       <Notice>{t("knownPlatformsNotice")} {t("knownPlatformsEnterprise")}</Notice>
       {data.platforms?.length
         ? <><div className="table-scroll"><table className="privacy-table">
-          <thead><tr><th>{t("service")}</th><th>{t("visits")}</th><th>{t("devices")}</th><th>{t("osAccounts")}</th><th>{t("lastSeen")}</th></tr></thead>
+          <thead><tr><th>{t("service")}</th><th>{t("visits")}</th>{inventoried && <th>{t("blockedAttempts")}</th>}<th>{t("devices")}</th><th>{t("osAccounts")}</th><th>{t("lastSeen")}</th></tr></thead>
           <tbody>{platforms.rows.map(platform => <tr key={platform.provider}>
             <td><button type="button" className="text-link" title={t("reachedByDevices")} onClick={() => setInspected({ title: platform.provider, path: `/api/detection/platforms/${encodeURIComponent(platform.provider)}/devices`, platform: true })}><strong>{platform.provider}</strong></button></td>
             <td>{platform.visits}</td>
+            {inventoried && <td>{platform.blocked ?? 0}</td>}
             <td>{platform.devices}</td>
             <td>{platform.accounts}</td>
             <td><DateValue value={platform.last_seen} /></td>

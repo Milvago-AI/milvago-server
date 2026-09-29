@@ -4,13 +4,48 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [dev, main]
   pull_request:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
+  release-policy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '26.9.0'
+      - run: node --test scripts/server-release.test.mjs
+      - run: node scripts/server-release.mjs check
+
+  dev-image:
+    needs: [release-policy, distroless, console, server]
+    if: github.event_name == 'push' && github.repository == 'Milvago-AI/milvago-server' && github.ref == 'refs/heads/dev'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/ghcr.yml
+    secrets: inherit
+
+  release-image:
+    needs: [release-policy, distroless, console, server]
+    if: github.event_name == 'push' && github.repository == 'Milvago-AI/milvago-server' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      packages: write
+    uses: ./.github/workflows/ghcr.yml
+    secrets: inherit
+
   # Every shipped image is distroless: the last stage of each Dockerfile — the one that
   # ships — starts from a gcr.io/distroless base pinned by digest, or from scratch. Build and
   # verification stages are unrestricted.

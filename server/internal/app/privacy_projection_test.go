@@ -219,6 +219,7 @@ func (p *projectionFixture) routes() []projectionRoute {
 		{pattern: "GET /api/detection/platforms/{provider}/devices", exempt: "names the machines behind a known platform by design, same projection and same gates; covered by TestKnownPlatformDevices"},
 		{pattern: "GET /api/detection/platforms", path: "/api/detection/platforms", expect: 200},
 		{pattern: "PATCH /api/detection/platforms", exempt: "mutation"},
+		{pattern: "PUT /api/detection/platforms/{id}/blocked", exempt: "mutation", optional: true},
 		{pattern: "GET /api/privacy", path: "/api/privacy", expect: 200},
 		{pattern: "PUT /api/privacy", exempt: "mutation"},
 		{pattern: "POST /api/subjects/{id}/reveal", exempt: "discloses by design under identity.reveal, fresh MFA and audit; covered by TestPrivacyIntegration"},
@@ -248,7 +249,9 @@ func (p *projectionFixture) routes() []projectionRoute {
 		{pattern: "POST /api/deployment-key/rotate", exempt: "mutation"},
 		{pattern: "POST /api/deployment-key/revoke", exempt: "mutation"},
 		{pattern: "GET /api/installer/{platform}", path: "/api/installer/windows"},
+		{pattern: "GET /api/installer/windows/script", path: "/api/installer/windows/script"},
 		{pattern: "POST /api/installer/windows/package", exempt: "mutation"},
+		{pattern: "POST /api/installer/windows/provision", exempt: "mutation"},
 		{pattern: "GET /api/organizations/{id}/deployment-key", path: "/api/organizations/" + p.org + "/deployment-key", optional: true},
 		{pattern: "POST /api/organizations/{id}/deployment-key/rotate", exempt: "mutation", optional: true},
 		{pattern: "POST /api/organizations/{id}/deployment-key/revoke", exempt: "mutation", optional: true},
@@ -343,6 +346,9 @@ func (p *projectionFixture) sweepRoute(t *testing.T, label string, aggregateOnly
 		if strings.HasPrefix(u.Path, "/api/shadow/events/") && u.Query().Get("identity") != "aliases" {
 			allowed = append(allowed, p.s.host)
 		}
+	}
+	if actor != "key" && u.Query().Get("identity") != "aliases" && (u.Path == "/api/shadow/conversation" || strings.HasPrefix(u.Path, "/api/shadow/events/")) {
+		allowed = append(allowed, p.s.file)
 	}
 	p.scan(t, label+": "+actor+" GET "+r.path, w.Body.Bytes(), allowed...)
 }

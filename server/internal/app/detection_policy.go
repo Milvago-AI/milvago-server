@@ -13,6 +13,14 @@ type DiscoveryConfig struct {
 	IgnoredDomains []string `json:"ignored_domains"`
 }
 
+// BlockedPlatform is a known platform the Enterprise extension blocks: its catalogue hosts
+// and, for a platform living under a path of a shared host, the path prefixes to block.
+type BlockedPlatform struct {
+	ID      string   `json:"id"`
+	Domains []string `json:"domains"`
+	Paths   []string `json:"paths,omitempty"`
+}
+
 func modelPlatformShape(id, channel string) bool {
 	return categoryPattern.MatchString(id) && len(id) <= 64 && (channel == "browser" && !slices.Contains([]string{"codex", "claude-code", "claude-desktop", "claude-desktop-agent"}, id) || channel == "native" && Edition == "commercial" && validModelPlatform(id, channel))
 }
@@ -84,6 +92,10 @@ func (a *App) enrichDetectionPolicy(ctx context.Context, tx pgx.Tx, org string, 
 		return e
 	}
 	out.Revision += rev + p.Revision
+	// Derived here on every read, like discovery, never saved from a client.
+	if out.Config.BlockedPlatforms, e = blockedPlatformPolicy(ctx, tx, cat); e != nil {
+		return e
+	}
 	if Edition == "commercial" {
 		out.ModelCatalog = []ModelCatalogEntry{}
 		for _, provider := range cat.Providers {
@@ -102,6 +114,7 @@ func (a *App) enrichDetectionPolicy(ctx context.Context, tx pgx.Tx, org string, 
 // request's transaction, never across requests or across authorization changes.
 type detectionEventBatch struct {
 	catalogs map[int64]DetectionContent
+	blocked  map[string]bool
 }
 
 func (b *detectionEventBatch) authorize(ctx context.Context, tx pgx.Tx, v *V2Event) error {
@@ -144,6 +157,22 @@ func (b *detectionEventBatch) authorize(ctx context.Context, tx pgx.Tx, v *V2Eve
 	for _, p := range cat.KnownPlatforms {
 		if slices.Contains(p.Domains, host) {
 			reducedToPresence(v)
+			// A blocked attempt is only one where the organization blocks this platform:
+			// otherwise a modified endpoint could fill Discovery with attempts for platforms
+			// nobody blocked. Community never blocks, and reads an empty set.
+			if v.Action == "blocked" {
+				if b.blocked == nil {
+					if b.blocked, e = blockedPlatformSet(ctx, tx); e != nil {
+						return e
+					}
+					if b.blocked == nil {
+						b.blocked = map[string]bool{}
+					}
+				}
+				if !b.blocked[p.ID] {
+					v.Action = "observed"
+				}
+			}
 			return nil
 		}
 	}

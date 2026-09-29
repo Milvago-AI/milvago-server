@@ -357,7 +357,7 @@ func (a *App) shadowEventDetail(w http.ResponseWriter, r *http.Request, tx pgx.T
 	if e != nil {
 		return e
 	}
-	if e = protectShadow(r, tx, &v); e != nil {
+	if e = protectShadowDetail(r, tx, &v); e != nil {
 		return e
 	}
 	if e = auditSubjectView(r, tx, v.AuditSubject, "detail", 1); e != nil {

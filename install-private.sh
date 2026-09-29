@@ -1,8 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SOURCE_COMMIT='fc40b850680461caf58da2bbb19a341f7863dcf4'
-IMAGE='ghcr.io/milvago-ai/milvago-community-server@sha256:f1a5974ae0d3f3011677f9c0864e4641d2fa76a8e8c67fd248394bd15b103576'
+MILVAGO_RELEASE_VERSION='1.0.0'
+SOURCE_COMMIT='@SOURCE_COMMIT@'
+IMAGE='@IMAGE@'
+
+# Release assets contain the exact source commit and signed image digest.
+if [[ "$SOURCE_COMMIT" == @* || "$IMAGE" == @* ]]; then
+  printf 'Error: download install-private.sh from release v%s. This source template is not an installer.\n' "$MILVAGO_RELEASE_VERSION" >&2
+  exit 1
+fi
+if [[ -n "${MILVAGO_VERSION:-}" && "$MILVAGO_VERSION" != "$MILVAGO_RELEASE_VERSION" ]]; then
+  printf 'Error: this installer is pinned to %s; requested %s. Download the matching release installer.\n' "$MILVAGO_RELEASE_VERSION" "$MILVAGO_VERSION" >&2
+  exit 1
+fi
 COSIGN_IMAGE='ghcr.io/sigstore/cosign/cosign:v3.1.3@sha256:9e5c2f2edc34351160407ca3416c61855bdf9403c3c5936e0f0be7fc261611b8'
 CADDY_IMAGE='caddy:2.11.4-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b'
 NODE_IMAGE='node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2'
@@ -324,7 +335,7 @@ compose_supports_reset || fail 'Docker Compose cannot process the required !rese
 if (( needs_source )); then
   if [[ -z "$registry_token" ]]; then
     [[ -r /dev/tty ]] || fail 'Set GHCR_TOKEN when no interactive terminal is available.'
-    read -r -s -p 'GitHub classic token (repo, read:packages): ' registry_token </dev/tty
+    read -r -s -p 'GitHub classic token (repo): ' registry_token </dev/tty
     printf '\n' >&2
   fi
   [[ "$registry_token" =~ ^[A-Za-z0-9_]+$ ]] || fail 'A GitHub token is required.'
@@ -395,20 +406,12 @@ if [[ -d "$original_docker_config/cli-plugins" ]]; then
 fi
 export DOCKER_CONFIG="$auth_dir"
 
-if [[ -z "${GHCR_USERNAME:-}" ]]; then
-  [[ -r /dev/tty ]] || fail 'Set GHCR_USERNAME when no interactive terminal is available.'
-  read -r -p 'GitHub username: ' GHCR_USERNAME </dev/tty
-fi
-[[ -n "$GHCR_USERNAME" ]] || fail 'GitHub username is required.'
-
 if [[ -z "$registry_token" ]]; then
   [[ -r /dev/tty ]] || fail 'Set GHCR_TOKEN when no interactive terminal is available.'
-  read -r -s -p 'GitHub classic token (repo, read:packages): ' registry_token </dev/tty
+  read -r -s -p 'GitHub classic token (repo): ' registry_token </dev/tty
   printf '\n' >&2
 fi
 [[ "$registry_token" =~ ^[A-Za-z0-9_]+$ ]] || fail 'GitHub token is required.'
-printf '%s' "$registry_token" | run_docker login ghcr.io --username "$GHCR_USERNAME" --password-stdin >/dev/null ||
-  fail 'GHCR login failed. Check package access and the read:packages scope.'
 UPDATE_PUBLIC_KEY='14ER8eA7zpdlVLLgL+7CPce5eka1Eqmp8Tmz2mUJxmg='
 cat > "$root/.local/generated/fetch-agent-release.mjs" <<'NODE'
 import { createHash, createPublicKey, verify } from 'node:crypto';
@@ -418,10 +421,25 @@ import { join } from 'node:path';
 
 const root = '/work';
 const target = join(root, '.local/installers');
-const expectedArchive = 'c16448c698cd3244bbbaad0039c891636425822f16f2d0f44413b3e0b49e69c4';
+const expectedArchive = '581b9401fb243e49146f31f38bba8da530cb8bdb2c0571a98bf5c731af30edd4';
 const expected = {
-  windows: { name: 'milvago-community-0.6.2-windows.msi', size: 5844992, sha256: '2f5c50cf2ca2308f1c60e5942535a8c0397e723f9fac740b86bf7a026f7b128b', format: 'msi', script: { name: 'milvago-community-0.6.2-windows-install.ps1', size: 3455, sha256: 'efe252f398092cf145d18109c388e3ab140cbbbc2cb82393dbd107d0ac64e643' } },
-  linux: { name: 'milvago-community-0.6.2-linux.tar.gz', size: 5562543, sha256: '9903b59c6ffba49d33edc219347fecdda73a94cf67c8d2babc724bd4a16e513e', format: 'binary' },
+  "windows": {
+    "name": "milvago-community-0.6.3-windows.msi",
+    "size": 5853184,
+    "sha256": "2dec12e7089b579ca57c01a792bf9aebda568ae1afc8c0451059359f3e3a1b85",
+    "format": "msi",
+    "script": {
+      "name": "milvago-community-0.6.3-windows-install.ps1",
+      "size": 3455,
+      "sha256": "62145ba4a19d54800efd512754a3a60008d0d6fcb8864dbf0f9e4816fed5d1d9"
+    }
+  },
+  "linux": {
+    "name": "milvago-community-0.6.3-linux.tar.gz",
+    "size": 5564297,
+    "sha256": "64aa9050e53239efa7d89f78a69e69ebff50e2287fd65022e4f9e90d195425e1",
+    "format": "binary"
+  }
 };
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const requireValue = (condition, message) => { if (!condition) throw Error(message); };
@@ -429,7 +447,7 @@ let stage;
 try {
   const token = readFileSync(0, 'utf8').trim();
   requireValue(/^[A-Za-z0-9_]+$/.test(token), 'GitHub token is missing');
-  const response = await fetch('https://api.github.com/repos/Milvago-AI/milvago-agent/releases/assets/597466569', {
+  const response = await fetch('https://api.github.com/repos/Milvago-AI/milvago-agent/releases/assets/597715907', {
     headers: { Authorization: 'Bearer ' + token, Accept: 'application/octet-stream', 'X-GitHub-Api-Version': '2022-11-28' },
     redirect: 'manual',
   });
@@ -468,11 +486,11 @@ try {
     const payload = Buffer.from(envelope.payload, 'base64');
     const release = JSON.parse(payload);
     requireValue(artifact.length === item.size && digest(artifact) === item.sha256 &&
-      manifest.version === '0.6.2' && manifest.artifact === item.name &&
+      manifest.version === '0.6.3' && manifest.artifact === item.name &&
       manifest.size === item.size && manifest.sha256 === item.sha256,
       'Community ' + platform + ' artifact verification failed');
     requireValue(verify(null, payload, key, Buffer.from(envelope.signature, 'base64')) &&
-      release.version === '0.6.2' && release.edition === 'community' && release.platform === platform &&
+      release.version === '0.6.3' && release.edition === 'community' && release.platform === platform &&
       release.format === item.format && release.sha256 === item.sha256 && release.size === item.size &&
       Date.parse(release.expires_at) > Date.now(),
       'Community ' + platform + ' update signature or release has expired');
@@ -495,7 +513,7 @@ try {
     chmodSync(next, 0o644);
     renameSync(next, join(target, name));
   }
-  console.log('Verified Community agent 0.6.2 for Windows and Linux.');
+  console.log('Verified Community agent 0.6.3 for Windows and Linux.');
 } catch (error) {
   console.error('Error: ' + error.message);
   process.exitCode = 1;
@@ -511,9 +529,6 @@ printf '%s' "$registry_token" |
     "$NODE_IMAGE" node .local/generated/fetch-agent-release.mjs ||
   fail 'The signed Community agent release could not be prepared. Check access to the private milvago-agent repository.'
 unset registry_token
-if (( docker_as_root )); then
-  as_root chown "$(id -u):$(id -g)" "$auth_dir/config.json"
-fi
 
 printf 'Verifying the Community image signature...\n'
 run_docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \

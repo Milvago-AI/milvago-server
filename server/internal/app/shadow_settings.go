@@ -89,15 +89,17 @@ type OperationsConfig struct {
 	Updates        UpdateConfig        `json:"updates"`
 }
 type ShadowConfig struct {
-	Discovery      DiscoveryConfig      `json:"discovery"`
-	ModelAccess    []ModelAccessRule    `json:"model_access"`
-	Enrollment     EnrollmentConfig     `json:"enrollment"`
-	Collection     CollectionConfig     `json:"collection"`
-	Services       []ServiceConfig      `json:"services"`
-	Protection     ProtectionConfig     `json:"protection"`
-	Privacy        PrivacyConfig        `json:"privacy"`
-	Classification ClassificationConfig `json:"classification"`
-	Operations     OperationsConfig     `json:"operations"`
+	Discovery DiscoveryConfig `json:"discovery"`
+	// Enterprise only, derived from blocked_platforms on every read (enrichDetectionPolicy).
+	BlockedPlatforms []BlockedPlatform    `json:"blocked_platforms,omitempty"`
+	ModelAccess      []ModelAccessRule    `json:"model_access"`
+	Enrollment       EnrollmentConfig     `json:"enrollment"`
+	Collection       CollectionConfig     `json:"collection"`
+	Services         []ServiceConfig      `json:"services"`
+	Protection       ProtectionConfig     `json:"protection"`
+	Privacy          PrivacyConfig        `json:"privacy"`
+	Classification   ClassificationConfig `json:"classification"`
+	Operations       OperationsConfig     `json:"operations"`
 }
 type InheritedFrom struct {
 	OrganizationID string `json:"organization_id,omitempty"`
@@ -423,9 +425,9 @@ func overlayShadow(base ShadowConfig, sections map[string]json.RawMessage) (Shad
 	var m map[string]json.RawMessage
 	_ = json.Unmarshal(raw, &m)
 	for k, v := range sections {
-		if k == "discovery" {
+		if k == "discovery" || k == "blocked_platforms" {
 			continue
-		} // Derived exclusively from effective privacy settings.
+		} // Derived on every read: privacy settings, and the blocked_platforms table.
 		if !slices.Contains(shadowSections, k) {
 			return base, bad("Unknown configuration section.")
 		}

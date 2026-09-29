@@ -264,6 +264,17 @@ func TestPresenceAuthorizationAgainstTheStoredCatalogue(t *testing.T) {
 	t.Run("a covered provider wins over the presence entry", func(t *testing.T) {
 		assertCoveredProviderPrecedence(t, authorize(t, "gemini.google.com"))
 	})
+	// Nobody blocks the platform here, so an endpoint claiming a blocked attempt is
+	// recorded as the visit it was.
+	t.Run("a blocked attempt on a platform nobody blocks is an ordinary visit", func(t *testing.T) {
+		v := &V2Event{Provider: "aggregator.example.invalid", Source: "browser", Tool: "chrome", Kind: "navigation", Action: "blocked", Detector: "presence", CatalogRevision: &revision}
+		if e := batch.authorize(ctx, tx, v); e != nil {
+			t.Fatal(e)
+		}
+		if v.Action != "observed" {
+			t.Fatalf("an unblocked platform kept action %q", v.Action)
+		}
+	})
 }
 
 func assertCoveredProviderPrecedence(t *testing.T, v *V2Event) {

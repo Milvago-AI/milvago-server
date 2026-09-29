@@ -1,50 +1,65 @@
 # Running Milvago Community locally
 
-## Install the private GHCR image
+## Install the prepared release
 
-Copy `install-private.sh` to a Linux host and run it from any directory:
+The repository copy of `install-private.sh` is a non-executable template. When `v1.0.0` is
+published, download the installer, its checksum file, and its immutable release description
+from that exact release:
 
 ```bash
+mkdir milvago-install && cd milvago-install
+gh release download v1.0.0 --repo Milvago-AI/milvago-server \
+  --pattern install-private.sh --pattern SHA256SUMS --pattern release.json
+sha256sum --check SHA256SUMS
 bash install-private.sh
 ```
 
-When no complete checkout is present, the script downloads the pinned private Community
-server source into `$HOME/milvago-community`. Set `MILVAGO_DIR` to another absolute
-path if needed. A standalone install needs a GitHub personal access token (classic)
-with `repo` and `read:packages`, plus access to the private repository and package.
-From a complete checkout, `repo` and `read:packages` are still needed to fetch the private agent release. Each run uses the pinned
-Community image, verifies its signature and replaces the application container
-when it changes. The checkout, local configuration and database are preserved. The GitHub
-token is never stored there.
-The pinned Node container downloads and extracts the source; no host `tar` is needed.
-When Docker is already working, no host `curl` or `wget` is needed either.
+Set `GHCR_TOKEN` to a classic GitHub personal access token with `repo` before downloading from
+the private server source or private agent release. The variable keeps its historical name; the token now authenticates only source and agent
+downloads and is never stored by the installer. GitHub CLI must also be authenticated
+to download the release assets shown above. The public server image does not need
+credentials: it is pulled anonymously from `ghcr.io/milvago-ai/milvago-server:1.0.0` using the
+exact digest recorded in `release.json`.
 
-On Linux, the script installs missing Docker Engine and incompatible or missing Compose packages through Docker's
-official `apt` repository on Ubuntu/Debian or `dnf` repositories on Fedora and RHEL-compatible releases 8–10 (RHEL, CentOS, Rocky Linux, AlmaLinux, Oracle Linux, and derivatives declaring `ID_LIKE=rhel` or `centos`). EL8 uses Docker's RHEL 8 repository; EL9 and EL10 derivatives use Docker's CentOS repository. The package manager selects the available Docker Engine, CLI, containerd.io and Compose versions from that repository. Existing working Docker installations are left in place. Package installation requires root or `sudo`, plus `curl` or
-`wget` and `sha256sum`. Other distributions need Docker Engine and Compose installed first.
-The script keeps Docker's registry credentials in a temporary directory. It verifies
-the pinned image signature with `cosign.pub`, generates `.env` and the identity realm using a
-pinned Node container when needed, then starts PostgreSQL, Keycloak, Mailpit, the
-Community server and Caddy. The token is never written to the repository. A later run preserves the
-local configuration and database.
+The release pipeline generates `install-private.sh`, `SHA256SUMS`, and `release.json` together.
+They bind the server version, full commit, image digest, and cosign signature verification to
+that release. `MILVAGO_VERSION`, when set, must equal `1.0.0`; the installer rejects a different
+or floating value. It never uses `latest`.
 
-The base image contains the server and console only. The private installer also downloads the pinned Community 0.6.1 Windows and Linux agent bundle from the private agent repository, checks its SHA-256, the Windows deployment script, and signed update manifests, and mounts the verified files read-only so the console can provide the agent downloads. The console delivers one Windows ZIP containing the immutable MSI, its matching script, an organization provisioning JSON and an installation `README.md`. If the account uses a second factor, the download resumes after verification; the local MSI has no Authenticode publisher signature until the certificate is available. The base image does not host a browser extension. The script detects a private IPv4 address (or accepts
-`MILVAGO_HOST_IP`), binds Caddy to port 4020 on that address, and prints
-the console URL and the path to the owner-readable `.env` file at the end.
-Caddy forwards the public realm, resources and JavaScript assets to Keycloak.
-It returns 404 for `/admin` and `/realms/master`; the Keycloak administrator API
-is reachable only from the internal container network. The application and Keycloak
-have no direct host port in this installation. Only
-TCP port 4020 is needed through the host firewall. No secret value is printed.
-Database and Mailpit ports remain on loopback. The installer waits for
-`/readyz` through the published Caddy port before reporting success; if the
-gateway fails, it prints its recent logs.
-HTTP on a LAN is intended for trusted test networks; use an HTTPS reverse
-proxy or gateway for broader access. Before the first run behind HTTPS, set
-`MILVAGO_PUBLIC_URL=https://console.example.test` for the installer. The front
-proxy must preserve the Host header and send `X-Forwarded-Proto: https`. A later
-change in Administration > Settings updates the console redirect and Keycloak
-through its private API; already enrolled agents retain their prior URL.
+On a first standalone installation only, the installer obtains the server source pinned to the
+release commit and places it in `$HOME/milvago-community`. Set `MILVAGO_DIR` to another absolute
+path if needed. It does not synchronize an existing checkout. Every run preserves local
+configuration and the database while replacing the application container only when the pinned
+image changes.
+
+On Linux, the script installs missing Docker Engine and incompatible or missing Compose packages
+through Docker's official package repositories on supported Ubuntu, Debian, Fedora, and
+RHEL-compatible systems. Existing working Docker installations are left in place. Package
+installation requires root or `sudo`, plus `curl` or `wget` and `sha256sum`. Other distributions
+need Docker Engine and Compose installed first.
+
+The base image contains the server and console only. The installer also downloads the pinned
+Community `0.6.3` Windows and Linux agent bundle from the private agent repository, verifies its
+SHA-256, Ed25519 signatures, and manifest expiration, then mounts the verified files read-only so the console can provide
+agent downloads. Version `0.6.3` is shared by the agent and browser extension in both editions.
+The console delivers one Windows ZIP containing the immutable MSI, its matching script, an
+organization provisioning JSON and an installation `README.md`. The Windows MSI has no
+Authenticode publisher signature yet. The base image does not host a browser extension. The script
+detects a private IPv4 address (or accepts `MILVAGO_HOST_IP`), binds Caddy to port 4020 on that
+address, and prints the console URL and the path to the owner-readable `.env` file at the end.
+Caddy forwards the public realm, resources and JavaScript assets to Keycloak. It returns 404 for
+`/admin` and `/realms/master`; the Keycloak administrator API is reachable only from the internal
+container network. The application and Keycloak have no direct host port in this installation.
+Only TCP port 4020 is needed through the host firewall. No secret value is printed. Database and
+Mailpit ports remain on loopback. The installer waits for `/readyz` through the published Caddy
+port before reporting success; if the gateway fails, it prints its recent logs.
+
+HTTP on a LAN is intended for trusted test networks; use an HTTPS reverse proxy or gateway for
+broader access. Before the first run behind HTTPS, set
+`MILVAGO_PUBLIC_URL=https://console.example.test` for the installer. The front proxy must preserve
+the Host header and send `X-Forwarded-Proto: https`. A later change in Administration > Settings
+updates the console redirect and Keycloak through its private API; already enrolled agents retain
+their prior URL.
 
 ## Build from source
 

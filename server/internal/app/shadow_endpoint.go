@@ -369,6 +369,10 @@ func (a *App) versionedPolicyRequest(w http.ResponseWriter, r *http.Request, ver
 	if version < 3 || Edition != "commercial" {
 		delete(config, "model_access")
 	}
+	// Blocking a known platform is Enterprise: a Community device is never handed a list.
+	if Edition != "commercial" {
+		delete(config, "blocked_platforms")
+	}
 	now := time.Now().UTC()
 	raw, e := json.Marshal(map[string]any{"version": version, "revision": settings.Revision, "issued_at": now, "expires_at": now.Add(15 * time.Minute), "config": config, "capabilities": caps})
 	if e != nil {
