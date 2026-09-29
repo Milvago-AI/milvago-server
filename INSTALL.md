@@ -2,15 +2,25 @@
 
 ## Install Milvago Community
 
+The localhost default described below is in development and is not included in the published 1.0.1 installer.
+
 On a Linux server with Bash, `curl`, Internet access and `root` or `sudo` privileges, run:
 
 ```bash
 curl -fsSL https://get.milvago.ai | bash
 ```
 
-Enter your full public URL at the `Milvago public URL:` prompt, for example `https://milvago.example.com`.
+For shared access, enter your full public URL at the `Milvago public URL [http://localhost:4020]:` prompt, for example `https://milvago.example.com`.
 The `http://` or `https://` prefix is required; no path, query string or fragment is allowed.
-An invalid URL stops the installer. The prompt reads from the terminal even when piped into Bash.
+An invalid URL stops the installer. Public mode binds the gateway to the host network on port `4020`; prepare DNS and an HTTPS reverse proxy to the server private IP before sharing the console.
+
+Press Enter for local access. It uses `http://localhost:4020` and binds port `4020` only to `127.0.0.1`. An explicit `http://localhost:4020` or `http://127.0.0.1:4020` selects the same local mode. Local mode opens no additional host ports; the application and identity service remain internal. Open it in a browser on the server, or from another computer create an SSH tunnel first:
+
+```bash
+ssh -L 4020:127.0.0.1:4020 user@server
+```
+
+Then open `http://localhost:4020` on that computer. The prompt reads from the terminal even when piped into Bash. Without a controlling terminal and no supplied URL, the installer selects local mode.
 
 To provide the URL directly and skip that question:
 
@@ -19,11 +29,16 @@ curl -fsSL https://get.milvago.ai | MILVAGO_PUBLIC_URL=https://milvago.example.c
 ```
 
 Replace the example address with your own. This does not suppress any required `sudo` password prompt.
-Without a terminal, `MILVAGO_PUBLIC_URL` is required. No GitHub account or token is needed.
+For a non-interactive local installation, set an empty value instead:
+
+```bash
+curl -fsSL https://get.milvago.ai | MILVAGO_PUBLIC_URL='' bash
+```
+
+No GitHub account or token is needed.
 The short URL serves the latest published installer, which pins an exact image version and digest.
 
-Prepare DNS and an HTTPS reverse proxy to the server private IP on port 4020 before opening the console.
-The installer does not create DNS records or issue your HTTPS certificate. Keep the server clock synchronized.
+For public access, the installer does not create DNS records or issue your HTTPS certificate. Keep the server clock synchronized.
 At completion, open the displayed URL, retrieve `MILVAGO_SETUP_TOKEN` from the `.env` path printed by the
 installer, and complete the browser wizard to create the administrator. Keep this file private.
 
@@ -80,16 +95,21 @@ agent downloads. Version `0.6.4` is shared by the agent and browser extension in
 The console delivers one Windows ZIP containing the immutable MSI, its matching script, an
 organization provisioning JSON and an installation `README.md`. The Windows MSI has no
 Authenticode publisher signature yet. The base image does not host a browser extension. Before a
-first installation, the script asks for the exact public HTTP or HTTPS origin where users will open
+first installation, the script asks for the public HTTP or HTTPS origin where users will open
 Milvago, for example `https://console.example.test`. It never guesses a LAN address. The value must
-be an origin only: no path, query, or fragment. For unattended installation, set
-`MILVAGO_PUBLIC_URL=https://console.example.test`; this skips the prompt. The script binds Caddy to
-port 4020 and prints the selected URL and the path to the owner-readable `.env` file at the end.
+be an origin only: no path, query, or fragment. For unattended public installation, set
+`MILVAGO_PUBLIC_URL=https://console.example.test`; this skips the prompt. Leaving the prompt blank,
+setting `MILVAGO_PUBLIC_URL=''`, or explicitly choosing `http://localhost:4020` or
+`http://127.0.0.1:4020` uses local mode: Caddy binds only `127.0.0.1:4020` and the application URL
+is `http://localhost:4020`. With no controlling terminal and no URL, local mode is selected. Public
+mode binds Caddy to the host network on port 4020. The script prints the selected URL and the path to
+the owner-readable `.env` file at the end.
 Caddy forwards the public realm, resources and JavaScript assets to Keycloak. It returns 404 for
 `/admin` and `/realms/master`; the Keycloak administrator API is reachable only from the internal
 container network. The application and Keycloak have no direct host port in this installation.
-Only TCP port 4020 is needed through the host firewall. No secret value is printed. Database and
-Mailpit ports remain on loopback. The installer waits for `/readyz` through the published Caddy
+Public mode needs only TCP port 4020 through the host firewall. Local mode exposes only
+`127.0.0.1:4020`; use a browser on the server or `ssh -L 4020:127.0.0.1:4020 user@server` from
+another computer. No secret value is printed. Database and Mailpit ports remain on loopback. The installer waits for `/readyz` through the published Caddy
 port before reporting success; if the gateway fails, it prints its recent logs.
 
 HTTP on a LAN is intended for trusted test networks; use an HTTPS reverse proxy or gateway for
@@ -111,8 +131,9 @@ sudo-capable installation account that is not in the `docker` group, and keep vo
 specific to its service. This installation does not promise rootless Docker. Docker `userns-remap`
 is not enabled or qualified: test host-network readiness probing and volume ownership before
 enabling it.
-On a later run, a public URL already confirmed in the database is preserved. If the supplied or
-entered URL conflicts with it, the installer stops. Change the URL in **Administration > Settings**;
+On a later run, a URL already confirmed in the database is preserved. If the supplied or entered
+URL, including a switch between local and public mode, conflicts with it, the installer stops rather
+than silently changing the instance URL. Change the URL in **Administration > Settings**;
 this updates the console redirect and Keycloak through its private API. Already enrolled agents
 retain their prior URL and must be re-enrolled to move.
 
