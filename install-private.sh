@@ -107,7 +107,7 @@ ensure_prerequisites() {
     missing+=('curl or wget'); packages+=(curl)
   fi
   if ! has_ca_bundle; then missing+=('CA certificates'); packages+=(ca-certificates); fi
-  if [[ -z "${MILVAGO_HOST_IP:-}" ]] && ! command -v ip >/dev/null 2>&1 && ! command -v hostname >/dev/null 2>&1; then
+  if [[ "${host_ip:-}" != 127.0.0.1 && -z "${MILVAGO_HOST_IP:-}" ]] && ! command -v ip >/dev/null 2>&1 && ! command -v hostname >/dev/null 2>&1; then
     manager=$(package_manager) || return 1
     missing+=(ip)
     if [[ "$manager" == apt ]]; then packages+=(iproute2); else packages+=(iproute); fi
@@ -119,7 +119,7 @@ ensure_prerequisites() {
   for tool in uname dirname mktemp id mkdir mv rm cat env chown chmod ln sleep install sha256sum tar gzip; do need "$tool"; done
   command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 || fail 'Package installation did not provide curl or wget.'
   has_ca_bundle || fail 'Package installation did not provide a trusted CA certificate bundle.'
-  if [[ -z "${MILVAGO_HOST_IP:-}" ]]; then
+  if [[ "${host_ip:-}" != 127.0.0.1 && -z "${MILVAGO_HOST_IP:-}" ]]; then
     command -v ip >/dev/null 2>&1 || command -v hostname >/dev/null 2>&1 || fail 'Set MILVAGO_HOST_IP or install iproute tools.'
   fi
 }
@@ -317,8 +317,6 @@ detect_host_ip() {
   printf '%s' "$address"
 }
 
-ensure_prerequisites
-host_ip=$(detect_host_ip)
 valid_public_origin() {
   local origin=$1
   [[ "$origin" =~ ^https?://[A-Za-z0-9][A-Za-z0-9.-]*(:([0-9]{1,5}))?$ ]] || return 1
@@ -327,17 +325,26 @@ valid_public_origin() {
 }
 select_public_origin() {
   public_origin=${MILVAGO_PUBLIC_URL:-}
-  if [[ -z "$public_origin" ]]; then
-    [[ -r /dev/tty ]] || fail 'Set MILVAGO_PUBLIC_URL to the exact browser URL when no terminal is available.'
-    printf 'Enter the public URL users will open in their browser (for example https://console.example.test).\n' >&2
-    read -r -p 'Milvago public URL: ' public_origin </dev/tty ||
-      fail 'Set MILVAGO_PUBLIC_URL to the exact browser URL when no terminal is available.'
+  if [[ -z "$public_origin" && ! -v MILVAGO_PUBLIC_URL ]]; then
+    # Read only from the controlling terminal, never from the piped script.
+    if { : </dev/tty; } 2>/dev/null; then
+      printf 'Enter the public browser URL, or press Enter for local access at http://localhost:4020.\n' >&2
+      read -r -p 'Milvago public URL [http://localhost:4020]: ' public_origin </dev/tty ||
+        fail 'Cannot read the URL. Set MILVAGO_PUBLIC_URL explicitly (empty for localhost).'
+    fi
   fi
+  public_origin=${public_origin:-http://localhost:4020}
   public_origin=${public_origin%/}
   valid_public_origin "$public_origin" || fail 'Enter an HTTP or HTTPS URL with a host and optional port, without a path, query or fragment.'
-  printf 'Milvago public URL: %s\n' "$public_origin"
+  printf 'Milvago URL: %s\n' "$public_origin"
 }
 select_public_origin
+host_ip=''
+case "$public_origin" in
+  http://localhost:4020|http://127.0.0.1:4020) host_ip=127.0.0.1 ;;
+esac
+ensure_prerequisites
+[[ -n "$host_ip" ]] || host_ip=$(detect_host_ip)
 
 umask 077
 stage=''
@@ -929,7 +936,12 @@ if ! run_docker run --rm --network host -e "MILVAGO_APP_URL=http://$host_ip:4020
 fi
 printf '\nOpen %s for initial setup.\n' "$public_origin"
 printf 'Find the setup token and generated secrets in %s/.env (owner-only).\n' "$root"
-printf 'If the page is unreachable, allow TCP port 4020 through the host firewall.\n'
+if [[ "$host_ip" == 127.0.0.1 ]]; then
+  printf 'Local access only: open the URL on this server, or use an SSH tunnel from your computer.\n'
+  printf 'SSH tunnel example: ssh -L 4020:127.0.0.1:4020 user@server\n'
+else
+  printf 'If the page is unreachable, allow TCP port 4020 through the host firewall.\n'
+fi
 
 }
 
