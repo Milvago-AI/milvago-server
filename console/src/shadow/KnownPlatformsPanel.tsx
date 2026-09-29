@@ -37,6 +37,7 @@ export function KnownPlatformsPanel() {
   return <div className="platform-admin">
     <DiscoverySwitch />
     <Notice>{t('platformsNotice')}</Notice>
+    {session.edition === 'community' && <p className="field-help">{t('platformsEnterpriseBlocking')}</p>}
     <ErrorNotice error={mutation.error} />
     <ResourceView resource={resource}>{data => <PlatformList
       platforms={data.platforms} query={query} setQuery={setQuery}

@@ -13,7 +13,7 @@
       "dom": {
         "editor": "#prompt-textarea,textarea[data-testid=\"prompt-textarea\"],#mobile-composer-prompt",
         "send": "button[data-testid=\"send-button\"],form:has(#mobile-composer-prompt) button[type=\"submit\"]",
-        "response": "[data-message-author-role=\"assistant\"]"
+        "response": "[data-message-author-role=\"assistant\"],[data-message-role=\"assistant\"]"
       },
       "network": [
         {

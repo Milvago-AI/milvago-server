@@ -445,9 +445,13 @@ describe('Shadow AI workflows', () => {
     serve(url => url === '/api/shadow/settings' ? reply(settings) : undefined);
     show(<ShadowAdministration />, { ...session, permissions: [...session.permissions, 'content.purge'] }); const user = userEvent.setup();
     await screen.findByRole('checkbox', { name: 'Activer la collecte' });
-    expect(screen.getByRole('heading', { name: 'Supprimer les contenus conservés' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Purge' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Purge' }));
+    expect(screen.getByRole('dialog', { name: 'Purger les contenus ?' })).toBeInTheDocument();
+    expect(document.querySelector('form form')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Annuler' }));
     await user.click(screen.getByRole('button', { name: /Masquage local/ }));
-    expect(screen.queryByRole('heading', { name: 'Supprimer les contenus conservés' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Purge' })).not.toBeInTheDocument();
   });
   // Product decision of 2026-09-16: a label that its own expression matches is refused --
   // the `[LABEL]` placeholder inserted into the masked text would itself be masked again, endlessly. The

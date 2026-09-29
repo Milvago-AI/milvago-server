@@ -99,9 +99,10 @@
 .inheritance-controls small{display:block;font-size:12px;color:var(--text-2);margin-top:4px}
 .config-save-bar{position:sticky;bottom:12px;display:flex;align-items:center;justify-content:flex-end;gap:12px;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--surface);padding:12px 16px;margin-top:8px;box-shadow:var(--shadow);z-index:2}
 .config-save-bar p{font-size:12px;color:var(--text-2);margin:0 auto 0 0;max-width:320px}
-.content-purge{margin-top:20px}
-.content-purge h3{font-size:16px;margin-bottom:8px}
-.content-purge>p{font-size:13px;color:var(--text-2);max-width:650px}
+.content-retention-row{display:flex;align-items:flex-start;gap:12px;justify-content:space-between}
+.content-retention-row>.config-toggle{min-width:0}
+.content-retention-row>.button{flex-shrink:0}
+.content-retention>.field-help{margin:6px 0 0 26px}
 
 /* ---------- Responsive ---------- */
 @media(max-width:900px){
@@ -132,7 +133,6 @@
   .config-save-bar{flex-direction:column;align-items:stretch}
   .config-save-bar>.button{width:100%}
   .inheritance-controls{flex-direction:column}
-  .content-purge>.button{width:100%}
 }
 /* Conversation thread. The full screen dialog owns the scrolling: the summary
    stays put and only the messages move, so a long exchange never pushes the
