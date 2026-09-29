@@ -697,8 +697,15 @@ services:
   database:
     volumes:
       - ./deploy/postgres-init.sh:/docker-entrypoint-initdb.d/10-milvago.sh:ro,z
+  mail:
+    profiles: !override [development-mail]
+    user: "65532:65532"
+    cap_drop: [ALL]
   identity:
+    command: [start, --import-realm]
     environment:
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "true"
       KC_HOSTNAME: $public_origin
       KC_PROXY_HEADERS: xforwarded
     ports: !override []
@@ -752,6 +759,8 @@ fs.chmodSync(path, 0o640);
 ' || fail 'Cannot grant Keycloak read access to realm.json.'
 run_docker "${compose[@]}" config --quiet || fail 'The private-image Compose configuration is invalid.'
 printf 'Pulling the verified image and starting Community...\n'
+# Stop an old development mail catcher without removing its captured messages.
+run_docker "${compose[@]}" stop mail || fail 'The development mail service could not be stopped.'
 run_docker "${compose[@]}" pull application gateway
 run_docker "${compose[@]}" up -d database identity
 identity_id=$(run_docker "${compose[@]}" ps -q identity)
@@ -841,6 +850,13 @@ run_docker run --rm --network "container:$identity_id" --user "$(id -u):$(id -g)
   const realmResponse = await fetch(base + "/admin/realms/milvago", { headers });
   if (!realmResponse.ok) throw new Error("Keycloak realm lookup returned HTTP " + realmResponse.status);
   const realm = await realmResponse.json();
+  // Remove only the factory mail catcher; preserve operator-configured SMTP.
+  const factorySMTP = {host: "mail", port: "1025", from: "no-reply@milvago.test",
+    fromDisplayName: "Milvago", auth: "false", ssl: "false", starttls: "false"};
+  const smtp = realm.smtpServer || {};
+  const factoryMail = Object.entries(factorySMTP).every(([key, value]) => smtp[key] === value) &&
+    Object.entries(smtp).every(([key, value]) => Object.hasOwn(factorySMTP, key) || value === "" || value === null);
+  if (factoryMail) realm.smtpServer = {};
   realm.attributes = { ...realm.attributes, frontendUrl: appURL };
   // The invitation e-mail is worded by the Milvago e-mail theme.
   realm.emailTheme = "milvago";
@@ -850,6 +866,13 @@ run_docker run --rm --network "container:$identity_id" --user "$(id -u):$(id -g)
     body: JSON.stringify(realm),
   });
   if (!realmUpdate.ok) throw new Error("Keycloak realm URL update returned HTTP " + realmUpdate.status);
+  const configuredRealm = await call("");
+  if (factoryMail && Object.keys(configuredRealm.smtpServer || {}).length !== 0) {
+    throw new Error("The development SMTP configuration was not removed");
+  }
+  if (!configuredRealm.smtpServer?.host) {
+    console.log("SMTP is not configured. Configure and test a real SMTP server in Milvago before sending invitations or password-reset e-mails.");
+  }
   const resetPath = base + "/admin/realms/milvago/authentication/flows/" +
     encodeURIComponent(realm.resetCredentialsFlow || "reset credentials") + "/executions";
   const readReset = async () => {
@@ -874,7 +897,7 @@ run_docker run --rm --network "container:$identity_id" --user "$(id -u):$(id -g)
   process.exitCode = 1;
 });
 ' || fail 'Keycloak could not be configured for the LAN address and password-only recovery.'
-run_docker "${compose[@]}" up -d --no-build
+run_docker "${compose[@]}" up -d --no-build database identity application gateway
 # Caddy reads the mounted Caddyfile at startup, so a rerun must reload it.
 run_docker "${compose[@]}" restart gateway || fail 'The Caddy gateway could not reload its configuration.'
 gateway_id=$(run_docker "${compose[@]}" ps -q gateway)

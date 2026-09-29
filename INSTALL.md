@@ -1,6 +1,33 @@
 # Running Milvago Community locally
 
-## Install the prepared release
+## Install Milvago Community
+
+On a Linux server with Bash, `curl`, Internet access and `root` or `sudo` privileges, run:
+
+```bash
+curl -fsSL https://get.milvago.ai | bash
+```
+
+Enter your full public URL at the `Milvago public URL:` prompt, for example `https://milvago.example.com`.
+The `http://` or `https://` prefix is required; no path, query string or fragment is allowed.
+An invalid URL stops the installer. The prompt reads from the terminal even when piped into Bash.
+
+To provide the URL directly and skip that question:
+
+```bash
+curl -fsSL https://get.milvago.ai | MILVAGO_PUBLIC_URL=https://milvago.example.com bash
+```
+
+Replace the example address with your own. This does not suppress any required `sudo` password prompt.
+Without a terminal, `MILVAGO_PUBLIC_URL` is required. No GitHub account or token is needed.
+The short URL serves the latest published installer, which pins an exact image version and digest.
+
+Prepare DNS and an HTTPS reverse proxy to the server private IP on port 4020 before opening the console.
+The installer does not create DNS records or issue your HTTPS certificate. Keep the server clock synchronized.
+At completion, open the displayed URL, retrieve `MILVAGO_SETUP_TOKEN` from the `.env` path printed by the
+installer, and complete the browser wizard to create the administrator. Keep this file private.
+
+## Install a specific version
 
 The repository copy of `install-private.sh` is a non-executable template. Download the installer,
 its checksum file, and its immutable release description anonymously from the public `v1.0.0`
@@ -67,6 +94,23 @@ port before reporting success; if the gateway fails, it prints its recent logs.
 
 HTTP on a LAN is intended for trusted test networks; use an HTTPS reverse proxy or gateway for
 broader access. The front proxy must preserve the Host header and send `X-Forwarded-Proto: https`.
+The installed profile runs Keycloak with `start` in production mode behind that proxy.
+
+Mailpit is disabled by default in the installed profile. It is available only through the
+`development-mail` profile when deliberately needed for development and is not a production mail
+service. Configure and send a test message through a real SMTP server during setup or later in
+**Administration > Settings** before depending on member invitations or password-reset email. Those
+messages are unavailable without SMTP. On every installer run, an already-running development
+Mailpit service is stopped without deleting its captured messages. The installer removes only the
+factory SMTP configuration (`mail:1025`, `no-reply@milvago.test`) and preserves operator-configured
+SMTP settings.
+
+The gateway and development-mail containers run as `65532:65532` with all Linux capabilities
+dropped; the gateway adds only the capability required to bind its port. Use a dedicated
+sudo-capable installation account that is not in the `docker` group, and keep volume ownership
+specific to its service. This installation does not promise rootless Docker. Docker `userns-remap`
+is not enabled or qualified: test host-network readiness probing and volume ownership before
+enabling it.
 On a later run, a public URL already confirmed in the database is preserved. If the supplied or
 entered URL conflicts with it, the installer stops. Change the URL in **Administration > Settings**;
 this updates the console redirect and Keycloak through its private API. Already enrolled agents
