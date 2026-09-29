@@ -12,8 +12,8 @@ When no complete checkout is present, the script downloads the pinned private Co
 server source into `$HOME/milvago-community`. Set `MILVAGO_DIR` to another absolute
 path if needed. A standalone install needs a GitHub personal access token (classic)
 with `repo` and `read:packages`, plus access to the private repository and package.
-From a complete checkout, `repo` and `read:packages` are still needed to fetch the private agent release. Each run selects the latest
-published Community image, verifies its signature and replaces the application container
+From a complete checkout, `repo` and `read:packages` are still needed to fetch the private agent release. Each run uses the pinned
+Community image, verifies its signature and replaces the application container
 when it changes. The checkout, local configuration and database are preserved. The GitHub
 token is never stored there.
 The pinned Node container downloads and extracts the source; no host `tar` is needed.

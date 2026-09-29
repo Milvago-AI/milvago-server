@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SOURCE_COMMIT='edbf03ad9a55e039c9ee88921c439e9861ef9537'
-IMAGE='ghcr.io/milvago-ai/milvago-community-server@sha256:340b80d54f36ecc0a08a30bdbaf8afe5dce6869d67338d42a671efdf4849cda9'
+IMAGE='ghcr.io/milvago-ai/milvago-community-server@sha256:a4e4a7eab338cebcbb423c6810b93a91dc999099eec20eef2c227eb1dd64fab6'
 COSIGN_IMAGE='ghcr.io/sigstore/cosign/cosign:v3.1.3@sha256:9e5c2f2edc34351160407ca3416c61855bdf9403c3c5936e0f0be7fc261611b8'
 CADDY_IMAGE='caddy:2.11.4-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b'
 NODE_IMAGE='node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2'
@@ -409,31 +409,6 @@ fi
 [[ "$registry_token" =~ ^[A-Za-z0-9_]+$ ]] || fail 'GitHub token is required.'
 printf '%s' "$registry_token" | run_docker login ghcr.io --username "$GHCR_USERNAME" --password-stdin >/dev/null ||
   fail 'GHCR login failed. Check package access and the read:packages scope.'
-printf 'Checking published Community images...\n'
-latest_image=$(printf '%s' "$registry_token" | run_docker run --rm -i "$NODE_IMAGE" node -e '
-(async () => {
-const token = require("node:fs").readFileSync(0, "utf8").trim();
-const response = await fetch(
-  "https://api.github.com/orgs/Milvago-AI/packages/container/milvago-community-server/versions?per_page=100",
-  { headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github+json" } },
-);
-if (!response.ok) throw new Error("GitHub Packages returned HTTP " + response.status);
-const versions = await response.json();
-const published = versions
-  .filter((entry) => /^sha256:[a-f0-9]{64}$/.test(entry.name) &&
-    entry.metadata?.container?.tags?.some((tag) => /^sha-[a-f0-9]{40}$/.test(tag)))
-  .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
-if (!published.length) throw new Error("No published Community image was found");
-process.stdout.write("ghcr.io/milvago-ai/milvago-community-server@" + published[0].name);
-})().catch((error) => {
-  console.error("Error: " + error.message);
-  process.exitCode = 1;
-});
-') || fail 'Cannot find the latest private Community image. Check read:packages access.'
-[[ "$latest_image" =~ ^ghcr[.]io/milvago-ai/milvago-community-server@sha256:[a-f0-9]{64}$ ]] ||
-  fail 'GitHub Packages returned an invalid image digest.'
-IMAGE=$latest_image
-unset latest_image
 UPDATE_PUBLIC_KEY='14ER8eA7zpdlVLLgL+7CPce5eka1Eqmp8Tmz2mUJxmg='
 cat > "$root/.local/generated/fetch-agent-release.mjs" <<'NODE'
 import { createHash, createPublicKey, verify } from 'node:crypto';
