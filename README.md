@@ -100,15 +100,27 @@ On a Linux server with Bash, curl, Internet access and root or sudo privileges, 
 curl -fsSL https://get.milvago.ai | bash
 ```
 
-Enter your full public Milvago URL, such as `https://milvago.example.com`, when prompted.
+For shared access, enter your full public Milvago URL, such as `https://milvago.example.com`, at the `Milvago public URL [http://localhost:4020]:` prompt.
 Prepare DNS and an HTTPS reverse proxy to the server's private IP on port **4020** first.
 No GitHub account or token is required. The installer checks prerequisites and installs
 the public release using its exact image version and digest.
+
+Press Enter at the prompt for local access at `http://localhost:4020`; the gateway then binds only to
+`127.0.0.1:4020`. An explicit `http://localhost:4020`, `http://127.0.0.1:4020`, or an empty
+`MILVAGO_PUBLIC_URL` selects the same local mode. From another computer, tunnel it with
+`ssh -L 4020:127.0.0.1:4020 user@server`, then open `http://localhost:4020` locally. Local mode
+opens no additional host ports; the application and identity service remain internal.
 
 To provide the URL directly:
 
 ```bash
 curl -fsSL https://get.milvago.ai | MILVAGO_PUBLIC_URL=https://milvago.example.com bash
+```
+
+For non-interactive local access:
+
+```bash
+curl -fsSL https://get.milvago.ai | MILVAGO_PUBLIC_URL='' bash
 ```
 
 Open the displayed URL and enter `MILVAGO_SETUP_TOKEN` from the `.env` file at the

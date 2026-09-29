@@ -9,7 +9,11 @@ if(!response.ok)throw new Error('Admin authentication failed');
 const token=(await response.json()).access_token;
 const headers={Authorization:'Bearer '+token,'Content-Type':'application/json'};
 const action=process.argv[2];
-if(action==='set'){
+if(action==='discovery'){
+ const result=await fetch(base+'/realms/milvago/.well-known/openid-configuration');
+ if(!result.ok)throw new Error('OIDC discovery failed');
+ assert.equal((await result.json()).issuer,process.argv[3]+'/realms/milvago');
+}else if(action==='set'){
  const smtpServer=JSON.parse(process.argv[3]);
  const result=await fetch(base+'/admin/realms/milvago',{method:'PUT',headers,body:JSON.stringify({smtpServer})});
  if(!result.ok)throw new Error('SMTP fixture failed');
@@ -19,4 +23,4 @@ if(action==='set'){
  const expected=JSON.parse(process.argv[3]);
  const current=(await result.json()).smtpServer;
  for(const [key,value] of Object.entries(expected))assert.equal(current[key],value);
-}else throw new Error('Expected set or verify');
+}else throw new Error('Expected set, verify or discovery');
