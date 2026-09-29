@@ -4,7 +4,7 @@
 main() {
 set -euo pipefail
 
-MILVAGO_RELEASE_VERSION='1.0.2'
+MILVAGO_RELEASE_VERSION='1.0.3'
 SOURCE_COMMIT='@SOURCE_COMMIT@'
 IMAGE='@IMAGE@'
 
@@ -317,6 +317,23 @@ detect_host_ip() {
   printf '%s' "$address"
 }
 
+inspect_docker_cli() {
+  local docker_path
+  install_engine=0
+  if docker_path=$(command -v docker 2>/dev/null); then
+    # Windows PATH interoperability can expose a Docker Desktop shim without WSL integration.
+    if [[ "$docker_path" == /mnt/* ]]; then
+      fail "The docker command found is Docker Desktop for Windows ($docker_path), not usable from WSL. Enable Docker Desktop > Settings > Resources > WSL integration for this distribution, then rerun."
+    fi
+    docker --version >/dev/null 2>&1 ||
+      fail "The docker command at $docker_path is present but does not run. Repair or remove it, then rerun."
+  else
+    install_engine=1
+  fi
+}
+# Reject a broken existing CLI before prerequisite or Docker package installation.
+inspect_docker_cli
+
 valid_public_origin() {
   local origin=$1
   [[ "$origin" =~ ^https?://[A-Za-z0-9][A-Za-z0-9.-]*(:([0-9]{1,5}))?$ ]] || return 1
@@ -379,9 +396,7 @@ if ! complete_checkout "$root"; then
   needs_source=1
 fi
 
-install_engine=0
 install_compose=0
-command -v docker >/dev/null 2>&1 || install_engine=1
 if (( install_engine )) || ! docker compose version >/dev/null 2>&1 || ! compose_supports_reset; then
   install_compose=1
 fi
