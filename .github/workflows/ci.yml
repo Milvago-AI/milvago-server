@@ -27,6 +27,7 @@ jobs:
           node-version: '26.9.0'
       - run: node --test scripts/server-release.test.mjs
       - run: node scripts/server-release.mjs check
+      - run: node scripts/check-production-installer.mjs
 
   dev-image:
     needs: [release-policy, distroless, console, server]

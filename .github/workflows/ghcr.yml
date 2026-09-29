@@ -19,12 +19,11 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '26.9.0'
-      - name: Check release and source visibility
+      - name: Check release policy
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           node scripts/server-release.mjs check
-          test "$(gh api "repos/$GITHUB_REPOSITORY" --jq .private)" = true
       - name: Choose immutable image tag
         id: release
         env:

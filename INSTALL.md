@@ -1,33 +1,59 @@
 # Running Milvago Community locally
 
-## Install the prepared release
+## Install Milvago Community
 
-The repository copy of `install-private.sh` is a non-executable template. When `v1.0.0` is
-published, download the installer, its checksum file, and its immutable release description
-from that exact release:
+On a Linux server with Bash, `curl`, Internet access and `root` or `sudo` privileges, run:
+
+```bash
+curl -fsSL https://get.milvago.ai | bash
+```
+
+Enter your full public URL at the `Milvago public URL:` prompt, for example `https://milvago.example.com`.
+The `http://` or `https://` prefix is required; no path, query string or fragment is allowed.
+An invalid URL stops the installer. The prompt reads from the terminal even when piped into Bash.
+
+To provide the URL directly and skip that question:
+
+```bash
+curl -fsSL https://get.milvago.ai | MILVAGO_PUBLIC_URL=https://milvago.example.com bash
+```
+
+Replace the example address with your own. This does not suppress any required `sudo` password prompt.
+Without a terminal, `MILVAGO_PUBLIC_URL` is required. No GitHub account or token is needed.
+The short URL serves the latest published installer, which pins an exact image version and digest.
+
+Prepare DNS and an HTTPS reverse proxy to the server private IP on port 4020 before opening the console.
+The installer does not create DNS records or issue your HTTPS certificate. Keep the server clock synchronized.
+At completion, open the displayed URL, retrieve `MILVAGO_SETUP_TOKEN` from the `.env` path printed by the
+installer, and complete the browser wizard to create the administrator. Keep this file private.
+
+## Install a specific version
+
+The repository copy of `install-private.sh` is a non-executable template. Download the installer,
+its checksum file, and its immutable release description anonymously from the public `v1.0.1`
+release:
 
 ```bash
 mkdir milvago-install && cd milvago-install
-gh release download v1.0.0 --repo Milvago-AI/milvago-server \
-  --pattern install-private.sh --pattern SHA256SUMS --pattern release.json
+release_url=https://github.com/Milvago-AI/milvago-server/releases/download/v1.0.1
+curl -fLO "$release_url/install-private.sh"
+curl -fLO "$release_url/SHA256SUMS"
+curl -fLO "$release_url/release.json"
 sha256sum --check SHA256SUMS
 bash install-private.sh
 ```
 
-Set `GHCR_TOKEN` to a classic GitHub personal access token with `repo` before downloading from
-the private server source or private agent release. The variable keeps its historical name; the token now authenticates only source and agent
-downloads and is never stored by the installer. GitHub CLI must also be authenticated
-to download the release assets shown above. The public server image does not need
-credentials: it is pulled anonymously from `ghcr.io/milvago-ai/milvago-server:1.0.0` using the
-exact digest recorded in `release.json`.
+`wget` can replace each `curl -fLO` command. No GitHub CLI login, GitHub token, or registry
+credential is required. The server image is pulled anonymously from
+`ghcr.io/milvago-ai/milvago-server:1.0.1` using the exact digest recorded in `release.json`.
 
 The release pipeline generates `install-private.sh`, `SHA256SUMS`, and `release.json` together.
 They bind the server version, full commit, image digest, and cosign signature verification to
-that release. `MILVAGO_VERSION`, when set, must equal `1.0.0`; the installer rejects a different
+that release. `MILVAGO_VERSION`, when set, must equal `1.0.1`; the installer rejects a different
 or floating value. It never uses `latest`.
 
-On a first standalone installation only, the installer obtains the server source pinned to the
-release commit and places it in `$HOME/milvago-community`. Set `MILVAGO_DIR` to another absolute
+On a first standalone installation only, the installer obtains the public server source pinned to
+the release commit and places it in `$HOME/milvago-community`. Set `MILVAGO_DIR` to another absolute
 path if needed. It does not synchronize an existing checkout. Every run preserves local
 configuration and the database while replacing the application container only when the pinned
 image changes.
@@ -48,7 +74,7 @@ missing prerequisites require an unsupported package manager, the installer stop
 error; it does not claim support for every distribution or version.
 
 The base image contains the server and console only. The installer also downloads the pinned
-Community `0.6.4` Windows and Linux agent bundle from the private agent repository, verifies its
+Community `0.6.4` Windows and Linux agent bundle anonymously from its public release, verifies its
 SHA-256, Ed25519 signatures, and manifest expiration (the prepared manifests are valid through 2027-09-29), then mounts the verified files read-only so the console can provide
 agent downloads. Version `0.6.4` is shared by the agent and browser extension in both editions.
 The console delivers one Windows ZIP containing the immutable MSI, its matching script, an
@@ -68,6 +94,23 @@ port before reporting success; if the gateway fails, it prints its recent logs.
 
 HTTP on a LAN is intended for trusted test networks; use an HTTPS reverse proxy or gateway for
 broader access. The front proxy must preserve the Host header and send `X-Forwarded-Proto: https`.
+The installed profile runs Keycloak with `start` in production mode behind that proxy.
+
+Mailpit is disabled by default in the installed profile. It is available only through the
+`development-mail` profile when deliberately needed for development and is not a production mail
+service. Configure and send a test message through a real SMTP server during setup or later in
+**Administration > Settings** before depending on member invitations or password-reset email. Those
+messages are unavailable without SMTP. On every installer run, an already-running development
+Mailpit service is stopped without deleting its captured messages. The installer removes only the
+factory SMTP configuration (`mail:1025`, `no-reply@milvago.test`) and preserves operator-configured
+SMTP settings.
+
+The gateway and development-mail containers run as `65532:65532` with all Linux capabilities
+dropped; the gateway adds only the capability required to bind its port. Use a dedicated
+sudo-capable installation account that is not in the `docker` group, and keep volume ownership
+specific to its service. This installation does not promise rootless Docker. Docker `userns-remap`
+is not enabled or qualified: test host-network readiness probing and volume ownership before
+enabling it.
 On a later run, a public URL already confirmed in the database is preserved. If the supplied or
 entered URL conflicts with it, the installer stops. Change the URL in **Administration > Settings**;
 this updates the console redirect and Keycloak through its private API. Already enrolled agents
@@ -135,7 +178,7 @@ application URL uses HTTPS.
 
 ## Endpoint agent and browser extension
 
-They live in their own repository. An image built from this source alone serves no extension (`/ext/*` answers `503 extension_unconfigured`) and no installer. The private installation script fetches and mounts the signed Community agent bundle separately.
+They live in their own repository. An image built from this source alone serves no extension (`/ext/*` answers `503 extension_unconfigured`) and no installer. The prepared installation script fetches and mounts the signed Community agent bundle separately.
 
 ## Running the tests
 

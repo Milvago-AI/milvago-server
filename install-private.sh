@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
+
+# Parse the complete installer before starting, including when piped into Bash.
+main() {
 set -euo pipefail
 
-MILVAGO_RELEASE_VERSION='1.0.0'
+MILVAGO_RELEASE_VERSION='1.0.1'
 SOURCE_COMMIT='@SOURCE_COMMIT@'
 IMAGE='@IMAGE@'
 
@@ -325,9 +328,10 @@ valid_public_origin() {
 select_public_origin() {
   public_origin=${MILVAGO_PUBLIC_URL:-}
   if [[ -z "$public_origin" ]]; then
-    [[ -t 0 ]] || fail 'Set MILVAGO_PUBLIC_URL to the exact browser URL when running non-interactively.'
+    [[ -r /dev/tty ]] || fail 'Set MILVAGO_PUBLIC_URL to the exact browser URL when no terminal is available.'
     printf 'Enter the public URL users will open in their browser (for example https://console.example.test).\n' >&2
-    read -r -p 'Milvago public URL: ' public_origin || fail 'The public URL is required.'
+    read -r -p 'Milvago public URL: ' public_origin </dev/tty ||
+      fail 'Set MILVAGO_PUBLIC_URL to the exact browser URL when no terminal is available.'
   fi
   public_origin=${public_origin%/}
   valid_public_origin "$public_origin" || fail 'Enter an HTTP or HTTPS URL with a host and optional port, without a path, query or fragment.'
@@ -347,18 +351,20 @@ complete_checkout() {
   local checkout=$1
   [[ -f "$checkout/compose.yaml" && -f "$checkout/scripts/local-init.mjs" && -f "$checkout/cosign.pub" ]]
 }
-script_root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+script_root=''
+script_file=${BASH_SOURCE[0]:-}
+if [[ -n "$script_file" && -f "$script_file" ]]; then
+  script_root=$(CDPATH= cd -- "$(dirname -- "$script_file")" && pwd -P)
+fi
 if [[ -n "${MILVAGO_DIR:-}" ]]; then
   root=$MILVAGO_DIR
-elif complete_checkout "$script_root"; then
+elif [[ -n "$script_root" ]] && complete_checkout "$script_root"; then
   root=$script_root
 else
   root="$HOME/milvago-community"
 fi
 [[ "$root" == /* ]] || fail 'MILVAGO_DIR must be an absolute path.'
 
-registry_token=${GHCR_TOKEN:-}
-unset GHCR_TOKEN
 needs_source=0
 if ! complete_checkout "$root"; then
   [[ ! -e "$root" ]] ||
@@ -434,61 +440,38 @@ run_docker compose version >/dev/null 2>&1 || fail 'Docker Compose is unavailabl
 compose_supports_reset || fail 'Docker Compose cannot process the required !reset and !override configuration.'
 
 if (( needs_source )); then
-  if [[ -z "$registry_token" ]]; then
-    [[ -r /dev/tty ]] || fail 'Set GHCR_TOKEN when no interactive terminal is available.'
-    read -r -s -p 'GitHub classic token (repo): ' registry_token </dev/tty
-    printf '\n' >&2
-  fi
-  [[ "$registry_token" =~ ^[A-Za-z0-9_]+$ ]] || fail 'A GitHub token is required.'
   parent=$(dirname -- "$root")
   mkdir -p -- "$parent"
   stage=$(mktemp -d "$parent/.milvago-source.XXXXXXXX")
   mkdir -- "$stage/source"
   cat > "$stage/download.mjs" <<'NODE'
-import { readFileSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
 try {
-  const token = readFileSync(0, 'utf8').trim();
   const revision = process.argv[2];
-  const response = await fetch(
-    'https://api.github.com/repos/Milvago-AI/milvago-server/tarball/' + revision,
-    {
-      headers: {
-        Authorization: 'Bearer ' + token,
-        Accept: 'application/vnd.github+json',
-      },
-      redirect: 'manual',
-    },
-  );
-  if (response.status !== 302 && response.status !== 307) {
-    throw new Error('Private Community source request returned HTTP ' + response.status);
-  }
-  const archiveURL = new URL(response.headers.get('location'));
-  if (archiveURL.origin !== 'https://codeload.github.com') {
-    throw new Error('Private Community source redirect was unexpected');
-  }
-  const archive = await fetch(archiveURL, { redirect: 'error' });
+  if (!/^[a-f0-9]{40}$/.test(revision)) throw new Error('Expected an exact source commit');
+  const archive = await fetch('https://codeload.github.com/Milvago-AI/milvago-server/tar.gz/' + revision,
+    { redirect: 'error' });
   if (!archive.ok) {
-    throw new Error('Private Community source download returned HTTP ' + archive.status);
+    throw new Error('Community source download returned HTTP ' + archive.status);
   }
   writeFileSync('/work/source.tar.gz', Buffer.from(await archive.arrayBuffer()), { mode: 0o600 });
   const unpack = spawnSync('tar', [
     '-xzf', '/work/source.tar.gz', '--strip-components=1',
     '--no-same-owner', '-C', '/work/source',
   ], { stdio: 'inherit' });
-  if (unpack.status !== 0) throw new Error('Private Community source extraction failed');
+  if (unpack.status !== 0) throw new Error('Community source extraction failed');
 } catch (error) {
   console.error('Error: ' + error.message);
   process.exitCode = 1;
 }
 NODE
   printf 'Fetching the pinned Community server source into %s...\n' "$root"
-  printf '%s' "$registry_token" |
-    run_docker run --rm -i --user "$(id -u):$(id -g)" \
+  run_docker run --rm --user "$(id -u):$(id -g)" \
       -v "$stage:/work:Z" -w /work \
       "$NODE_IMAGE" node /work/download.mjs "$SOURCE_COMMIT" ||
-    fail 'The private Community source could not be downloaded and extracted. Check repository access and the repo token scope.'
+    fail 'The public Community source could not be downloaded and extracted. Check network access to GitHub.'
   complete_checkout "$stage/source" ||
     fail 'The downloaded Community source is incomplete.'
   mv -- "$stage/source" "$root"
@@ -507,13 +490,8 @@ if [[ -d "$original_docker_config/cli-plugins" ]]; then
 fi
 export DOCKER_CONFIG="$auth_dir"
 
-if [[ -z "$registry_token" ]]; then
-  [[ -r /dev/tty ]] || fail 'Set GHCR_TOKEN when no interactive terminal is available.'
-  read -r -s -p 'GitHub classic token (repo): ' registry_token </dev/tty
-  printf '\n' >&2
-fi
-[[ "$registry_token" =~ ^[A-Za-z0-9_]+$ ]] || fail 'GitHub token is required.'
 UPDATE_PUBLIC_KEY='14ER8eA7zpdlVLLgL+7CPce5eka1Eqmp8Tmz2mUJxmg='
+mkdir -p -- "$root/.local/generated"
 cat > "$root/.local/generated/fetch-agent-release.mjs" <<'NODE'
 import { createHash, createPublicKey, verify } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
@@ -546,10 +524,7 @@ const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const requireValue = (condition, message) => { if (!condition) throw Error(message); };
 let stage;
 try {
-  const token = readFileSync(0, 'utf8').trim();
-  requireValue(/^[A-Za-z0-9_]+$/.test(token), 'GitHub token is missing');
-  const response = await fetch('https://api.github.com/repos/Milvago-AI/milvago-agent/releases/assets/597904999', {
-    headers: { Authorization: 'Bearer ' + token, Accept: 'application/octet-stream', 'X-GitHub-Api-Version': '2022-11-28' },
+  const response = await fetch('https://github.com/Milvago-AI/milvago-agent/releases/download/community-agent-v0.6.4/community-agent-v0.6.4.tar.gz', {
     redirect: 'manual',
   });
   let archiveResponse = response;
@@ -559,7 +534,7 @@ try {
       'Unexpected Community agent release redirect');
     archiveResponse = await fetch(redirect, { redirect: 'error' });
   }
-  requireValue(archiveResponse.ok, 'Private Community agent release returned HTTP ' + archiveResponse.status);
+  requireValue(archiveResponse.ok, 'Community agent release returned HTTP ' + archiveResponse.status);
   const archive = Buffer.from(await archiveResponse.arrayBuffer());
   requireValue(archive.length < 32 * 1024 * 1024 && digest(archive) === expectedArchive,
     'Community agent archive digest does not match the pinned release');
@@ -622,14 +597,12 @@ try {
   if (stage) rmSync(stage, { recursive: true, force: true });
 }
 NODE
-printf 'Fetching and verifying the private Community agents...\n'
-printf '%s' "$registry_token" |
-  run_docker run --rm -i --user "$(id -u):$(id -g)" \
+printf 'Fetching and verifying the public Community agents...\n'
+run_docker run --rm --user "$(id -u):$(id -g)" \
     -v "$root:/work:z" -w /work \
     -e "MILVAGO_UPDATE_PUBLIC_KEY=$UPDATE_PUBLIC_KEY" \
     "$NODE_IMAGE" node .local/generated/fetch-agent-release.mjs ||
-  fail 'The signed Community agent release could not be prepared. Check access to the private milvago-agent repository.'
-unset registry_token
+  fail 'The signed Community agent release could not be prepared. Check network access to GitHub.'
 
 printf 'Verifying the Community image signature...\n'
 run_docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
@@ -724,8 +697,15 @@ services:
   database:
     volumes:
       - ./deploy/postgres-init.sh:/docker-entrypoint-initdb.d/10-milvago.sh:ro,z
+  mail:
+    profiles: !override [development-mail]
+    user: "65532:65532"
+    cap_drop: [ALL]
   identity:
+    command: [start, --import-realm]
     environment:
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "true"
       KC_HOSTNAME: $public_origin
       KC_PROXY_HEADERS: xforwarded
     ports: !override []
@@ -779,6 +759,8 @@ fs.chmodSync(path, 0o640);
 ' || fail 'Cannot grant Keycloak read access to realm.json.'
 run_docker "${compose[@]}" config --quiet || fail 'The private-image Compose configuration is invalid.'
 printf 'Pulling the verified image and starting Community...\n'
+# Stop an old development mail catcher without removing its captured messages.
+run_docker "${compose[@]}" stop mail || fail 'The development mail service could not be stopped.'
 run_docker "${compose[@]}" pull application gateway
 run_docker "${compose[@]}" up -d database identity
 identity_id=$(run_docker "${compose[@]}" ps -q identity)
@@ -868,6 +850,13 @@ run_docker run --rm --network "container:$identity_id" --user "$(id -u):$(id -g)
   const realmResponse = await fetch(base + "/admin/realms/milvago", { headers });
   if (!realmResponse.ok) throw new Error("Keycloak realm lookup returned HTTP " + realmResponse.status);
   const realm = await realmResponse.json();
+  // Remove only the factory mail catcher; preserve operator-configured SMTP.
+  const factorySMTP = {host: "mail", port: "1025", from: "no-reply@milvago.test",
+    fromDisplayName: "Milvago", auth: "false", ssl: "false", starttls: "false"};
+  const smtp = realm.smtpServer || {};
+  const factoryMail = Object.entries(factorySMTP).every(([key, value]) => smtp[key] === value) &&
+    Object.entries(smtp).every(([key, value]) => Object.hasOwn(factorySMTP, key) || value === "" || value === null);
+  if (factoryMail) realm.smtpServer = {};
   realm.attributes = { ...realm.attributes, frontendUrl: appURL };
   // The invitation e-mail is worded by the Milvago e-mail theme.
   realm.emailTheme = "milvago";
@@ -877,6 +866,13 @@ run_docker run --rm --network "container:$identity_id" --user "$(id -u):$(id -g)
     body: JSON.stringify(realm),
   });
   if (!realmUpdate.ok) throw new Error("Keycloak realm URL update returned HTTP " + realmUpdate.status);
+  const configuredRealm = await call("");
+  if (factoryMail && Object.keys(configuredRealm.smtpServer || {}).length !== 0) {
+    throw new Error("The development SMTP configuration was not removed");
+  }
+  if (!configuredRealm.smtpServer?.host) {
+    console.log("SMTP is not configured. Configure and test a real SMTP server in Milvago before sending invitations or password-reset e-mails.");
+  }
   const resetPath = base + "/admin/realms/milvago/authentication/flows/" +
     encodeURIComponent(realm.resetCredentialsFlow || "reset credentials") + "/executions";
   const readReset = async () => {
@@ -901,7 +897,7 @@ run_docker run --rm --network "container:$identity_id" --user "$(id -u):$(id -g)
   process.exitCode = 1;
 });
 ' || fail 'Keycloak could not be configured for the LAN address and password-only recovery.'
-run_docker "${compose[@]}" up -d --no-build
+run_docker "${compose[@]}" up -d --no-build database identity application gateway
 # Caddy reads the mounted Caddyfile at startup, so a rerun must reload it.
 run_docker "${compose[@]}" restart gateway || fail 'The Caddy gateway could not reload its configuration.'
 gateway_id=$(run_docker "${compose[@]}" ps -q gateway)
@@ -934,3 +930,7 @@ fi
 printf '\nOpen %s for initial setup.\n' "$public_origin"
 printf 'Find the setup token and generated secrets in %s/.env (owner-only).\n' "$root"
 printf 'If the page is unreachable, allow TCP port 4020 through the host firewall.\n'
+
+}
+
+main "$@"
