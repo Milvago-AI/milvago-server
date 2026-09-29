@@ -94,8 +94,6 @@ extension are distributed separately.
 
 ## Quick start
 
-The localhost default described below is in development and is not included in the published 1.0.1 installer.
-
 On a Linux server with Bash, curl, Internet access and root or sudo privileges, run:
 
 ```bash
