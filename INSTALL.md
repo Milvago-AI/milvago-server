@@ -32,11 +32,20 @@ path if needed. It does not synchronize an existing checkout. Every run preserve
 configuration and the database while replacing the application container only when the pinned
 image changes.
 
-On Linux, the script installs missing Docker Engine and incompatible or missing Compose packages
-through Docker's official package repositories on supported Ubuntu, Debian, Fedora, and
-RHEL-compatible systems. Existing working Docker installations are left in place. Package
-installation requires root or `sudo`, plus `curl` or `wget` and `sha256sum`. Other distributions
-need Docker Engine and Compose installed first.
+Before detecting a host address or beginning installation, the script checks the core utilities,
+`tar`, `gzip`, a CA certificate bundle, and either `curl` or `wget`; it keeps an existing `wget`.
+When neither `ip` nor `hostname` is available and `MILVAGO_HOST_IP` is unset, it also needs the IP
+utility. On Debian and Ubuntu, missing prerequisites are installed with `apt-get`; on RPM-family
+systems, the script uses `dnf` or `yum`. It resolves an exact candidate version for every missing
+package before the transaction, installs only those packages without a system-wide upgrade, and
+verifies the tools after installation. Root or `sudo` is required only when packages are missing.
+
+The script installs missing Docker Engine and incompatible or missing Compose packages through
+Docker's official package repositories only on supported Ubuntu, Debian, Fedora, RHEL 8–10, and
+their supported derivatives. Existing working Docker installations are left in place. Other Linux
+distributions can run the installer when Docker, Compose, and the prerequisites already exist. If
+missing prerequisites require an unsupported package manager, the installer stops with a clear
+error; it does not claim support for every distribution or version.
 
 The base image contains the server and console only. The installer also downloads the pinned
 Community `0.6.4` Windows and Linux agent bundle from the private agent repository, verifies its
@@ -44,9 +53,12 @@ SHA-256, Ed25519 signatures, and manifest expiration (the prepared manifests are
 agent downloads. Version `0.6.4` is shared by the agent and browser extension in both editions.
 The console delivers one Windows ZIP containing the immutable MSI, its matching script, an
 organization provisioning JSON and an installation `README.md`. The Windows MSI has no
-Authenticode publisher signature yet. The base image does not host a browser extension. The script
-detects a private IPv4 address (or accepts `MILVAGO_HOST_IP`), binds Caddy to port 4020 on that
-address, and prints the console URL and the path to the owner-readable `.env` file at the end.
+Authenticode publisher signature yet. The base image does not host a browser extension. Before a
+first installation, the script asks for the exact public HTTP or HTTPS origin where users will open
+Milvago, for example `https://console.example.test`. It never guesses a LAN address. The value must
+be an origin only: no path, query, or fragment. For unattended installation, set
+`MILVAGO_PUBLIC_URL=https://console.example.test`; this skips the prompt. The script binds Caddy to
+port 4020 and prints the selected URL and the path to the owner-readable `.env` file at the end.
 Caddy forwards the public realm, resources and JavaScript assets to Keycloak. It returns 404 for
 `/admin` and `/realms/master`; the Keycloak administrator API is reachable only from the internal
 container network. The application and Keycloak have no direct host port in this installation.
@@ -55,11 +67,13 @@ Mailpit ports remain on loopback. The installer waits for `/readyz` through the 
 port before reporting success; if the gateway fails, it prints its recent logs.
 
 HTTP on a LAN is intended for trusted test networks; use an HTTPS reverse proxy or gateway for
-broader access. Before the first run behind HTTPS, set
-`MILVAGO_PUBLIC_URL=https://console.example.test` for the installer. The front proxy must preserve
-the Host header and send `X-Forwarded-Proto: https`. A later change in Administration > Settings
-updates the console redirect and Keycloak through its private API; already enrolled agents retain
-their prior URL.
+broader access. The front proxy must preserve the Host header and send `X-Forwarded-Proto: https`.
+On a later run, a public URL already confirmed in the database is preserved. If the supplied or
+entered URL conflicts with it, the installer stops. Change the URL in **Administration > Settings**;
+this updates the console redirect and Keycloak through its private API. Already enrolled agents
+retain their prior URL and must be re-enrolled to move.
+
+If the final setup-wizard step returns `502` after an installation made with an earlier installer, rerun the current installer with the same public URL. It repairs the four required Keycloak service-account roles: `manage-clients`, `view-clients`, `manage-identity-providers`, and `view-identity-providers`; it does not grant `realm-admin`. The rerun preserves the database and existing accounts. A `502` can have other causes, so inspect the application and gateway logs when it persists after the rerun.
 
 ## Build from source
 

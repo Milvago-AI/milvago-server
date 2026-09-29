@@ -25,6 +25,102 @@ need() { local command_name=$1; command -v "$command_name" >/dev/null 2>&1 || fa
 as_root() {
   if (( EUID == 0 )); then "$@"; else sudo "$@"; fi
 }
+package_manager() {
+  if command -v apt-get >/dev/null 2>&1 && command -v apt-cache >/dev/null 2>&1; then
+    printf 'apt'
+  elif command -v dnf >/dev/null 2>&1; then
+    printf 'dnf'
+  elif command -v yum >/dev/null 2>&1; then
+    printf 'yum'
+  else
+    fail 'Automatic prerequisite installation requires apt-get, dnf or yum. Install the listed tools with your distribution package manager, then rerun.'
+  fi
+}
+
+install_packages() {
+  local manager package listing name version repository exact arch
+  local pins=()
+  manager=$(package_manager) || return 1
+  if (( EUID != 0 )); then need sudo; sudo -v; fi
+  if [[ "$manager" == apt ]]; then
+    as_root apt-get update || fail 'Cannot refresh package indexes. Check the distribution repositories and network.'
+  else
+    need rpm
+    arch=$(rpm --eval '%{_arch}')
+    [[ "$arch" =~ ^[a-zA-Z0-9_]+$ ]] || fail 'Cannot determine the RPM architecture.'
+  fi
+  for package in "$@"; do
+    exact=''
+    if [[ "$manager" == apt ]]; then
+      listing=$(LC_ALL=C apt-cache policy "$package") || fail "Cannot resolve package $package."
+      while read -r name version repository; do
+        if [[ "$name" == Candidate: && "$version" != '(none)' ]]; then
+          exact="$package=$version"
+          break
+        fi
+      done <<< "$listing"
+    else
+      listing=$(LC_ALL=C as_root "$manager" -q list --available "$package.$arch" "$package.noarch") ||
+        fail "Cannot resolve package $package. Check enabled distribution repositories."
+      while read -r name version repository; do
+        if [[ "$name" == "$package.$arch" || "$name" == "$package.noarch" ]]; then
+          [[ -n "$version" && -n "$repository" ]] || continue
+          exact="$package-$version.${name##*.}"
+          break
+        fi
+      done <<< "$listing"
+    fi
+    [[ -n "$exact" ]] || fail "No exact package candidate is available for $package on this distribution."
+    pins+=("$exact")
+  done
+  printf 'Installing exact package versions:'
+  printf ' %s' "${pins[@]}"
+  printf '\n'
+  if [[ "$manager" == apt ]]; then
+    as_root apt-get install -y --no-install-recommends --no-remove "${pins[@]}" || fail 'Prerequisite package installation failed.'
+  else
+    as_root "$manager" -y --setopt=install_weak_deps=False install "${pins[@]}" || fail 'Prerequisite package installation failed.'
+  fi
+}
+
+has_ca_bundle() {
+  [[ -s /etc/ssl/certs/ca-certificates.crt || -s /etc/pki/tls/certs/ca-bundle.crt || -s /etc/ssl/ca-bundle.pem || -s /etc/ssl/cert.pem ]]
+}
+
+ensure_prerequisites() {
+  [[ "$OSTYPE" == linux* ]] || fail 'This installer requires Linux and Bash.'
+  local tool manager
+  local packages=() missing=()
+  for tool in uname dirname mktemp id mkdir mv rm cat env chown chmod ln sleep install sha256sum; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      missing+=("$tool")
+      [[ " ${packages[*]} " == *' coreutils '* ]] || packages+=(coreutils)
+    fi
+  done
+  for tool in tar gzip; do
+    if ! command -v "$tool" >/dev/null 2>&1; then missing+=("$tool"); packages+=("$tool"); fi
+  done
+  if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+    missing+=('curl or wget'); packages+=(curl)
+  fi
+  if ! has_ca_bundle; then missing+=('CA certificates'); packages+=(ca-certificates); fi
+  if [[ -z "${MILVAGO_HOST_IP:-}" ]] && ! command -v ip >/dev/null 2>&1 && ! command -v hostname >/dev/null 2>&1; then
+    manager=$(package_manager) || return 1
+    missing+=(ip)
+    if [[ "$manager" == apt ]]; then packages+=(iproute2); else packages+=(iproute); fi
+  fi
+  if (( ${#packages[@]} )); then
+    printf 'Missing prerequisites:'; printf ' %s' "${missing[@]}"; printf '\n'
+    install_packages "${packages[@]}" || return 1
+  fi
+  for tool in uname dirname mktemp id mkdir mv rm cat env chown chmod ln sleep install sha256sum tar gzip; do need "$tool"; done
+  command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 || fail 'Package installation did not provide curl or wget.'
+  has_ca_bundle || fail 'Package installation did not provide a trusted CA certificate bundle.'
+  if [[ -z "${MILVAGO_HOST_IP:-}" ]]; then
+    command -v ip >/dev/null 2>&1 || command -v hostname >/dev/null 2>&1 || fail 'Set MILVAGO_HOST_IP or install iproute tools.'
+  fi
+}
+
 fetch() {
   local url=$1
   local destination=$2
@@ -75,15 +171,16 @@ EOF
   fi
   as_root apt-get update
   if (( install_engine )); then
-    as_root apt-get install -y --no-install-recommends --no-remove \
-      docker-ce docker-ce-cli containerd.io docker-compose-plugin
+    install_packages docker-ce docker-ce-cli containerd.io docker-compose-plugin
   else
-    as_root apt-get install -y --no-install-recommends --no-remove docker-compose-plugin
+    install_packages docker-compose-plugin
   fi
 }
 
 install_dnf() {
-  need dnf
+  local rpm_manager
+  rpm_manager=$(package_manager)
+  [[ "$rpm_manager" == dnf || "$rpm_manager" == yum ]] || fail 'Docker RPM installation requires dnf or yum.'
   need rpm
   need sha256sum
   local repo_id repo_release
@@ -133,10 +230,9 @@ EOF
     rm -f -- "$repo_file"
   fi
   if (( install_engine )); then
-    as_root dnf -y --setopt=install_weak_deps=False install \
-      docker-ce docker-ce-cli containerd.io docker-compose-plugin
+    install_packages docker-ce docker-ce-cli containerd.io docker-compose-plugin
   else
-    as_root dnf -y --setopt=install_weak_deps=False install docker-compose-plugin
+    install_packages docker-compose-plugin
   fi
 }
 
@@ -218,22 +314,27 @@ detect_host_ip() {
   printf '%s' "$address"
 }
 
+ensure_prerequisites
 host_ip=$(detect_host_ip)
-public_origin=${MILVAGO_PUBLIC_URL:-http://$host_ip:4020}
 valid_public_origin() {
   local origin=$1
-  [[ "$origin" =~ ^https?://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?$ ]]
+  [[ "$origin" =~ ^https?://[A-Za-z0-9][A-Za-z0-9.-]*(:([0-9]{1,5}))?$ ]] || return 1
+  local port=${BASH_REMATCH[2]:-}
+  [[ -z "$port" ]] || (( 10#$port >= 1 && 10#$port <= 65535 ))
 }
-valid_public_origin "$public_origin" || fail "MILVAGO_PUBLIC_URL must be a bare HTTP or HTTPS origin."
+select_public_origin() {
+  public_origin=${MILVAGO_PUBLIC_URL:-}
+  if [[ -z "$public_origin" ]]; then
+    [[ -t 0 ]] || fail 'Set MILVAGO_PUBLIC_URL to the exact browser URL when running non-interactively.'
+    printf 'Enter the public URL users will open in their browser (for example https://console.example.test).\n' >&2
+    read -r -p 'Milvago public URL: ' public_origin || fail 'The public URL is required.'
+  fi
+  public_origin=${public_origin%/}
+  valid_public_origin "$public_origin" || fail 'Enter an HTTP or HTTPS URL with a host and optional port, without a path, query or fragment.'
+  printf 'Milvago public URL: %s\n' "$public_origin"
+}
+select_public_origin
 
-base_tools=(uname dirname mktemp id mkdir mv rm cat env chown chmod ln sleep)
-missing_tools=()
-for tool in "${base_tools[@]}"; do
-  command -v "$tool" >/dev/null 2>&1 || missing_tools+=("$tool")
-done
-(( ${#missing_tools[@]} == 0 )) ||
-  fail "Base Linux utilities are missing: ${missing_tools[*]}. Install the distribution's coreutils package."
-[[ "$(uname -s)" == Linux ]] || fail 'This installer requires Linux.'
 umask 077
 stage=''
 auth_dir=''
@@ -584,7 +685,8 @@ if [[ -n "$database_id" ]]; then
 fi
 if [[ -n "$stored_origin" ]]; then
   valid_public_origin "$stored_origin" || fail "The stored public URL is invalid."
-  public_origin=$stored_origin
+  [[ "$public_origin" == "$stored_origin" ]] ||
+    fail "The instance already uses $stored_origin. Rerun with that URL; change a configured instance URL in Administration > Settings."
 fi
 caddyfile="$root/.local/generated/Caddyfile.private"
 cat > "$caddyfile" <<EOF
@@ -751,15 +853,18 @@ run_docker run --rm --network "container:$identity_id" --user "$(id -u):$(id -g)
   const basic = (await call("/client-scopes")).find((scope) => scope.name === "basic");
   if (!basic) throw new Error("The Keycloak basic client scope is missing");
   await call("/clients/" + encodeURIComponent(client.id) + "/default-client-scopes/" + encodeURIComponent(basic.id), "PUT");
-  // The SSO settings of the console write identity providers through the management account.
+  // Setup updates client redirects; SSO settings also need identity-provider access.
   const [management] = await call("/clients?clientId=milvago-management");
   const [realmManagement] = await call("/clients?clientId=realm-management");
   if (!management?.id || !realmManagement?.id) throw new Error("Keycloak management clients are missing");
   const serviceAccount = await call("/clients/" + encodeURIComponent(management.id) + "/service-account-user");
-  const providerRoles = (await call("/clients/" + encodeURIComponent(realmManagement.id) + "/roles"))
-    .filter((role) => role.name === "manage-identity-providers" || role.name === "view-identity-providers");
-  if (providerRoles.length !== 2) throw new Error("Keycloak identity-provider roles are missing");
-  await call("/users/" + encodeURIComponent(serviceAccount.id) + "/role-mappings/clients/" + encodeURIComponent(realmManagement.id), "POST", providerRoles);
+  const requiredRoles = ["manage-clients", "view-clients", "manage-identity-providers", "view-identity-providers"];
+  const managementRoles = (await call("/clients/" + encodeURIComponent(realmManagement.id) + "/roles"))
+    .filter((role) => requiredRoles.includes(role.name));
+  if (!requiredRoles.every((name) => managementRoles.some((role) => role.name === name))) {
+    throw new Error("Keycloak management roles are missing");
+  }
+  await call("/users/" + encodeURIComponent(serviceAccount.id) + "/role-mappings/clients/" + encodeURIComponent(realmManagement.id), "POST", managementRoles);
   const realmResponse = await fetch(base + "/admin/realms/milvago", { headers });
   if (!realmResponse.ok) throw new Error("Keycloak realm lookup returned HTTP " + realmResponse.status);
   const realm = await realmResponse.json();
