@@ -372,12 +372,19 @@ func (a *App) revealConversationContents(r *http.Request, tx pgx.Tx, s *Session,
 	if e = auditMany(r.Context(), tx, s.OrganizationID, s.UserID, "shadow.content.read", targets); e != nil {
 		return false, e
 	}
-	for actor, count := range seen {
-		if e = auditSubjectView(r, tx, actor, "conversation", count); e != nil {
-			return false, e
-		}
+	if e = auditConversationSubjects(r, tx, seen); e != nil {
+		return false, e
 	}
 	return grant, nil
+}
+
+func auditConversationSubjects(r *http.Request, tx pgx.Tx, subjects map[string]int) error {
+	for actor, count := range subjects {
+		if e := auditSubjectView(r, tx, actor, "conversation", count); e != nil {
+			return e
+		}
+	}
+	return nil
 }
 
 type conversationDetailRequest struct {

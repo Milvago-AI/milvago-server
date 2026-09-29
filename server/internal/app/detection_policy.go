@@ -156,30 +156,36 @@ func (b *detectionEventBatch) authorize(ctx context.Context, tx pgx.Tx, v *V2Eve
 	}
 	for _, p := range cat.KnownPlatforms {
 		if slices.Contains(p.Domains, host) {
-			reducedToPresence(v)
-			// A blocked attempt is only one where the organization blocks this platform:
-			// otherwise a modified endpoint could fill Discovery with attempts for platforms
-			// nobody blocked. Community never blocks, and reads an empty set.
-			if v.Action == "blocked" {
-				if b.blocked == nil {
-					if b.blocked, e = blockedPlatformSet(ctx, tx); e != nil {
-						return e
-					}
-					if b.blocked == nil {
-						b.blocked = map[string]bool{}
-					}
-				}
-				if !b.blocked[p.ID] {
-					v.Action = "observed"
-				}
-			}
-			return nil
+			return b.authorizePresence(ctx, tx, v, p.ID)
 		}
 	}
 	v.Provider = "unknown"
 	v.PlatformID = ""
 	v.DecisionReason = ""
 	v.URL = ""
+	return nil
+}
+
+func (b *detectionEventBatch) authorizePresence(ctx context.Context, tx pgx.Tx, v *V2Event, platform string) error {
+	reducedToPresence(v)
+	// A blocked attempt is only one where the organization blocks this platform.
+	// Community never blocks, and reads an empty set.
+	if v.Action != "blocked" {
+		return nil
+	}
+	if b.blocked == nil {
+		blocked, e := blockedPlatformSet(ctx, tx)
+		if e != nil {
+			return e
+		}
+		if blocked == nil {
+			blocked = map[string]bool{}
+		}
+		b.blocked = blocked
+	}
+	if !b.blocked[platform] {
+		v.Action = "observed"
+	}
 	return nil
 }
 

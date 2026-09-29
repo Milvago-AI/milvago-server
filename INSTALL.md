@@ -39,9 +39,9 @@ installation requires root or `sudo`, plus `curl` or `wget` and `sha256sum`. Oth
 need Docker Engine and Compose installed first.
 
 The base image contains the server and console only. The installer also downloads the pinned
-Community `0.6.3` Windows and Linux agent bundle from the private agent repository, verifies its
-SHA-256, Ed25519 signatures, and manifest expiration, then mounts the verified files read-only so the console can provide
-agent downloads. Version `0.6.3` is shared by the agent and browser extension in both editions.
+Community `0.6.4` Windows and Linux agent bundle from the private agent repository, verifies its
+SHA-256, Ed25519 signatures, and manifest expiration (the prepared manifests are valid through 2027-09-29), then mounts the verified files read-only so the console can provide
+agent downloads. Version `0.6.4` is shared by the agent and browser extension in both editions.
 The console delivers one Windows ZIP containing the immutable MSI, its matching script, an
 organization provisioning JSON and an installation `README.md`. The Windows MSI has no
 Authenticode publisher signature yet. The base image does not host a browser extension. The script

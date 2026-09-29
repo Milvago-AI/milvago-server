@@ -6,16 +6,16 @@ import { pathToFileURL } from 'node:url';
 
 export function releaseVersion(value) {
   const version = value.trim();
-  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) throw Error('VERSION must contain an exact X.Y.Z version.');
+  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) throw new Error('VERSION must contain an exact X.Y.Z version.');
   return version;
 }
 
 export function releaseImage(branch, version, revision) {
   releaseVersion(version);
-  if (!/^[a-f0-9]{40}$/.test(revision)) throw Error('Expected a full source commit.');
+  if (!/^[a-f0-9]{40}$/.test(revision)) throw new Error('Expected a full source commit.');
   if (branch === 'main') return `ghcr.io/milvago-ai/milvago-server:${version}`;
   if (branch === 'dev') return `ghcr.io/milvago-ai/milvago-server-dev:sha-${revision}`;
-  throw Error('Images can only be published from dev or main.');
+  throw new Error('Images can only be published from dev or main.');
 }
 
 export function newerVersion(next, previous) {
@@ -27,15 +27,17 @@ export function newerVersion(next, previous) {
 
 export function renderInstaller(template, version, revision, digest) {
   const image = releaseImage('main', version, revision);
-  if (!/^sha256:[a-f0-9]{64}$/.test(digest)) throw Error('Expected an immutable image digest.');
-  if (!template.includes(`MILVAGO_RELEASE_VERSION='${version}'`)) throw Error('Installer and VERSION disagree.');
+  if (!/^sha256:[a-f0-9]{64}$/.test(digest)) throw new Error('Expected an immutable image digest.');
+  if (!template.includes(`MILVAGO_RELEASE_VERSION='${version}'`)) throw new Error('Installer and VERSION disagree.');
   for (const marker of ['@SOURCE_COMMIT@', '@IMAGE@']) {
-    if (template.split(marker).length !== 2) throw Error('Expected one installer marker: ' + marker);
+    if (template.split(marker).length !== 2) throw new Error('Expected one installer marker: ' + marker);
   }
   return template.replace('@SOURCE_COMMIT@', revision).replace('@IMAGE@', image + '@' + digest);
 }
 
-const git = (...args) => execFileSync('git', args, { encoding:'utf8', stdio:['ignore','pipe','pipe'] }).trim();
+// Release checks execute the system Git installation without searching PATH.
+const gitExecutable = process.platform === 'win32' ? 'C:/Program Files/Git/cmd/git.exe' : '/usr/bin/git';
+const git = (...args) => execFileSync(gitExecutable, args, { encoding:'utf8', stdio:['ignore','pipe','pipe'] }).trim();
 
 function check() {
   const version = releaseVersion(readFileSync('VERSION','utf8'));
@@ -46,9 +48,9 @@ function check() {
     // The first versioned release has no VERSION in its parent.
     if (git('ls-tree','--name-only',base).split('\n').includes('VERSION')) {
       const previous = releaseVersion(git('show',`${base}:VERSION`));
-      if (!newerVersion(version, previous)) throw Error('A merge to main requires a new server version.');
+      if (!newerVersion(version, previous)) throw new Error('A merge to main requires a new server version.');
     }
-    if (git('tag','--list',`v${version}`) && git('rev-list','-n','1',`v${version}`) !== git('rev-parse','HEAD')) throw Error('This release version already belongs to another commit.');
+    if (git('tag','--list',`v${version}`) && git('rev-list','-n','1',`v${version}`) !== git('rev-parse','HEAD')) throw new Error('This release version already belongs to another commit.');
   }
   console.log('Release policy passed for ' + version);
 }
@@ -63,18 +65,18 @@ async function metadata() {
   const auth = await fetch(`https://ghcr.io/token?service=ghcr.io&scope=repository:${repository}:pull`, {
     headers:{Authorization:'Basic '+Buffer.from(`${process.env.GITHUB_ACTOR}:${process.env.GH_TOKEN}`).toString('base64')},redirect:'error',
   });
-  if (!auth.ok) throw Error('Registry authorization failed: HTTP '+auth.status);
+  if (!auth.ok) throw new Error('Registry authorization failed: HTTP '+auth.status);
   const {token} = await auth.json();
-  if (!token) throw Error('Registry did not return an access token.');
+  if (!token) throw new Error('Registry did not return an access token.');
   const manifest = await fetch(`https://ghcr.io/v2/${repository}/manifests/${image.split(':').at(-1)}`, {
     headers:{Authorization:'Bearer '+token,Accept:'application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json'},redirect:'error',
   });
   if (manifest.status === 404) values.existing = '';
   else if (manifest.ok) {
     const digest = manifest.headers.get('docker-content-digest');
-    if (!/^sha256:[a-f0-9]{64}$/.test(digest)) throw Error('Registry returned an invalid digest.');
+    if (!/^sha256:[a-f0-9]{64}$/.test(digest)) throw new Error('Registry returned an invalid digest.');
     values.existing = image+'@'+digest;
-  } else throw Error('Cannot determine whether the immutable tag exists: HTTP '+manifest.status);
+  } else throw new Error('Cannot determine whether the immutable tag exists: HTTP '+manifest.status);
   appendFileSync(process.env.GITHUB_OUTPUT,Object.entries(values).map(([k,v])=>`${k}=${v}\n`).join(''));
 }
 
@@ -95,5 +97,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   if (command === 'check') check();
   else if (command === 'metadata') await metadata();
   else if (command === 'render') render();
-  else throw Error('Expected check, metadata or render.');
+  else throw new Error('Expected check, metadata or render.');
 }
