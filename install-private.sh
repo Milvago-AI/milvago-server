@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SOURCE_COMMIT='fa6caf761bab53cec45340ae35d6581b14d104bd'
+SOURCE_COMMIT='edbf03ad9a55e039c9ee88921c439e9861ef9537'
 IMAGE='ghcr.io/milvago-ai/milvago-community-server@sha256:340b80d54f36ecc0a08a30bdbaf8afe5dce6869d67338d42a671efdf4849cda9'
 COSIGN_IMAGE='ghcr.io/sigstore/cosign/cosign:v3.1.3@sha256:9e5c2f2edc34351160407ca3416c61855bdf9403c3c5936e0f0be7fc261611b8'
 CADDY_IMAGE='caddy:2.11.4-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b'
