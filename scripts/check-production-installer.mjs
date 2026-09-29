@@ -56,8 +56,7 @@ try{
  const identityFixture=(...args)=>docker(['run','--rm','--network','container:'+identity,'-v',root+':/work',nodeImage,'node','/work/check-production-identity.mjs',...args]);
  identityFixture('set',JSON.stringify(real));
  assert.ok(!configureRun().includes('SMTP is not configured'));
- const current=JSON.parse(identityFixture('get'));
- for(const [key,value]of Object.entries(real))assert.equal(current[key],value);
+ identityFixture('verify',JSON.stringify(real));
  const logs=docker([...compose,'logs','identity']);assert.ok(!logs.includes('Running the server in development mode'));assert.ok(logs.includes('Profile prod activated'));
  docker([...compose,'--profile','development-mail','up','-d','mail']);
  const mail=docker([...compose,'ps','-q','mail']).trim();assert.ok(mail);
