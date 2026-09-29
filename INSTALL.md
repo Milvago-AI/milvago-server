@@ -2,32 +2,31 @@
 
 ## Install the prepared release
 
-The repository copy of `install-private.sh` is a non-executable template. When `v1.0.0` is
-published, download the installer, its checksum file, and its immutable release description
-from that exact release:
+The repository copy of `install-private.sh` is a non-executable template. Download the installer,
+its checksum file, and its immutable release description anonymously from the public `v1.0.0`
+release:
 
 ```bash
 mkdir milvago-install && cd milvago-install
-gh release download v1.0.0 --repo Milvago-AI/milvago-server \
-  --pattern install-private.sh --pattern SHA256SUMS --pattern release.json
+release_url=https://github.com/Milvago-AI/milvago-server/releases/download/v1.0.0
+curl -fLO "$release_url/install-private.sh"
+curl -fLO "$release_url/SHA256SUMS"
+curl -fLO "$release_url/release.json"
 sha256sum --check SHA256SUMS
 bash install-private.sh
 ```
 
-Set `GHCR_TOKEN` to a classic GitHub personal access token with `repo` before downloading from
-the private server source or private agent release. The variable keeps its historical name; the token now authenticates only source and agent
-downloads and is never stored by the installer. GitHub CLI must also be authenticated
-to download the release assets shown above. The public server image does not need
-credentials: it is pulled anonymously from `ghcr.io/milvago-ai/milvago-server:1.0.0` using the
-exact digest recorded in `release.json`.
+`wget` can replace each `curl -fLO` command. No GitHub CLI login, GitHub token, or registry
+credential is required. The server image is pulled anonymously from
+`ghcr.io/milvago-ai/milvago-server:1.0.0` using the exact digest recorded in `release.json`.
 
 The release pipeline generates `install-private.sh`, `SHA256SUMS`, and `release.json` together.
 They bind the server version, full commit, image digest, and cosign signature verification to
 that release. `MILVAGO_VERSION`, when set, must equal `1.0.0`; the installer rejects a different
 or floating value. It never uses `latest`.
 
-On a first standalone installation only, the installer obtains the server source pinned to the
-release commit and places it in `$HOME/milvago-community`. Set `MILVAGO_DIR` to another absolute
+On a first standalone installation only, the installer obtains the public server source pinned to
+the release commit and places it in `$HOME/milvago-community`. Set `MILVAGO_DIR` to another absolute
 path if needed. It does not synchronize an existing checkout. Every run preserves local
 configuration and the database while replacing the application container only when the pinned
 image changes.
@@ -48,7 +47,7 @@ missing prerequisites require an unsupported package manager, the installer stop
 error; it does not claim support for every distribution or version.
 
 The base image contains the server and console only. The installer also downloads the pinned
-Community `0.6.4` Windows and Linux agent bundle from the private agent repository, verifies its
+Community `0.6.4` Windows and Linux agent bundle anonymously from its public release, verifies its
 SHA-256, Ed25519 signatures, and manifest expiration (the prepared manifests are valid through 2027-09-29), then mounts the verified files read-only so the console can provide
 agent downloads. Version `0.6.4` is shared by the agent and browser extension in both editions.
 The console delivers one Windows ZIP containing the immutable MSI, its matching script, an
@@ -135,7 +134,7 @@ application URL uses HTTPS.
 
 ## Endpoint agent and browser extension
 
-They live in their own repository. An image built from this source alone serves no extension (`/ext/*` answers `503 extension_unconfigured`) and no installer. The private installation script fetches and mounts the signed Community agent bundle separately.
+They live in their own repository. An image built from this source alone serves no extension (`/ext/*` answers `503 extension_unconfigured`) and no installer. The prepared installation script fetches and mounts the signed Community agent bundle separately.
 
 ## Running the tests
 
