@@ -94,17 +94,28 @@ extension are distributed separately.
 
 ## Quick start
 
-Requirements: Docker with Compose v2, and Node.js 22 for the initialization script.
+On a Linux server with Bash, curl, Internet access and root or sudo privileges, run:
 
 ```bash
-node scripts/local-init.mjs     # fresh .env and identity realm, random secrets
-docker compose up -d --build    # PostgreSQL, Keycloak, Mailpit and Milvago
+curl -fsSL https://get.milvago.ai | bash
 ```
 
-Open **http://localhost:4020**, enter the `MILVAGO_SETUP_TOKEN` from `.env`, and the wizard
-walks you through the first administrator, second factor, organization, mail server and
-privacy defaults. Details in [INSTALL.md](INSTALL.md). The release pipeline is prepared for
-server `1.0.0`; no `v1.0.0` release has been published yet.
+Enter your full public Milvago URL, such as `https://milvago.example.com`, when prompted.
+Prepare DNS and an HTTPS reverse proxy to the server's private IP on port **4020** first.
+No GitHub account or token is required. The installer checks prerequisites and installs
+the public release using its exact image version and digest.
+
+To provide the URL directly:
+
+```bash
+curl -fsSL https://get.milvago.ai | MILVAGO_PUBLIC_URL=https://milvago.example.com bash
+```
+
+Open the displayed URL and enter `MILVAGO_SETUP_TOKEN` from the `.env` file at the
+path printed by the installer. Complete the wizard to create the administrator.
+Configure and test a real SMTP server for invitations and password-reset email;
+Mailpit is disabled by default. See [INSTALL.md](INSTALL.md) for prerequisites,
+checksum verification, upgrades and building from source.
 
 ## Community and Enterprise
 
