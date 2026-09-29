@@ -30,12 +30,12 @@ installer, and complete the browser wizard to create the administrator. Keep thi
 ## Install a specific version
 
 The repository copy of `install-private.sh` is a non-executable template. Download the installer,
-its checksum file, and its immutable release description anonymously from the public `v1.0.0`
+its checksum file, and its immutable release description anonymously from the public `v1.0.1`
 release:
 
 ```bash
 mkdir milvago-install && cd milvago-install
-release_url=https://github.com/Milvago-AI/milvago-server/releases/download/v1.0.0
+release_url=https://github.com/Milvago-AI/milvago-server/releases/download/v1.0.1
 curl -fLO "$release_url/install-private.sh"
 curl -fLO "$release_url/SHA256SUMS"
 curl -fLO "$release_url/release.json"
@@ -45,11 +45,11 @@ bash install-private.sh
 
 `wget` can replace each `curl -fLO` command. No GitHub CLI login, GitHub token, or registry
 credential is required. The server image is pulled anonymously from
-`ghcr.io/milvago-ai/milvago-server:1.0.0` using the exact digest recorded in `release.json`.
+`ghcr.io/milvago-ai/milvago-server:1.0.1` using the exact digest recorded in `release.json`.
 
 The release pipeline generates `install-private.sh`, `SHA256SUMS`, and `release.json` together.
 They bind the server version, full commit, image digest, and cosign signature verification to
-that release. `MILVAGO_VERSION`, when set, must equal `1.0.0`; the installer rejects a different
+that release. `MILVAGO_VERSION`, when set, must equal `1.0.1`; the installer rejects a different
 or floating value. It never uses `latest`.
 
 On a first standalone installation only, the installer obtains the public server source pinned to
