@@ -1,9 +1,11 @@
 # Every dependency is pinned to an exact version (or digest): an upgrade is an explicit,
 # reviewed change, never a resolution side effect. Dependabot proposes those changes as pull
 # requests, grouped per ecosystem to keep review manageable.
+# Stage version updates on dev; main requires a separately versioned release.
 version: 2
 updates:
   - package-ecosystem: gomod
+    target-branch: dev
     directory: /server
     schedule:
       interval: weekly
@@ -13,6 +15,7 @@ updates:
     open-pull-requests-limit: 5
 
   - package-ecosystem: npm
+    target-branch: dev
     directory: /console
     schedule:
       interval: weekly
@@ -23,6 +26,7 @@ updates:
     open-pull-requests-limit: 5
 
   - package-ecosystem: github-actions
+    target-branch: dev
     directory: /
     schedule:
       interval: weekly
@@ -31,11 +35,13 @@ updates:
         patterns: ["*"]
 
   - package-ecosystem: docker
+    target-branch: dev
     directory: /deploy
     schedule:
       interval: weekly
 
   - package-ecosystem: docker-compose
+    target-branch: dev
     directory: /
     schedule:
       interval: weekly
