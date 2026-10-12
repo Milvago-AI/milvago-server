@@ -145,7 +145,7 @@ If the final setup-wizard step returns `502` after an installation made with an 
 
 - Docker with Compose v2
 - Node.js 22 (for the local initialization script)
-- Go 1.27.1 only if you want to run the server suite outside the containers
+- Go 1.27.2 only if you want to run the server suite outside the containers
 
 ## 1. Generate a local configuration
 
