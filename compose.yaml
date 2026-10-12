@@ -31,12 +31,12 @@ services:
       timeout: 3s
       retries: 30
   mail:
-    image: axllent/mailpit:v1.31.2@sha256:74d609a42ec279aa63c6b4622a6fa9b5408d1ad5b1d76a1c4be40a265ce0863d
+    image: axllent/mailpit:v1.31.4@sha256:b68349e3a014b90c5610bfb26b2ae36f3892d7b8cf25ee140c6c71c98d2fcf48
     security_opt: [no-new-privileges:true]
     ports:
       - "127.0.0.1:${MILVAGO_MAIL_PORT:-4081}:8025"
   identity:
-    image: quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c
+    image: quay.io/keycloak/keycloak:26.8.0@sha256:b0f60d489d51c5d113390bdf5461d4c06e6051be026c05549f2e1e10ec352bcc
     command: [start-dev, --import-realm]
     security_opt: [no-new-privileges:true]
     environment:
