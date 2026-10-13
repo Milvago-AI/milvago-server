@@ -1,116 +1,210 @@
-/* Inter, self-hosted with the theme (OFL 1.1, fonts/LICENSE-Inter-OFL.txt).
-   No call to Google Fonts, on the login page as anywhere else. */
+/* Milvago sign-in theme. Same tokens, grid and classes as the console entry page
+   (console/src/styles.css), so moving from the console to an identity page changes only
+   the central block. Dark is the default rendering; light is the explicit choice,
+   [data-theme=light]. --accent is decorative only: blue text uses --accent-text, blue
+   fills --accent-solid. Inter is self-hosted with the theme (OFL 1.1, fonts/LICENSE-Inter-OFL.txt). */
 @font-face{font-family:"Inter";font-weight:400;font-style:normal;font-display:swap;src:url("../fonts/Inter-Regular.woff2") format("woff2")}
 @font-face{font-family:"Inter";font-weight:500;font-style:normal;font-display:swap;src:url("../fonts/Inter-Medium.woff2") format("woff2")}
 @font-face{font-family:"Inter";font-weight:600;font-style:normal;font-display:swap;src:url("../fonts/Inter-SemiBold.woff2") format("woff2")}
 @font-face{font-family:"Inter";font-weight:700;font-style:normal;font-display:swap;src:url("../fonts/Inter-Bold.woff2") format("woff2")}
 
-/* Milvago Keycloak login theme — same tokens as the console (charte graphique
-   v2.1). Dark is the default rendering; light is the explicit choice, carried by
-   [data-appearance=light]. --mv-accent stays decorative: blue text uses
-   --mv-accent-text, blue fills use --mv-accent-solid. */
 :root{
+  --bg:#111722;--surface:#1B2432;--surface-2:#222D3D;--border:#344154;--border-strong:#4B5A70;
+  --text:#F4F6FA;--text-2:#B6C0CE;--text-3:#98A7B9;
+  --accent:#2B50FF;--accent-hi:#8FB2FF;--accent-deep:#16249E;--accent-text:#6E8BFF;--accent-solid:#2B50FF;
+  --accent-hover:#4A6AFF;--accent-ink:#FFFFFF;--accent-bg:rgba(43,80,255,.16);--accent-border:rgba(43,80,255,.45);
+  --metal:linear-gradient(135deg,var(--accent-hi),var(--accent) 45%,var(--accent-deep));
+  --primary:var(--accent-solid);--on-primary:var(--accent-ink);--focus:var(--accent-hi);--control-border:var(--text-3);--primary-hover:var(--accent-solid);
+  --success:#3DD68C;--success-bg:rgba(16,84,54,.38);--warning:#FFB224;--warning-bg:rgba(120,60,6,.40);--danger:#FF6B6B;--danger-bg:rgba(127,29,29,.40);
+  --radius-s:4px;--radius-m:6px;--radius-l:10px;
+  --font:Inter,system-ui,-apple-system,'Segoe UI',sans-serif;--mono:ui-monospace,'Cascadia Mono',Consolas,'Courier New',monospace;
+  --logo:url("../img/milvago-symbol-mono-white.svg");
   color-scheme:dark;
-  --mv-focus:var(--mv-accent-hi);--mv-control-border:var(--mv-muted);--mv-primary-hover:var(--mv-accent-solid);
-  --mv-bg:#111722;--mv-panel:#1B2432;--mv-panel-2:#222D3D;
-  --mv-line:#344154;--mv-line-strong:#4B5A70;
-  --mv-text:#F4F6FA;--mv-text-2:#B6C0CE;--mv-muted:#98A7B9;
-  --mv-accent:#2B50FF;--mv-accent-hi:#8FB2FF;--mv-accent-deep:#16249E;
-  --mv-accent-text:#6E8BFF;--mv-accent-solid:#2B50FF;--mv-accent-hover:#4A6AFF;
-  --mv-accent-ink:#FFFFFF;--mv-accent-bg:rgba(43,80,255,.16);
-  --mv-metal:linear-gradient(135deg,var(--mv-accent-hi),var(--mv-accent) 45%,var(--mv-accent-deep));
-  --mv-danger:#FF6B6B;--mv-danger-bg:rgba(127,29,29,.40);
-  --mv-success:#3DD68C;--mv-success-bg:rgba(16,84,54,.38);
-  --mv-warning:#FFB224;--mv-warning-bg:rgba(120,60,6,.40);
-  font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif
 }
-:root[data-appearance=light]{
+[data-theme=light]{
+  --focus:var(--accent-text);--primary-hover:var(--accent-hover);
+  --bg:#F3F6FA;--surface:#FFFFFF;--surface-2:#E9EEF5;--border:#DCE4EE;--border-strong:#BFCCDC;
+  --text:#172033;--text-2:#4D596B;--text-3:#647083;
+  --accent-hi:#6E8BFF;--accent-deep:#101B7A;--accent-text:#1F3FE6;--accent-hover:#1B3FD6;
+  --accent-bg:#EAEFFF;--accent-border:rgba(43,80,255,.38);
+  --success:#15803D;--success-bg:#DCFCE7;--warning:#B45309;--warning-bg:#FEF3C7;--danger:#B91C1C;--danger-bg:#FEE2E2;
+  --logo:url("../img/milvago-symbol-mono-black.svg");
   color-scheme:light;
-  --mv-focus:var(--mv-accent-text);--mv-primary-hover:var(--mv-accent-hover);
-  --mv-bg:#F3F6FA;--mv-panel:#FFFFFF;--mv-panel-2:#E9EEF5;
-  --mv-line:#DCE4EE;--mv-line-strong:#BFCCDC;
-  --mv-text:#172033;--mv-text-2:#4D596B;--mv-muted:#647083;
-  --mv-accent-hi:#6E8BFF;--mv-accent-deep:#101B7A;
-  --mv-accent-text:#1F3FE6;--mv-accent-hover:#1B3FD6;--mv-accent-bg:#EAEFFF;
-  --mv-danger:#B91C1C;--mv-danger-bg:#FEE2E2;
-  --mv-success:#15803D;--mv-success-bg:#DCFCE7;
-  --mv-warning:#B45309;--mv-warning-bg:#FEF3C7
 }
+@view-transition{navigation:auto}
+*{box-sizing:border-box}
+html{overflow-x:hidden}
+body{margin:0;min-width:320px;background:var(--bg);color:var(--text);font:14px/1.5 var(--font);font-feature-settings:"cv11","ss01";-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+button,input,select,textarea{font:inherit;color:inherit}
+a{color:inherit}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+svg{flex-shrink:0}
+[hidden]{display:none!important}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 
-html,body{min-height:100%;background:var(--mv-bg)!important;color:var(--mv-text)!important}
-body{font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif!important;font-feature-settings:"cv11","ss01"}
+/* ---------- Shell: the console entry page, line for line ---------- */
+.entry{min-height:100vh;display:grid;grid-template-columns:minmax(0,3fr) minmax(0,1fr);grid-template-rows:72px minmax(0,1fr) 64px;padding:0 72px;background:var(--bg);color:var(--text)}
+.entry-header{grid-column:1/3;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)}
+.brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text)}
+.brand-mark{width:32px;height:32px;background:var(--logo) center/contain no-repeat}
+.brand-name{font-size:16px;font-weight:600;letter-spacing:-.2px}
+.preferences{display:flex;align-items:center;gap:8px}
+.icon-button{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;color:var(--text-2);border-radius:var(--radius-s);padding:0;cursor:pointer}
+.icon-button:hover{background:var(--surface-2);color:var(--text)}
+.icon-button svg{width:16px;height:16px}
+/* The theme button only works with script: without it, it stays out of the way. */
+.theme-toggle{display:none}
+.has-script .theme-toggle{display:inline-flex}
+/* The sun offers the light theme from the dark one, the moon the reverse. */
+[data-theme=light] .theme-light-icon,:root:not([data-theme=light]) .theme-dark-icon{display:none}
+/* Language menu: looks like the console's select, works without script. */
+.lang{position:relative}
+.lang summary{list-style:none;display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 10px;border:1px solid var(--control-border);border-radius:var(--radius-s);background:var(--surface-2);font-size:13px;cursor:pointer}
+.lang summary::-webkit-details-marker{display:none}
+.lang summary svg{width:14px;height:14px;color:var(--text-3)}
+.lang ul{position:absolute;right:0;top:38px;z-index:5;min-width:180px;margin:0;padding:4px;list-style:none;background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--radius-m)}
+.lang li a{display:block;padding:8px 10px;border-radius:var(--radius-s);font-size:13px;text-decoration:none}
+.lang li a:hover{background:var(--surface-2)}
+.lang li a[aria-current=true]{color:var(--accent-text);font-weight:600}
 
-/* ---------- Page shell ---------- */
-.pf-v5-c-login{background:var(--mv-bg)!important;min-height:100vh;display:flex!important;flex-direction:column;align-items:center;justify-content:center;padding:64px 24px}
-.pf-v5-c-login__container{display:flex!important;flex-direction:column!important;align-items:center;width:min(100%,420px)!important;max-width:420px!important;padding:0!important;gap:24px}
+.entry-main{display:flex;flex-direction:column;justify-content:center;gap:24px;padding:40px 64px 40px 0;max-width:900px;min-width:0}
+.eyebrow{display:flex;align-items:center;gap:10px;font:700 11px/14px var(--font);letter-spacing:1.4px;text-transform:uppercase;color:var(--accent-text);margin:0}
+.eyebrow::before{content:'';width:22px;height:2px;flex:none;border-radius:1px;background:var(--metal)}
+.entry-main h1{font-size:clamp(32px,3.6vw,48px);font-weight:600;letter-spacing:-.035em;line-height:1.08;margin:0;overflow-wrap:anywhere}
+.entry-main h1>span{color:var(--text-3)}
+.entry-description,.instruction{font-size:16px;line-height:1.65;color:var(--text-2);max-width:520px;margin:0}
+.entry-description strong,.instruction strong{color:var(--text);font-weight:600}
+.entry-main form{margin:0}
 
-/* ---------- Brand header (above the card) ---------- */
-.pf-v5-c-login__header{margin:0!important;width:100%!important;align-self:center}
-#kc-header-wrapper{display:flex!important;align-items:center;justify-content:center;gap:12px;font-size:18px!important;font-weight:600!important;letter-spacing:-.2px;line-height:1.2;text-transform:none!important;color:var(--mv-text)}
-/* The logo stays monochrome; the accent never enters it. */
-#kc-header-wrapper::before{content:"";width:32px;height:32px;flex-shrink:0;background:url('../img/milvago-symbol-mono-white.svg') center/contain no-repeat;display:inline-block}
-:root[data-appearance=light] #kc-header-wrapper::before{background-image:url('../img/milvago-symbol-mono-black.svg')}
+.entry-aside{border-left:1px solid var(--border);display:flex;flex-direction:column;justify-content:center;gap:28px;padding:40px 0 40px 40px}
+.entry-value{display:flex;gap:12px;align-items:flex-start}
+.entry-value svg{width:20px;height:20px;color:var(--text-2);margin-top:1px}
+.entry-value>div{display:flex;flex-direction:column;gap:2px}
+.entry-value strong{font-size:14px;font-weight:600}
+.entry-value span{font-size:12px;color:var(--text-2);line-height:1.5}
+.entry-footer{grid-column:1/3;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);font-size:12px;color:var(--text-3)}
 
-/* ---------- Card ---------- */
-.pf-v5-c-login__main{background:var(--mv-panel)!important;color:var(--mv-text)!important;border:1px solid var(--mv-line)!important;border-radius:6px!important;box-shadow:none!important;padding:32px!important;width:min(100%,420px)!important;margin:0}
-.pf-v5-c-login__main-header{display:flex!important;flex-direction:column!important;align-items:stretch;gap:20px;padding:0 0 20px!important}
-.pf-v5-c-login__main-header-desc{color:var(--mv-text-2)!important}
-#kc-page-title{font-size:20px!important;font-weight:600!important;letter-spacing:-.3px!important;line-height:1.3;width:100%!important;margin:0!important;overflow-wrap:normal!important}
-.pf-v5-c-login__main-body{padding:0!important}
-.pf-v5-c-login__main-footer,#kc-info{width:100%!important;margin-top:4px;padding:16px 0 0!important;font-size:12px!important;color:var(--mv-muted)!important;text-align:center}
+/* ---------- Forms ---------- */
+.auth{display:flex;flex-direction:column;gap:20px;width:100%;max-width:460px;margin:0}
+.field{display:flex;flex-direction:column;gap:8px;min-width:0}
+.field-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.field-input{display:flex;flex-direction:column;gap:8px;min-width:0}
+.field-options{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13px}
+.label{font-size:13px;font-weight:600}
+.required{color:var(--danger);margin-left:2px}
+.field-head>.required{margin-right:auto}
+.input{width:100%;height:44px;padding:0 12px;border:1px solid var(--control-border);border-radius:var(--radius-s);background:var(--surface-2);color:var(--text);font-size:14px;min-width:0}
+textarea.input{height:auto;min-height:88px;padding:8px 12px}
+select.input{padding-right:28px}
+.input::placeholder{color:var(--text-2);opacity:1}
+.input:focus{border-color:var(--focus);box-shadow:0 0 0 3px var(--accent-bg);outline:2px solid var(--focus);outline-offset:2px}
+.input[aria-invalid=true]{border-color:var(--danger)}
+.input[readonly],.input:disabled{opacity:.7}
+.input-group{position:relative}
+.input-group .input{padding-right:48px}
+.reveal{position:absolute;top:6px;right:6px}
+.field-error,.field-warning,.field-hint{display:flex;gap:6px;align-items:flex-start;margin:0;font-size:13px;line-height:1.45}
+.field-error{color:var(--danger)}
+.field-warning{color:var(--warning)}
+.field-hint{color:var(--text-2);font-size:12px}
+.label .field-hint{display:inline;font-weight:400}
+.field-error svg,.field-warning svg,.field-hint svg{width:14px;height:14px;margin-top:2px}
+.otp{max-width:300px;height:56px;padding:0 12px;text-align:center;text-indent:.45em;letter-spacing:.45em;font:600 24px/1 var(--mono)}
+.check,label.check,.checkbox label{display:flex;align-items:center;gap:10px;font-size:13px;font-weight:400}
+.entry-main form:not(.auth):not(.actions){display:flex;flex-direction:column;gap:20px;max-width:620px}
+input[type=checkbox],input[type=radio]{width:16px;height:16px;margin:0;flex:none;accent-color:var(--primary)}
 
-/* ---------- Form ---------- */
-.pf-v5-c-form__label{color:var(--mv-text)!important;font-size:13px!important;font-weight:500!important}
+/* Who is signing in, with the way back to change it. */
+.identity{display:flex;align-items:center;gap:12px;max-width:460px;padding:8px 8px 8px 10px;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--surface)}
+.avatar{width:32px;height:32px;flex:none;display:grid;place-items:center;border-radius:50%;background:var(--accent-bg);color:var(--accent-text);font-size:13px;font-weight:600;text-transform:uppercase}
+.identity-email{flex:1;min-width:0;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.identity a{flex:none;padding:6px 10px;border-radius:var(--radius-s);font-size:13px;color:var(--text-2);text-decoration:none}
+.identity a:hover{background:var(--surface-2);color:var(--text)}
 
-.pf-v5-c-form-control{height:40px!important;min-height:0!important;border-radius:4px!important;background:var(--mv-panel-2)!important;border:1px solid var(--mv-control-border)!important;color:var(--mv-text)!important;box-shadow:none!important;font-size:14px}
-.pf-v5-c-form-control input{color:var(--mv-text)!important;height:38px!important;min-height:0!important;background:transparent!important}
-/* keycloak.v2 draws the form-control focus indicator via this ::after underline rather than a box-shadow glow;
-   overriding it directly (already validated in this file) is more robust than guessing PatternFly's
-   --pf-v5-c-form-control--* variable names, which aren't vendored in this repo to confirm. */
-.pf-v5-c-form-control::after{border-color:var(--mv-control-border)!important;border-radius:4px}
-.pf-v5-c-form-control:focus-within::after{border-color:var(--mv-focus)!important}
-.pf-v5-c-form-control:focus-within{outline:2px solid var(--mv-focus);outline-offset:2px;box-shadow:0 0 0 3px var(--mv-accent-bg)!important}
-.pf-v5-c-form-control input:focus{outline:none!important;box-shadow:none!important}
-.pf-v5-c-form-control button,.pf-v5-c-menu-toggle{color:var(--mv-text)!important;background:transparent!important;border-radius:4px!important}
+/* ---------- Buttons and links ---------- */
+.actions{display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px}
+.button{display:inline-flex;align-items:center;justify-content:center;gap:12px;height:44px;padding:0 20px;border:1px solid var(--border-strong);border-radius:var(--radius-s);background:var(--surface);color:var(--text);font-size:14px;font-weight:600;line-height:1;text-decoration:none;white-space:nowrap;cursor:pointer}
+.button:hover{border-color:var(--accent);color:var(--accent-text)}
+.button.primary{background:var(--primary);border-color:var(--primary);color:var(--on-primary)}
+.button.primary:hover{background:var(--primary-hover);border-color:var(--primary-hover);color:var(--on-primary)}
+.button.danger{color:var(--danger)}
+.button.danger:hover{background:var(--danger-bg);border-color:var(--danger);color:var(--danger)}
+.button.is-disabled,.button:disabled{pointer-events:none;opacity:.6}
+.button svg{width:16px;height:16px}
+.link{font-size:13px;color:var(--text);text-decoration:underline;text-decoration-color:var(--border-strong);text-underline-offset:3px;background:none;border:0;padding:0;cursor:pointer}
+.link:hover{text-decoration-color:currentColor}
+.link.quiet{color:var(--text-2)}
 
-input[type=checkbox]{accent-color:var(--mv-accent-solid);width:16px;height:16px}
-.pf-v5-c-check__label{color:var(--mv-text)!important}
-input[type=checkbox]:focus-visible{outline:2px solid var(--mv-focus);outline-offset:2px}
+/* Identity providers, below the password. */
+.mv-or{display:flex;align-items:center;gap:12px;max-width:460px;margin:0;font-size:12px;color:var(--text-3)}
+.mv-or::before,.mv-or::after{content:'';flex:1;height:1px;background:var(--border)}
+.mv-sso-section{display:flex;flex-direction:column;gap:16px}
+.mv-sso{display:grid;gap:8px;max-width:460px;margin:0;padding:0;list-style:none}
+.mv-sso .button{width:100%;justify-content:flex-start;font-weight:500}
 
-/* ---------- Buttons & links ---------- */
-.pf-v5-c-button.pf-m-primary,#kc-login,#kc-info-message a{height:40px!important;min-height:0!important;background:var(--mv-accent-solid)!important;color:var(--mv-accent-ink)!important;border:0!important;border-radius:4px!important;font-size:14px!important;font-weight:600!important;box-shadow:none!important}
-.pf-v5-c-button.pf-m-primary:hover,#kc-login:hover,#kc-info-message a:hover{background:var(--mv-primary-hover)!important}
-.pf-v5-c-button.pf-m-link{color:var(--mv-text)!important;font-size:13px!important}
-a{color:var(--mv-text)!important;font-size:13px;text-decoration:underline;text-underline-offset:3px}
-.mv-appearance:focus-visible,a:focus-visible,button:focus-visible{outline:2px solid var(--mv-focus);outline-offset:4px}
+/* ---------- Messages ---------- */
+.notice{display:flex;gap:12px;align-items:flex-start;max-width:460px;padding:12px 16px;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--surface);font-size:13px;line-height:1.5}
+.notice svg{width:16px;height:16px;flex:none;margin-top:2px}
+.notice p{margin:0}
+.notice.error{border-color:var(--danger);background:var(--danger-bg)}.notice.error svg{color:var(--danger)}
+.notice.success{border-color:var(--success);background:var(--success-bg)}.notice.success svg{color:var(--success)}
+.notice.warning{border-color:var(--warning);background:var(--warning-bg)}.notice.warning svg{color:var(--warning)}
+.notice.info{border-color:var(--accent-border);background:var(--accent-bg)}.notice.info svg{color:var(--accent-text)}
+.status-icon{width:48px;height:48px;display:grid;place-items:center;border-radius:50%;border:1px solid var(--border-strong);background:var(--surface);color:var(--text-2)}
+.status-icon svg{width:22px;height:22px}
+.status-icon.success{border-color:var(--success);background:var(--success-bg);color:var(--success)}
+.status-icon.warning{border-color:var(--warning);background:var(--warning-bg);color:var(--warning)}
+.status-icon.info{border-color:var(--accent-border);background:var(--accent-bg);color:var(--accent-text)}
 
-/* ---------- Top-right controls: appearance toggle + language toggle ---------- */
-.mv-controls{position:fixed;top:24px;right:24px;display:flex;align-items:center;gap:10px;z-index:10}
-.mv-appearance{height:32px;display:inline-flex;align-items:center;background:var(--mv-panel);color:var(--mv-text);border:1px solid var(--mv-line-strong);border-radius:6px;padding:0 14px;font:12px inherit;cursor:pointer;transition:border-color .12s}
-.mv-appearance:hover{border-color:var(--mv-accent);color:var(--mv-accent-text)}
-.mv-lang{display:inline-flex;align-items:center;background:var(--mv-panel);border:1px solid var(--mv-line-strong);border-radius:6px;overflow:hidden}
-.mv-lang-item{height:32px;min-width:38px;display:inline-flex;align-items:center;justify-content:center;padding:0 12px;font:12px inherit;font-weight:500;color:var(--mv-text-2)!important;text-decoration:none!important;letter-spacing:.02em;cursor:pointer;background:transparent;border:0;transition:background .12s,color .12s}
-.mv-lang-item+.mv-lang-item{border-left:1px solid var(--mv-line-strong)}
-.mv-lang a.mv-lang-item:hover{color:var(--mv-text)!important;background:var(--mv-panel-2)}
-.mv-lang-item[aria-current=true]{background:var(--mv-text);color:var(--mv-panel)!important;cursor:default}
-/* When the script builds the segmented control, hide Keycloak's native locale select. */
-.mv-enhanced .pf-v5-c-login__main-header-utilities{display:none!important}
+/* ---------- Choosing a device or a way to sign in ---------- */
+.choices{display:grid;gap:8px;max-width:460px;margin:0;padding:0;border:0;list-style:none}
+.choice{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--surface);cursor:pointer;text-decoration:none;color:var(--text)}
+.choice:has(input:checked){border-color:var(--accent-border);background:var(--accent-bg)}
+.choice svg{width:18px;height:18px;color:var(--text-2)}
+.choice strong{display:block;font-size:14px;font-weight:600}
+.choice span{display:block;font-size:12px;color:var(--text-2)}
 
-/* ---------- Alerts / feedback (must always stay visible) ---------- */
-.pf-v5-c-alert{border-radius:6px!important;border:1px solid var(--mv-line-strong)!important;background:var(--mv-panel-2)!important;padding:12px 14px!important;font-size:13px!important;color:var(--mv-text)!important}
-.pf-v5-c-alert.pf-m-danger{border-color:var(--mv-danger)!important;background:var(--mv-danger-bg)!important;color:var(--mv-danger)!important}
-.pf-v5-c-alert.pf-m-success{border-color:var(--mv-success)!important;background:var(--mv-success-bg)!important;color:var(--mv-success)!important}
-.pf-v5-c-alert.pf-m-warning{border-color:var(--mv-warning)!important;background:var(--mv-warning-bg)!important;color:var(--mv-warning)!important}
-.pf-v5-c-alert.pf-m-info{border-color:var(--mv-line-strong)!important;background:var(--mv-panel-2)!important;color:var(--mv-text)!important}
-.kc-feedback-text{font-size:13px!important;color:var(--mv-danger)!important}
-#input-error{font-size:13px!important;color:var(--mv-danger)!important;display:block!important}
+/* ---------- Numbered steps (second factor, activation) ---------- */
+.steps{list-style:none;margin:0;padding:0;display:grid;gap:22px;max-width:620px;counter-reset:step}
+.steps>li{display:grid;grid-template-columns:28px minmax(0,1fr);gap:14px;counter-increment:step}
+.steps>li::before{content:counter(step);width:28px;height:28px;display:grid;place-items:center;border-radius:50%;border:1px solid var(--border-strong);font-size:12px;font-weight:600;color:var(--text-2)}
+.steps>li.current::before{border-color:var(--primary);background:var(--primary);color:var(--on-primary)}
+.steps>li.done::before{content:'\2713';border-color:var(--success);background:var(--success-bg);color:var(--success)}
+.steps h2{margin:4px 0 4px;font-size:14px;font-weight:600;letter-spacing:0}
+.steps p{margin:0;font-size:13px;color:var(--text-2);line-height:1.55}
+.steps .step-body{display:flex;flex-direction:column;gap:12px;min-width:0}
+.qr{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
+.qr-code{width:168px;height:168px;padding:10px;border-radius:var(--radius-m);background:#FFFFFF}
+.qr-code img{width:100%;height:100%;display:block;image-rendering:pixelated}
+.manual{display:flex;flex-direction:column;gap:8px;min-width:0;max-width:300px}
+.manual summary{cursor:pointer;font-size:13px;text-decoration:underline;text-decoration-color:var(--border-strong);text-underline-offset:3px;width:max-content}
+.secret{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.secret code{padding:8px 10px;border:1px dashed var(--border-strong);border-radius:var(--radius-s);background:var(--surface-2);font:500 13px/1.4 var(--mono);letter-spacing:.06em;overflow-wrap:anywhere}
+.button.small{height:36px;padding:0 12px;font-size:13px}
+.apps{display:flex;flex-wrap:wrap;gap:6px;margin:0;padding:0;list-style:none}
+.chip{display:inline-flex;align-items:center;height:26px;padding:0 10px;border:1px solid var(--border);border-radius:13px;font-size:12px;color:var(--text-2)}
 
-@media(max-width:600px){
-  .pf-v5-c-login{padding:80px 16px 24px}
-  .pf-v5-c-login__container{gap:18px}
-  .pf-v5-c-login__main{border-radius:6px;padding:24px!important}
-  .mv-controls{top:16px;right:16px;gap:8px}
-  .mv-appearance{padding:0 10px}
+/* ---------- Password rules ---------- */
+.rules{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 16px;font-size:12px;color:var(--text-2)}
+.rules li{display:flex;align-items:center;gap:8px}
+.rules li::before{content:'';width:14px;height:14px;flex:none;border-radius:50%;border:1px solid var(--border-strong)}
+.rules li.ok{color:var(--text)}
+.rules li.ok::before{border-color:var(--success);background:var(--success) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center/10px no-repeat}
+
+.split{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;max-width:460px}
+
+@media(max-width:900px){
+  .entry{grid-template-columns:1fr;grid-template-rows:64px auto auto 56px;padding:0 20px}
+  .entry-header,.entry-footer{grid-column:1}
+  .entry-main{padding:40px 0 24px;gap:20px;justify-content:flex-start}
+  .entry-aside{border-left:0;border-top:1px solid var(--border);padding:24px 0 32px;gap:16px}
 }
-/* The only way on from the info page (account ready, link expired) is its link: shown as the primary action. */
-#kc-info-message a{display:inline-flex;align-items:center;margin-top:16px;padding:0 20px;text-decoration:none!important}
+@media(max-width:580px){
+  .entry-main h1{letter-spacing:-.03em}
+  .actions{flex-direction:column;align-items:stretch}
+  .actions .button{width:100%}
+  .actions .link{text-align:center}
+  .rules,.split{grid-template-columns:1fr}
+  .qr{justify-content:center}
+}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;transition-duration:.001ms!important}}

@@ -124,6 +124,8 @@ export type Profile = {
   language: "" | Language;
   identity_type: "local" | "sso" | "ldap";
   mfa_configured: boolean | null;
+  /** Second-factor devices; null when the identity provider could not be asked. */
+  mfa_devices: { id: string; label: string; created_at: number }[] | null;
   editable: { profile: boolean; email: boolean; password: boolean; mfa: boolean };
 };
 /**

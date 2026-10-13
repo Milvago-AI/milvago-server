@@ -1,7 +1,7 @@
 import { Fragment, createContext, useContext, useEffect, useId, useRef, useState } from 'react';
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import {
-  Activity, AppWindow, ArrowRight, Building2, Check, ChevronDown, ChevronRight, Copy, CornerDownRight, Download, Eye, File, FileArchive, FileSpreadsheet, FileText, Filter, GitFork, Globe, Image, Info, LayoutDashboard, List, Lock, LogOut, Menu, Monitor, Moon, PanelLeftClose, PanelLeftOpen, Plus, RefreshCw, ScrollText, Search, Settings, ShieldCheck, Sun, Trash2, TriangleAlert, Users, X,
+  Activity, AppWindow, ArrowRight, Building2, Check, ChevronDown, ChevronRight, Copy, CornerDownRight, Download, Eye, File, FileArchive, FileSpreadsheet, FileText, Filter, GitFork, Globe, Image, Info, LayoutDashboard, List, Lock, LogOut, Menu, Monitor, Moon, PanelLeftClose, PanelLeftOpen, Plus, RefreshCw, ScrollText, Search, Settings, ShieldCheck, Smartphone, Sun, Trash2, TriangleAlert, Users, X,
 } from 'lucide-react';
 import { ApiError, request } from './api';
 import type { Session } from './api';
@@ -127,8 +127,8 @@ export function useMutation() {
 }
 
 /* ---------- Icons (lucide-react, bundled, no network) ---------- */
-export type IconName = 'arrow' | 'refresh' | 'sun' | 'moon' | 'plus' | 'close' | 'check' | 'shield' | 'device' | 'activity' | 'dashboard' | 'map' | 'list' | 'apps' | 'settings' | 'users' | 'scroll' | 'building' | 'logout' | 'menu' | 'panel-close' | 'panel-open' | 'info' | 'alert' | 'search' | 'download' | 'trash' | 'lock' | 'eye' | 'filter' | 'globe' | 'chevron' | 'chevron-right' | 'corner' | 'copy' | 'file' | 'file-image' | 'file-text' | 'file-sheet' | 'file-archive';
-const icons = { arrow: ArrowRight, refresh: RefreshCw, sun: Sun, moon: Moon, plus: Plus, close: X, check: Check, shield: ShieldCheck, device: Monitor, activity: Activity, dashboard: LayoutDashboard, map: GitFork, list: List, apps: AppWindow, settings: Settings, users: Users, scroll: ScrollText, building: Building2, logout: LogOut, menu: Menu, 'panel-close': PanelLeftClose, 'panel-open': PanelLeftOpen, info: Info, alert: TriangleAlert, search: Search, download: Download, trash: Trash2, lock: Lock, eye: Eye, filter: Filter, globe: Globe, chevron: ChevronDown, 'chevron-right': ChevronRight, corner: CornerDownRight, copy: Copy, file: File, 'file-image': Image, 'file-text': FileText, 'file-sheet': FileSpreadsheet, 'file-archive': FileArchive };
+export type IconName = 'arrow' | 'refresh' | 'sun' | 'moon' | 'plus' | 'smartphone' | 'close' | 'check' | 'shield' | 'device' | 'activity' | 'dashboard' | 'map' | 'list' | 'apps' | 'settings' | 'users' | 'scroll' | 'building' | 'logout' | 'menu' | 'panel-close' | 'panel-open' | 'info' | 'alert' | 'search' | 'download' | 'trash' | 'lock' | 'eye' | 'filter' | 'globe' | 'chevron' | 'chevron-right' | 'corner' | 'copy' | 'file' | 'file-image' | 'file-text' | 'file-sheet' | 'file-archive';
+const icons = { arrow: ArrowRight, refresh: RefreshCw, sun: Sun, moon: Moon, plus: Plus, smartphone: Smartphone, close: X, check: Check, shield: ShieldCheck, device: Monitor, activity: Activity, dashboard: LayoutDashboard, map: GitFork, list: List, apps: AppWindow, settings: Settings, users: Users, scroll: ScrollText, building: Building2, logout: LogOut, menu: Menu, 'panel-close': PanelLeftClose, 'panel-open': PanelLeftOpen, info: Info, alert: TriangleAlert, search: Search, download: Download, trash: Trash2, lock: Lock, eye: Eye, filter: Filter, globe: Globe, chevron: ChevronDown, 'chevron-right': ChevronRight, corner: CornerDownRight, copy: Copy, file: File, 'file-image': Image, 'file-text': FileText, 'file-sheet': FileSpreadsheet, 'file-archive': FileArchive };
 export function Icon({ name, size = 16 }: Readonly<{ name: IconName; size?: number }>) { const Component = icons[name]; return <Component size={size} strokeWidth={1.75} aria-hidden="true" />; }
 
 /* ---------- Primitives ---------- */

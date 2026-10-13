@@ -31,7 +31,7 @@ beforeEach(() => {
 
 describe('Identity: profile, member account types and LDAP directory', () => {
   it('opens the profile from the sidebar user block', async () => {
-    const profile: Profile = { email: 'admin@example.org', display_name: 'Administrateur Local', first_name: 'Administrateur', last_name: 'Local', language: '', identity_type: 'local', mfa_configured: false, editable: { profile: true, email: true, password: true, mfa: true } };
+    const profile: Profile = { email: 'admin@example.org', display_name: 'Administrateur Local', first_name: 'Administrateur', last_name: 'Local', language: '', identity_type: 'local', mfa_configured: false, mfa_devices: [], editable: { profile: true, email: true, password: true, mfa: true } };
     serve({ '/api/overview': overviewEmpty, '/api/devices': { items: [] }, '/api/profile/api-keys': noApiKeys, '/api/profile': profile });
     render(<App />); const user = userEvent.setup();
     await user.click(await screen.findByRole('link', { name: /Administrateur/ }));
@@ -49,7 +49,7 @@ describe('Identity: profile, member account types and LDAP directory', () => {
 
   it('saves the name and console language from the profile form', async () => {
     window.location.hash = '#profile';
-    const profile: Profile = { email: 'admin@example.org', display_name: 'Administrateur Local', first_name: 'Administrateur', last_name: 'Local', language: '', identity_type: 'local', mfa_configured: false, editable: { profile: true, email: true, password: true, mfa: true } };
+    const profile: Profile = { email: 'admin@example.org', display_name: 'Administrateur Local', first_name: 'Administrateur', last_name: 'Local', language: '', identity_type: 'local', mfa_configured: false, mfa_devices: [], editable: { profile: true, email: true, password: true, mfa: true } };
     const fetchMock = serve({ '/api/profile/api-keys': noApiKeys, '/api/profile': profile }, (url, init) => url === '/api/profile' && init?.method === 'PUT' ? reply({ display_name: 'Responsable Sécurité', first_name: 'Responsable', last_name: 'Sécurité', language: 'en' }) : undefined);
     render(<App />); const user = userEvent.setup();
     const first = await screen.findByRole('textbox', { name: 'Prénom' });
@@ -67,7 +67,7 @@ describe('Identity: profile, member account types and LDAP directory', () => {
 
   it('hides identity-provider-managed actions for an SSO profile', async () => {
     window.location.hash = '#profile';
-    const profile: Profile = { email: 'sso@example.org', display_name: 'Compte SSO', first_name: 'Compte', last_name: 'SSO', language: 'fr', identity_type: 'sso', mfa_configured: null, editable: { profile: false, email: false, password: false, mfa: false } };
+    const profile: Profile = { email: 'sso@example.org', display_name: 'Compte SSO', first_name: 'Compte', last_name: 'SSO', language: 'fr', identity_type: 'sso', mfa_configured: null, mfa_devices: null, editable: { profile: false, email: false, password: false, mfa: false } };
     serve({ '/api/profile/api-keys': noApiKeys, '/api/profile': profile });
     render(<App />);
     await screen.findByRole('heading', { level: 1, name: 'Mon profil' });
@@ -76,47 +76,59 @@ describe('Identity: profile, member account types and LDAP directory', () => {
     expect(screen.getByRole('textbox', { name: 'Nom' })).toBeDisabled();
     expect(screen.queryByRole('link', { name: 'Modifier mon adresse e-mail' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Changer mon mot de passe' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: /Configurer mon second facteur|Gérer mes seconds facteurs/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Configurer mon second facteur|Ajouter un appareil|Retirer/ })).not.toBeInTheDocument();
     expect(screen.getByText(/fournisseur d'identité \(SSO\)/)).toBeInTheDocument();
   });
 
   it('shows only the second-factor action for an LDAP profile', async () => {
     window.location.hash = '#profile';
-    const profile: Profile = { email: 'ldap@example.org', display_name: 'Compte LDAP', first_name: 'Compte', last_name: 'LDAP', language: '', identity_type: 'ldap', mfa_configured: true, editable: { profile: false, email: false, password: false, mfa: true } };
+    const profile: Profile = { email: 'ldap@example.org', display_name: 'Compte LDAP', first_name: 'Compte', last_name: 'LDAP', language: '', identity_type: 'ldap', mfa_configured: true, mfa_devices: [{ id: 'otp-1', label: 'Téléphone', created_at: Date.UTC(2026, 9, 3) }, { id: 'otp/2', label: '', created_at: Date.UTC(2026, 9, 9) }], editable: { profile: false, email: false, password: false, mfa: true } };
     serve({ '/api/profile/api-keys': noApiKeys, '/api/profile': profile });
     render(<App />);
     await screen.findByRole('heading', { level: 1, name: 'Mon profil' });
     expect(await screen.findByRole('textbox', { name: 'Prénom' })).toBeDisabled();
     expect(screen.queryByRole('link', { name: 'Modifier mon adresse e-mail' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Changer mon mot de passe' })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Gérer mes seconds facteurs' })).toHaveAttribute('href', '/auth/login?action=manage_mfa&lang=fr');
+    // Each device is listed and removed in place; no page opens in another tab any more.
+    expect(screen.getByText('Ajouté le 3 octobre 2026')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Retirer Téléphone' })).toHaveAttribute('href', '/auth/login?action=remove_mfa&credential=otp-1&lang=fr');
+    expect(screen.getByRole('link', { name: 'Retirer Appareil sans nom' })).toHaveAttribute('href', '/auth/login?action=remove_mfa&credential=otp%2F2&lang=fr');
+    const add = screen.getByRole('link', { name: 'Ajouter un appareil' });
+    expect(add).toHaveAttribute('href', '/auth/login?action=configure_totp&lang=fr');
+    expect(screen.queryByRole('link', { name: /Gérer mes seconds facteurs/ })).not.toBeInTheDocument();
+    for (const link of screen.getAllByRole('link')) expect(link).not.toHaveAttribute('target', '_blank');
   });
 
-  it.each([true, null])('opens security management when MFA status is %s and refreshes it on return', async (configured) => {
+  it('says so when the second factor cannot be checked, and offers no action', async () => {
     window.location.hash = '#profile';
-    const profile: Profile = { email: 'admin@example.org', display_name: 'Compte Local', first_name: 'Compte', last_name: 'Local', language: '', identity_type: 'local', mfa_configured: configured, editable: { profile: true, email: true, password: true, mfa: true } };
-    let afterManagement = false;
-    serve({ '/api/profile/api-keys': noApiKeys }, (url) => url === '/api/profile' ? reply({ ...profile, mfa_configured: afterManagement ? false : configured }) : undefined);
+    const profile: Profile = { email: 'admin@example.org', display_name: 'Compte Local', first_name: 'Compte', last_name: 'Local', language: '', identity_type: 'local', mfa_configured: null, mfa_devices: null, editable: { profile: true, email: true, password: true, mfa: true } };
+    serve({ '/api/profile/api-keys': noApiKeys, '/api/profile': profile });
     render(<App />);
-    const link = await screen.findByRole('link', { name: 'Gérer mes seconds facteurs' });
-    expect(link).toHaveAttribute('href', '/auth/login?action=manage_mfa&lang=fr');
-    expect(link).toHaveAttribute('target', '_blank');
-    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
-    const firstName = screen.getByRole('textbox', { name: 'Prénom' });
-    fireEvent.change(firstName, { target: { value: 'Brouillon' } });
-    fireEvent.click(link);
-    afterManagement = true;
-    fireEvent(window, new Event('focus'));
-    const enroll = await screen.findByRole('link', { name: 'Configurer mon second facteur' });
-    expect(enroll).toHaveAttribute('href', '/auth/login?action=configure_totp&lang=fr');
-    expect(enroll).not.toHaveAttribute('target');
-    expect(firstName).toHaveValue('Brouillon');
-    expect(screen.getByText('non configuré')).toBeInTheDocument();
-    // The security tab can stay open for several changes and return visits.
-    afterManagement = false;
-    fireEvent(window, new Event('focus'));
-    expect(await screen.findByRole('link', { name: 'Gérer mes seconds facteurs' })).toBeInTheDocument();
-    expect(firstName).toHaveValue('Brouillon');
+    expect(await screen.findByText('Le second facteur ne peut pas être vérifié pour le moment.')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Configurer mon second facteur|Ajouter un appareil/ })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['#profile?done=password&status=success', 'Votre mot de passe a été modifié.'],
+    ['#profile?done=mfa_removed&status=success', 'L’appareil a été retiré.'],
+    ['#profile?done=mfa_added&status=error', 'La modification n’a pas pu être appliquée. Réessayez.'],
+  ])('confirms the account action of %s once', async (hash, text) => {
+    window.location.hash = hash;
+    const profile: Profile = { email: 'admin@example.org', display_name: 'Compte Local', first_name: 'Compte', last_name: 'Local', language: '', identity_type: 'local', mfa_configured: false, mfa_devices: [], editable: { profile: true, email: true, password: true, mfa: true } };
+    serve({ '/api/profile/api-keys': noApiKeys, '/api/profile': profile });
+    render(<App />);
+    expect(await screen.findByText(text)).toBeInTheDocument();
+    // Forgotten at once: reloading the page must not confirm the change again.
+    expect(window.location.hash).toBe('#profile');
+  });
+
+  it.each(['#profile?done=password&status=cancelled', '#profile?done=%3Cb%3Ex%3C%2Fb%3E&status=success', '#profile?done=password&status=%3Cb%3E'])('shows nothing for %s', async (hash) => {
+    window.location.hash = hash;
+    const profile: Profile = { email: 'admin@example.org', display_name: 'Compte Local', first_name: 'Compte', last_name: 'Local', language: '', identity_type: 'local', mfa_configured: false, mfa_devices: [], editable: { profile: true, email: true, password: true, mfa: true } };
+    serve({ '/api/profile/api-keys': noApiKeys, '/api/profile': profile });
+    render(<App />);
+    await screen.findByRole('textbox', { name: 'Prénom' });
+    expect(screen.queryByText(/a été modifié|a été retiré|n’a pas pu|<b>/)).not.toBeInTheDocument();
   });
 
   it('shows member account types', async () => {
@@ -237,7 +249,7 @@ describe('Identity: profile, member account types and LDAP directory', () => {
 });
 
 describe('Identity: API keys on the profile page', () => {
-  const profile: Profile = { email: 'admin@example.org', display_name: 'Administrateur Local', first_name: 'Administrateur', last_name: 'Local', language: '', identity_type: 'local', mfa_configured: true, editable: { profile: true, email: true, password: true, mfa: true } };
+  const profile: Profile = { email: 'admin@example.org', display_name: 'Administrateur Local', first_name: 'Administrateur', last_name: 'Local', language: '', identity_type: 'local', mfa_configured: true, mfa_devices: [{ id: 'otp-1', label: 'Téléphone', created_at: Date.UTC(2026, 9, 3) }], editable: { profile: true, email: true, password: true, mfa: true } };
   const key = { id: '11111111-1111-4111-8111-111111111111', name: 'Export SIEM', permissions: ['events.read'], content_access: false, created_at: '2026-09-01T08:00:00Z', expires_at: '2099-01-01T08:00:00Z', last_used_at: null };
 
   it('lists keys, the permission summary and the never-used state', async () => {

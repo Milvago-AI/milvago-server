@@ -296,7 +296,10 @@ func (p *testIdentity) credentials(w http.ResponseWriter, id string) {
 		reply(w, 200, []any{})
 		return
 	}
-	reply(w, 200, []map[string]string{{"type": "otp"}})
+	reply(w, 200, []map[string]any{
+		{"id": "password-" + id, "type": "password", "createdDate": 1790000000000},
+		{"id": "otp-" + id, "type": "otp", "userLabel": "Phone", "createdDate": 1790000000000},
+	})
 }
 func (p *testIdentity) createComponent(w http.ResponseWriter, r *http.Request) {
 	var body map[string]any
@@ -687,36 +690,73 @@ func (f *identityScenarioFixture) testIdentityProfileLinks(t *testing.T, ssoCook
 		t.Fatal("an anonymous login request must not carry a profile action")
 	}
 
-	requireHTTP(t, call("GET", "/auth/login?action=manage_mfa", nil, ssoCookie, ""), 403)
-	for _, language := range []string{"fr", "en", "es", "pt-BR"} {
-		w = owner("GET", "/auth/login?action=manage_mfa&lang="+language+"&redirect_uri=https://untrusted.example", nil)
-		requireHTTP(t, w, 302)
-		want := a.config.Issuer + "/account/account-security/signing-in?kc_locale=" + language
-		if w.Header().Get("Location") != want || len(w.Result().Cookies()) != 0 {
-			t.Fatal("management must open the configured account console without starting an enrollment")
-		}
-	}
-	w = owner("GET", "/auth/login?action=manage_mfa&lang=invalid", nil)
+	requireHTTP(t, call("GET", "/auth/login?action=remove_mfa&credential=otp-sso-subject", nil, ssoCookie, ""), 403)
+	// The retired account-console action is now an ordinary sign-in.
+	w = owner("GET", "/auth/login?action=manage_mfa", nil)
 	requireHTTP(t, w, 302)
-	if w.Header().Get("Location") != a.config.Issuer+"/account/account-security/signing-in" {
-		t.Fatal("unsupported account locale was forwarded")
+	if location := w.Header().Get("Location"); strings.Contains(location, "/account") || strings.Contains(location, "kc_action") {
+		t.Fatalf("manage_mfa must no longer lead to the account console: %s", location)
 	}
-	for _, cookie := range []*http.Cookie{nil, {Name: cookieName("session"), Value: "invalid-session"}} {
-		w = call("GET", "/auth/login?action=manage_mfa", nil, cookie, "")
-		requireHTTP(t, w, 302)
-		if strings.Contains(w.Header().Get("Location"), "/account/") || strings.Contains(w.Header().Get("Location"), "kc_action") {
-			t.Fatal("management must require a valid Milvago session")
-		}
-	}
+	f.testIdentityDeviceRemoval(t)
 	t.Run("demo refuses second-factor actions", func(t *testing.T) {
 		previous := a.config.DemoReadOnly
 		a.config.DemoReadOnly = true
 		t.Cleanup(func() { a.config.DemoReadOnly = previous })
-		for _, action := range []string{"configure_totp", "manage_mfa"} {
-			requireHTTP(t, owner("GET", "/auth/login?action="+action, nil), 403)
+		for _, action := range []string{"configure_totp", "remove_mfa"} {
+			requireHTTP(t, owner("GET", "/auth/login?action="+action+"&credential=otp-test-owner", nil), 403)
 		}
 	})
 
+}
+
+func (f *identityScenarioFixture) testIdentityDeviceRemoval(t *testing.T) {
+	p := f.identity
+	p.mu.Lock()
+	oldUser, existed := p.users["test-owner"]
+	p.users["test-owner"] = &fakeUser{ID: "test-owner", Email: "admin@example.test", OTP: true}
+	p.mu.Unlock()
+	// Restored on return, not at the end of the parent test: the step-up scenario
+	// that follows signs in again and must not meet this second factor.
+	defer func() {
+		p.mu.Lock()
+		if existed {
+			p.users["test-owner"] = oldUser
+		} else {
+			delete(p.users, "test-owner")
+		}
+		p.mu.Unlock()
+	}()
+
+	w := f.owner("GET", "/api/profile", nil)
+	requireHTTP(t, w, 200)
+	var profile struct {
+		Devices []otpDevice `json:"mfa_devices"`
+	}
+	if e := json.Unmarshal(w.Body.Bytes(), &profile); e != nil {
+		t.Fatal(e)
+	}
+	if len(profile.Devices) != 1 || profile.Devices[0] != (otpDevice{"otp-test-owner", "Phone", 1790000000000}) {
+		t.Fatalf("the profile must list the second-factor devices, and only them: %s", w.Body.String())
+	}
+
+	w = f.owner("GET", "/auth/login?action=remove_mfa&credential=otp-test-owner", nil)
+	requireHTTP(t, w, 302)
+	location, e := url.Parse(w.Header().Get("Location"))
+	if e != nil || location.Query().Get("kc_action") != "delete_credential:otp-test-owner" {
+		t.Fatalf("owner could not remove its own device: %s", w.Header().Get("Location"))
+	}
+	// Only a device this account holds can be named: not its password, not another
+	// account's device, not a path.
+	for _, credential := range []string{"", "password-test-owner", "otp-someone-else", "../otp-test-owner", "otp-test-owner%2F.."} {
+		requireHTTP(t, f.owner("GET", "/auth/login?action=remove_mfa&credential="+credential, nil), 404)
+	}
+	for _, cookie := range []*http.Cookie{nil, {Name: cookieName("session"), Value: "invalid-session"}} {
+		w = f.call("GET", "/auth/login?action=remove_mfa&credential=otp-test-owner", nil, cookie, "")
+		requireHTTP(t, w, 302)
+		if strings.Contains(w.Header().Get("Location"), "kc_action") {
+			t.Fatal("removing a device must require a valid Milvago session")
+		}
+	}
 }
 
 func (f *identityScenarioFixture) testIdentityStepUp(t *testing.T) {
@@ -738,6 +778,22 @@ func (f *identityScenarioFixture) testIdentityStepUp(t *testing.T) {
 	requireHTTP(t, w, 302)
 	if w.Header().Get("Location") != "/#profile" {
 		t.Fatalf("expected return to the profile screen, got %s", w.Header().Get("Location"))
+	}
+	// The console words the confirmation from fixed values only; anything else
+	// Keycloak's return carries is dropped, never reflected.
+	for query, want := range map[string]string{
+		"&kc_action=UPDATE_PASSWORD&kc_action_status=success":  "/#profile?done=password&status=success",
+		"&kc_action=delete_credential&kc_action_status=error":  "/#profile?done=mfa_removed&status=error",
+		"&kc_action=%3Cscript%3E&kc_action_status=success":     "/#profile",
+		"&kc_action=UPDATE_PASSWORD&kc_action_status=%3Cx%3E":  "/#profile",
+		"&kc_action=CONFIGURE_TOTP&kc_action_status=cancelled": "/#profile?done=mfa_added&status=cancelled",
+	} {
+		cookie, state, _ := beginLogin(t, "/auth/login")
+		w = finishLogin(cookie, state, query)
+		requireHTTP(t, w, 302)
+		if w.Header().Get("Location") != want {
+			t.Fatalf("%s: expected %s, got %s", query, want, w.Header().Get("Location"))
+		}
 	}
 }
 
@@ -793,6 +849,45 @@ func (f *identityScenarioFixture) testCredentialMFA(t *testing.T) {
 	cookie, state = f.followMFA(t, w)
 	p.acr = "2"
 	requireHTTP(t, f.finishLogin(cookie, state, ""), 302)
+
+	// A first second factor set up from the profile is asked for at once: the outcome of
+	// that action survives the continuation, and only as fixed values.
+	finishWith := func(login, kept *http.Cookie, state string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", "/auth/callback?code=test-code&state="+url.QueryEscape(state), nil)
+		r.AddCookie(login)
+		r.AddCookie(kept)
+		w := httptest.NewRecorder()
+		f.a.Handler().ServeHTTP(w, r)
+		return w
+	}
+	p.acr = ""
+	cookie, state, _ = f.beginLogin(t, "/auth/login")
+	w = f.finishLogin(cookie, state, "&kc_action=CONFIGURE_TOTP&kc_action_status=success")
+	var kept *http.Cookie
+	for _, c := range w.Result().Cookies() {
+		if c.Name == cookieName("return") && c.MaxAge > 0 {
+			kept = c
+		}
+	}
+	if kept == nil {
+		t.Fatal("the account action outcome was not kept across the MFA continuation")
+	}
+	cookie, state = f.followMFA(t, w)
+	p.acr = "2"
+	if w = finishWith(cookie, kept, state); w.Header().Get("Location") != "/#profile?done=mfa_added&status=success" {
+		t.Fatalf("the continuation lost the profile confirmation: %s", w.Header().Get("Location"))
+	}
+	for value, want := range map[string]string{"a=%3Cscript%3E&s=success": "/#profile", "a=CONFIGURE_TOTP&s=%3Cx%3E": "/#profile", "s=": "/"} {
+		cookie, state, _ = f.beginLogin(t, "/auth/login?mfa=1")
+		if w = finishWith(cookie, &http.Cookie{Name: cookieName("return"), Value: value}, state); w.Header().Get("Location") != want {
+			t.Fatalf("%s: expected %s, got %s", value, want, w.Header().Get("Location"))
+		}
+	}
+	// Outside a continuation a leftover value is dropped, never shown.
+	cookie, state, _ = f.beginLogin(t, "/auth/login")
+	if w = finishWith(cookie, kept, state); w.Header().Get("Location") != "/" {
+		t.Fatalf("a leftover account action outcome reached an ordinary sign-in: %s", w.Header().Get("Location"))
+	}
 }
 
 func (f *identityScenarioFixture) testIdentityAdminUnavailable(t *testing.T) {
@@ -1250,7 +1345,6 @@ func (f *identityScenarioFixture) testDirectoryMemberImport(t *testing.T) {
 	call := f.call
 	owner := f.owner
 	login := f.login
-	a := f.a
 	admin := f.admin
 	ctx := context.Background()
 	requireHTTP(t, owner("POST", "/api/members/directory", map[string]string{"subject": "ldap-other", "role": "viewer"}), 403)
@@ -1284,11 +1378,9 @@ func (f *identityScenarioFixture) testDirectoryMemberImport(t *testing.T) {
 	if !strings.Contains(w.Header().Get("Location"), "kc_action=CONFIGURE_TOTP") {
 		t.Fatal("ldap account could not trigger its own MFA enrollment")
 	}
-	w = call("GET", "/auth/login?action=manage_mfa", nil, ldapCookie, "")
-	requireHTTP(t, w, 302)
-	if w.Header().Get("Location") != a.config.Issuer+"/account/account-security/signing-in" {
-		t.Fatal("ldap account could not manage its own MFA credentials")
-	}
+	// An LDAP account owns its second factor: removal is allowed, and an account
+	// without that device has nothing to name.
+	requireHTTP(t, call("GET", "/auth/login?action=remove_mfa&credential=otp-none", nil, ldapCookie, ""), 404)
 }
 
 func (f *identityScenarioFixture) testOrganizationCreationMFA(t *testing.T) {

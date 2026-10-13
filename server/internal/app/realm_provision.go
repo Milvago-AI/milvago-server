@@ -58,6 +58,9 @@ func (a *App) ensureOrganizationRealms(ctx context.Context) {
 		if e = convergeBrowserRedirector(ctx, admin); e != nil {
 			a.log.Warn("root realm sign-in flow not converged", "error", e)
 		}
+		if e = closeAccountConsole(ctx, admin); e != nil {
+			a.log.Warn("root realm account console not closed", "error", e)
+		}
 	}
 	if Edition != "commercial" {
 		return
@@ -312,7 +315,50 @@ func convergeRealm(ctx context.Context, root, admin *identityAdmin) error {
 	if e := convergeResetSecondFactor(ctx, root, admin); e != nil {
 		return e
 	}
-	return convergeBrowserRedirector(ctx, admin)
+	if e := convergeBrowserRedirector(ctx, admin); e != nil {
+		return e
+	}
+	return closeAccountConsole(ctx, admin)
+}
+
+// closeAccountConsole retires Keycloak's own account pages in a realm. Second factors
+// are managed from the console profile, through actions that need neither the
+// account-console client nor the manage-account role, and that role also let a user
+// link another identity to the account at will.
+func closeAccountConsole(ctx context.Context, admin *identityAdmin) error {
+	var clients []map[string]any
+	if e := adminJSON(ctx, admin, "GET", "/clients?clientId=account-console", nil, 200, &clients); e != nil {
+		return e
+	}
+	for _, client := range clients {
+		id, _ := client["id"].(string)
+		if id == "" || client["clientId"] != "account-console" || client["enabled"] == false {
+			continue
+		}
+		client["enabled"] = false
+		if e := adminJSON(ctx, admin, "PUT", "/clients/"+url.PathEscape(id), client, http.StatusNoContent, nil); e != nil {
+			return e
+		}
+	}
+	var realm struct {
+		DefaultRole struct {
+			ID string `json:"id"`
+		} `json:"defaultRole"`
+	}
+	if e := adminJSON(ctx, admin, "GET", "", nil, 200, &realm); e != nil || realm.DefaultRole.ID == "" {
+		return e
+	}
+	path := "/roles-by-id/" + url.PathEscape(realm.DefaultRole.ID) + "/composites"
+	var composites []map[string]any
+	if e := adminJSON(ctx, admin, "GET", path, nil, 200, &composites); e != nil {
+		return e
+	}
+	for _, role := range composites {
+		if role["name"] == "manage-account" && role["clientRole"] == true {
+			return adminJSON(ctx, admin, "DELETE", path, []map[string]any{role}, http.StatusNoContent, nil)
+		}
+	}
+	return nil
 }
 
 const resetSecondFactor = "Reset - Conditional OTP"

@@ -20,6 +20,16 @@ var profileActions = map[string]string{
 	"configure_totp":  "CONFIGURE_TOTP",
 }
 
+// profileActionReturns names, for the console, the action Keycloak reports on
+// its way back (kc_action); removing a device comes back without its id.
+var profileActionReturns = map[string]string{
+	"UPDATE_PROFILE":    "profile",
+	"UPDATE_EMAIL":      "email",
+	"UPDATE_PASSWORD":   "password",
+	"CONFIGURE_TOTP":    "mfa_added",
+	"delete_credential": "mfa_removed",
+}
+
 // profileActionAllowed enforces who manages what: an SSO (brokered) account is
 // entirely managed by its identity provider; an LDAP account only owns its
 // Keycloak second factor; a local account owns everything.
@@ -28,7 +38,7 @@ func profileActionAllowed(identityType, action string) bool {
 	case "sso":
 		return false
 	case "ldap":
-		return action == "configure_totp" || action == "manage_mfa"
+		return action == "configure_totp" || action == "remove_mfa"
 	}
 	return true
 }
@@ -54,15 +64,15 @@ func (a *App) profile(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Sess
 		return e
 	}
 	first, last := splitName(s.DisplayName)
-	// Whether an OTP credential exists is only known to Keycloak; report null
-	// when identity administration is unavailable rather than guessing.
-	var mfaConfigured any
+	// Second-factor devices are only known to Keycloak; report null when identity
+	// administration is unavailable rather than guessing.
+	var mfaConfigured, mfaDevices any
 	if admin, e := a.identityAdminFor(r.Context(), s.Realm); e == nil {
 		if u, e := admin.user(r.Context(), s.Subject); e == nil && u != nil {
 			first, last = strings.TrimSpace(u.FirstName), strings.TrimSpace(u.LastName)
 		}
-		if configured, e := admin.hasOTP(r.Context(), s.Subject); e == nil {
-			mfaConfigured = configured
+		if devices, e := admin.otpCredentials(r.Context(), s.Subject); e == nil {
+			mfaConfigured, mfaDevices = len(devices) > 0, devices
 		}
 	}
 	reply(w, 200, map[string]any{
@@ -73,6 +83,7 @@ func (a *App) profile(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Sess
 		"language":       language,
 		"identity_type":  kind,
 		"mfa_configured": mfaConfigured,
+		"mfa_devices":    mfaDevices,
 		"editable": map[string]bool{
 			"profile":  profileActionAllowed(kind, "update_profile"),
 			"email":    profileActionAllowed(kind, "update_email"),

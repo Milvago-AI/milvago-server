@@ -72,7 +72,7 @@ func (a *App) loginProfileAction(w http.ResponseWriter, r *http.Request) (string
 		return "", true
 	}
 	kcAction, known := profileActions[action]
-	if action == "" || (!known && action != "manage_mfa") {
+	if action == "" || (!known && action != "remove_mfa") {
 		return "", false
 	}
 	cookie, e := r.Cookie(a.cookieName("session"))
@@ -87,13 +87,26 @@ func (a *App) loginProfileAction(w http.ResponseWriter, r *http.Request) (string
 		a.fail(w, apiError{403, "action_forbidden", "This account setting is managed by your identity provider."})
 		return "", true
 	}
-	if action == "manage_mfa" {
-		// Keycloak owns credential management; only the configured issuer receives this redirect.
-		accountURL := a.publicRealmIssuer(session.Realm) + "/account/account-security/signing-in"
-		if language := r.URL.Query().Get("lang"); slices.Contains(consoleLanguages, language) {
-			accountURL += "?" + url.Values{"kc_locale": {language}}.Encode()
+	if action == "remove_mfa" {
+		// Keycloak deletes the device, after a fresh authentication when the last
+		// one is old; the server only lets an account name one of its own devices.
+		admin, e := a.identityAdminFor(r.Context(), session.Realm)
+		if e != nil {
+			a.fail(w, e)
+			return "", true
 		}
-		http.Redirect(w, r, accountURL, http.StatusFound)
+		devices, e := admin.otpCredentials(r.Context(), session.Subject)
+		if e != nil {
+			a.fail(w, e)
+			return "", true
+		}
+		id := r.URL.Query().Get("credential")
+		for _, device := range devices {
+			if id != "" && device.ID == id {
+				return "delete_credential:" + id, false
+			}
+		}
+		a.fail(w, apiError{404, "credential_not_found", "This second-factor device was not found."})
 		return "", true
 	}
 	return kcAction, false
@@ -428,6 +441,7 @@ func (a *App) completeLogin(w http.ResponseWriter, r *http.Request, ctx context.
 	if e != nil {
 		return e
 	}
+	action, status := r.URL.Query().Get("kc_action"), r.URL.Query().Get("kc_action_status")
 	if requireMFA && !mfa {
 		if flow.attempt.stepUp {
 			return apiError{403, "mfa_required", "Multi-factor authentication is required for this organization."}
@@ -439,6 +453,12 @@ func (a *App) completeLogin(w http.ResponseWriter, r *http.Request, ctx context.
 		if e = tx.Rollback(ctx); e != nil {
 			return e
 		}
+		// An account action that ends without a second-factor proof (a first device just
+		// set up, for one) is followed by that proof: its outcome waits in a cookie and is
+		// re-checked on the way back.
+		if status != "" {
+			a.cookie(w, a.cookieName("return"), url.Values{"a": {action}, "s": {status}}.Encode(), 600)
+		}
 		return a.startOIDCLogin(w, r, language, "", true, false, loginTarget{realm: realm})
 	}
 	if e = a.endPendingInvitation(ctx, tx, realm, user, flow.id.Subject); e != nil {
@@ -449,12 +469,28 @@ func (a *App) completeLogin(w http.ResponseWriter, r *http.Request, ctx context.
 		return e
 	}
 	a.cookie(w, a.cookieName("session"), session, int(time.Until(expiry).Seconds()))
-	target := "/"
-	if r.URL.Query().Get("kc_action_status") != "" {
-		target = "/#profile"
+	if kept, e := r.Cookie(a.cookieName("return")); e == nil {
+		a.cookie(w, a.cookieName("return"), "", -1)
+		if flow.attempt.stepUp && status == "" {
+			saved, _ := url.ParseQuery(kept.Value)
+			action, status = saved.Get("a"), saved.Get("s")
+		}
 	}
-	http.Redirect(w, r, target, http.StatusFound)
+	http.Redirect(w, r, profileReturn(action, status), http.StatusFound)
 	return nil
+}
+
+// profileReturn is where a sign-in lands: the profile after an account action, with its
+// confirmation when Keycloak reports a known action and outcome. Only fixed values reach
+// the console, which words the confirmation itself.
+func profileReturn(action, status string) string {
+	if status == "" {
+		return "/"
+	}
+	if done, ok := profileActionReturns[action]; ok && slices.Contains([]string{"success", "cancelled", "error"}, status) {
+		return "/#profile?" + url.Values{"done": {done}, "status": {status}}.Encode()
+	}
+	return "/#profile"
 }
 
 func (a *App) callback(w http.ResponseWriter, r *http.Request) {
