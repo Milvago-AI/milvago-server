@@ -470,7 +470,10 @@ describe('Shadow AI workflows', () => {
   it('refuses a custom masking rule whose label matches its own expression, and explains the loop', async () => {
     serve((url, init) => url === '/api/shadow/settings' && init?.method !== 'PUT' ? reply(settings) : undefined); show(<ShadowAdministration />); const user = userEvent.setup();
     await screen.findByText('Administration Shadow AI'); await screen.findByRole('checkbox', { name: 'Activer la collecte' });
-    await user.click(screen.getByRole('button', { name: /Masquage local/ })); await user.click(screen.getByRole('button', { name: 'Ajouter une règle' }));
+    await user.click(screen.getByRole('button', { name: /Masquage local/ }));
+    // Masking off: its settings would do nothing, so none of them is shown.
+    expect(screen.queryByRole('button', { name: 'Ajouter une règle' })).toBeNull(); expect(screen.queryByRole('checkbox', { name: 'Demander une relecture avant envoi' })).toBeNull();
+    await user.click(screen.getByRole('checkbox', { name: 'Activer le masquage' })); await user.click(screen.getByRole('button', { name: 'Ajouter une règle' }));
     const label = screen.getAllByRole('textbox', { name: 'Libellé' }).at(-1)!, pattern = screen.getAllByRole('textbox', { name: 'Expression régulière' }).at(-1)!;
     await user.type(label, 'ABC'); await user.type(pattern, 'A.C');
     expect(await screen.findByRole('alert')).toHaveTextContent(/Le libellé correspond à l'expression de la règle/); expect(pattern).toHaveAttribute('aria-invalid', 'true');
