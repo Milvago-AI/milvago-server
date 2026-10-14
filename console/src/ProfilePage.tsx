@@ -103,7 +103,7 @@ function ProfileView({ profile }: Readonly<{ profile: Profile }>) {
           </dd>
           {profile.editable.password && (
             <>
-              <dt>{t("password")}</dt>
+              <dt>{t("credentialLabel")}</dt>
               <dd aria-hidden="true">••••••••</dd>
               <dd>
                 {!frozen && (

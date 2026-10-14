@@ -611,7 +611,7 @@ export const ptBR: Record<TranslationKey, string> = {
   thisAccountComesFromTheLdap: "Esta conta vem do diretório LDAP: nome, e-mail e senha são gerenciados no diretório.",
   change: "Alterar",
   remove: "Remover",
-  password: "Senha",
+  credentialLabel: "Senha",
   changeMyEmailAddress: "Alterar meu endereço de e-mail",
   changeMyPassword: "Alterar minha senha",
   secondFactorTitle: "Segundo fator",

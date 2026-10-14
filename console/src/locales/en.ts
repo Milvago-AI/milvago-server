@@ -610,7 +610,7 @@ export const en = {
   thisAccountComesFromTheLdap: "This account comes from the LDAP directory: name, email and password are managed in the directory.",
   change: "Change",
   remove: "Remove",
-  password: "Password",
+  credentialLabel: "Password",
   changeMyEmailAddress: "Change my email address",
   changeMyPassword: "Change my password",
   secondFactorTitle: "Second factor",

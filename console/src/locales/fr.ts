@@ -608,7 +608,7 @@ export const fr: Record<TranslationKey, string> = {
   thisAccountComesFromTheLdap: "Ce compte provient de l'annuaire LDAP : nom, e-mail et mot de passe se gèrent dans l'annuaire.",
   change: "Changer",
   remove: "Retirer",
-  password: "Mot de passe",
+  credentialLabel: "Mot de passe",
   changeMyEmailAddress: "Modifier mon adresse e-mail",
   changeMyPassword: "Changer mon mot de passe",
   secondFactorTitle: "Second facteur",
