@@ -121,8 +121,9 @@ describe('Identity: profile, member account types and LDAP directory', () => {
     serve({ '/api/profile/api-keys': noApiKeys, '/api/profile': profile });
     render(<App />);
     expect(await screen.findByText(text)).toBeInTheDocument();
-    // Forgotten at once: reloading the page must not confirm the change again.
-    expect(window.location.hash).toBe('#profile');
+    // Forgotten at once: reloading the page must not confirm the change again. The hash is
+    // cleared by an effect, which can run just after the text is found on a loaded runner.
+    await waitFor(() => expect(window.location.hash).toBe('#profile'));
   });
 
   it.each(['#profile?done=password&status=cancelled', '#profile?done=%3Cb%3Ex%3C%2Fb%3E&status=success', '#profile?done=password&status=%3Cb%3E'])('shows nothing for %s', async (hash) => {
