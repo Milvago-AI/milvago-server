@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -137,20 +138,22 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, e)
 		return
 	}
-	if e := a.startOIDCLogin(w, r, language, kcAction, r.URL.Query().Get("mfa") == "1", true, target); e != nil {
+	if _, e := a.startOIDCLogin(w, r, language, kcAction, r.URL.Query().Get("mfa") == "1", true, target); e != nil {
 		a.fail(w, e)
 	}
 }
 
-func (a *App) startOIDCLogin(w http.ResponseWriter, r *http.Request, language, kcAction string, stepUp, fresh bool, target loginTarget) error {
+// startOIDCLogin returns the attempt's browser binding, which ties anything carried
+// alongside the attempt to that attempt alone.
+func (a *App) startOIDCLogin(w http.ResponseWriter, r *http.Request, language, kcAction string, stepUp, fresh bool, target loginTarget) (string, error) {
 	identity, err := a.currentOIDCFor(r.Context(), target.realm)
 	if err != nil {
-		return err
+		return "", err
 	}
 	state, binding, nonce, verifier := randomToken(), randomToken(), randomToken(), oauth2.GenerateVerifier()
 	_, e := a.db.Exec(r.Context(), `INSERT INTO login_attempts(state_hash,binding_hash,verifier,nonce,expires_at,step_up,realm) VALUES($1,$2,$3,$4,now()+interval '10 minutes',$5,$6)`, hash(state), hash(binding), verifier, nonce, stepUp, target.realm)
 	if e != nil {
-		return e
+		return "", e
 	}
 	a.cookie(w, a.cookieName("login"), binding, 600)
 	opts := []oauth2.AuthCodeOption{oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("ui_locales", language)}
@@ -172,7 +175,7 @@ func (a *App) startOIDCLogin(w http.ResponseWriter, r *http.Request, language, k
 		opts = append(opts, oauth2.SetAuthURLParam("kc_action", kcAction))
 	}
 	http.Redirect(w, r, identity.oauth.AuthCodeURL(state, opts...), http.StatusFound)
-	return nil
+	return binding, nil
 }
 
 type loginAttempt struct {
@@ -182,6 +185,8 @@ type loginAttempt struct {
 	stepUp                            bool
 	// realm is the stored realm the sign-in was started in ("" for the root one).
 	realm string
+	// binding is the browser half of the attempt, already proved against the stored hash.
+	binding string
 }
 
 type loginClaims struct {
@@ -206,6 +211,7 @@ func (a *App) consumeLoginAttempt(w http.ResponseWriter, r *http.Request) (login
 	if e != nil || r.URL.Query().Get("code") == "" {
 		return attempt, bad("Invalid or reused login attempt.")
 	}
+	attempt.binding = cookie.Value
 	return attempt, nil
 }
 
@@ -455,11 +461,13 @@ func (a *App) completeLogin(w http.ResponseWriter, r *http.Request, ctx context.
 		}
 		// An account action that ends without a second-factor proof (a first device just
 		// set up, for one) is followed by that proof: its outcome waits in a cookie and is
-		// re-checked on the way back.
-		if status != "" {
-			a.cookie(w, a.cookieName("return"), url.Values{"a": {action}, "s": {status}}.Encode(), 600)
+		// re-checked on the way back. The cookie names the continuation it belongs to, so an
+		// abandoned or refused continuation leaves nothing a later sign-in would display.
+		binding, e := a.startOIDCLogin(w, r, language, "", true, false, loginTarget{realm: realm})
+		if e == nil && status != "" {
+			a.cookie(w, a.cookieName("return"), keptActionOutcome(binding, action, status), 600)
 		}
-		return a.startOIDCLogin(w, r, language, "", true, false, loginTarget{realm: realm})
+		return e
 	}
 	if e = a.endPendingInvitation(ctx, tx, realm, user, flow.id.Subject); e != nil {
 		return e
@@ -471,14 +479,22 @@ func (a *App) completeLogin(w http.ResponseWriter, r *http.Request, ctx context.
 	a.cookie(w, a.cookieName("session"), session, int(time.Until(expiry).Seconds()))
 	if kept, e := r.Cookie(a.cookieName("return")); e == nil {
 		a.cookie(w, a.cookieName("return"), "", -1)
-		if flow.attempt.stepUp && status == "" {
-			saved, _ := url.ParseQuery(kept.Value)
+		saved, _ := url.ParseQuery(kept.Value)
+		if flow.attempt.stepUp && status == "" && saved.Get("b") == bindingTag(flow.attempt.binding) {
 			action, status = saved.Get("a"), saved.Get("s")
 		}
 	}
 	http.Redirect(w, r, profileReturn(action, status), http.StatusFound)
 	return nil
 }
+
+// keptActionOutcome is the value of the cookie that carries an account action outcome
+// across the second-factor continuation started with binding.
+func keptActionOutcome(binding, action, status string) string {
+	return url.Values{"a": {action}, "s": {status}, "b": {bindingTag(binding)}}.Encode()
+}
+
+func bindingTag(binding string) string { return hex.EncodeToString(hash(binding)) }
 
 // profileReturn is where a sign-in lands: the profile after an account action, with its
 // confirmation when Keycloak reports a known action and outcome. Only fixed values reach

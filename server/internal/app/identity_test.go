@@ -879,9 +879,20 @@ func (f *identityScenarioFixture) testCredentialMFA(t *testing.T) {
 	}
 	for value, want := range map[string]string{"a=%3Cscript%3E&s=success": "/#profile", "a=CONFIGURE_TOTP&s=%3Cx%3E": "/#profile", "s=": "/"} {
 		cookie, state, _ = f.beginLogin(t, "/auth/login?mfa=1")
-		if w = finishWith(cookie, &http.Cookie{Name: cookieName("return"), Value: value}, state); w.Header().Get("Location") != want {
+		bound := value + "&b=" + bindingTag(cookie.Value)
+		if w = finishWith(cookie, &http.Cookie{Name: cookieName("return"), Value: bound}, state); w.Header().Get("Location") != want {
 			t.Fatalf("%s: expected %s, got %s", value, want, w.Header().Get("Location"))
 		}
+	}
+	// An outcome kept for another continuation (abandoned, or refused for want of a second
+	// factor) never reaches a later step-up, even within the cookie's lifetime.
+	cookie, state, _ = f.beginLogin(t, "/auth/login?mfa=1")
+	if w = finishWith(cookie, kept, state); w.Header().Get("Location") != "/" {
+		t.Fatalf("an outcome kept for another continuation reached a later step-up: %s", w.Header().Get("Location"))
+	}
+	cookie, state, _ = f.beginLogin(t, "/auth/login?mfa=1")
+	if w = finishWith(cookie, &http.Cookie{Name: cookieName("return"), Value: "a=CONFIGURE_TOTP&s=success"}, state); w.Header().Get("Location") != "/" {
+		t.Fatalf("an outcome bound to no continuation was displayed: %s", w.Header().Get("Location"))
 	}
 	// Outside a continuation a leftover value is dropped, never shown.
 	cookie, state, _ = f.beginLogin(t, "/auth/login")
