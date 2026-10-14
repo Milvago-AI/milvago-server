@@ -53,7 +53,7 @@ by `deploy/Dockerfile` (build stages and the shipped base).
 |---|---|---|---|
 | postgres | 18.4 | PostgreSQL License | compose service (database) |
 | axllent/mailpit | v1.31.4 | MIT | compose service (mail) |
-| quay.io/keycloak/keycloak | 26.8.0 | Apache-2.0 | compose service (identity) |
+| quay.io/keycloak/keycloak | 26.8.1 | Apache-2.0 | compose service (identity) |
 | caddy | 2.11.4-alpine | Apache-2.0 | private installer gateway (pinned by digest) |
 | node | 26.10.0-bookworm-slim | MIT | build stage (console) |
 | golang | 1.27.2-bookworm | BSD-3-Clause | build stage (server) |
