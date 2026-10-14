@@ -482,6 +482,23 @@ describe('Shadow AI workflows', () => {
     await user.clear(pattern); await user.type(pattern, 'X.Z');
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull()); expect(screen.getByRole('button', { name: 'Enregistrer les changements' })).toBeEnabled();
   });
+  // With masking off its rules are hidden, except one the server would refuse: hidden, it would
+  // block the save with nothing on screen to explain it or fix it.
+  it('keeps a custom masking rule the server would refuse in view while masking is off', async () => {
+    const rule = { id: '6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b', label: 'ABC', pattern: 'A.C', case_insensitive: false, enabled: true };
+    const withRule = (custom_rules: typeof rule[]) => ({ ...settings, config: { ...settings.config, privacy: { ...settings.config.privacy, enabled: false, custom_rules } } });
+    const user = userEvent.setup();
+    serve((url, init) => url === '/api/shadow/settings' && init?.method !== 'PUT' ? reply(withRule([rule])) : undefined); const { unmount } = show(<ShadowAdministration />);
+    await screen.findByText('Administration Shadow AI'); await screen.findByRole('checkbox', { name: 'Activer la collecte' });
+    await user.click(screen.getByRole('button', { name: /Masquage local/ }));
+    expect(screen.getByRole('textbox', { name: 'Libellé' })).toHaveValue('ABC'); expect(screen.getByRole('alert')).toHaveTextContent(/Le libellé correspond à l'expression de la règle/);
+    expect(screen.queryByRole('checkbox', { name: 'Demander une relecture avant envoi' })).toBeNull();
+    unmount();
+    serve((url, init) => url === '/api/shadow/settings' && init?.method !== 'PUT' ? reply(withRule([{ ...rule, pattern: 'X.Z' }])) : undefined); show(<ShadowAdministration />);
+    await screen.findByText('Administration Shadow AI'); await screen.findByRole('checkbox', { name: 'Activer la collecte' });
+    await user.click(screen.getByRole('button', { name: /Masquage local/ }));
+    expect(screen.queryByRole('textbox', { name: 'Libellé' })).toBeNull();
+  });
   // The File column answers for the whole thread, not the last message: an attachment
   // leaves with the request, and the last record of a thread is most often the
   // response, which carries none.
