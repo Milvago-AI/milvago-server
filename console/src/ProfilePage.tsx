@@ -112,38 +112,44 @@ function ProfileView({ profile }: Readonly<{ profile: Profile }>) {
               </dd>
             </>
           )}
-          <dt>{t("secondFactorTitle")}</dt>
-          <dd>
-            {devices === null && <p className="muted">{t("secondFactorUnknown")}</p>}
-            {devices?.length === 0 && <p className="muted">{t("secondFactorNone")}</p>}
-            {devices && devices.length > 0 && (
-              <>
-                <ul className="mfa-devices">
-                  {devices.map(device => (
-                    <li key={device.id}>
-                      <Icon name="smartphone" />
-                      <div>
-                        <strong>{device.label || t("unnamedDevice")}</strong>
-                        <span>{t("deviceAddedOn", [new Intl.DateTimeFormat(language, { dateStyle: "long" }).format(new Date(device.created_at))])}</span>
-                      </div>
-                      {manageMFA && (
-                        <a className="button danger small" href={action("remove_mfa", `&credential=${encodeURIComponent(device.id)}`)} aria-label={t("removeDeviceNamed", [device.label || t("unnamedDevice")])}>{t("remove")}</a>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-                <p className="field-help">{t("secondFactorAsked")}</p>
-              </>
-            )}
-          </dd>
-          <dd>
-            {manageMFA && devices !== null && (
-              <a className={devices.length === 0 ? "button primary small" : "button secondary small"} href={action("configure_totp")}>
-                <Icon name="plus" />
-                {t(devices.length === 0 ? "configureMySecondFactor" : "addDevice")}
-              </a>
-            )}
-          </dd>
+          {/* The identity provider owns an SSO account's second factor: Keycloak holds no
+              device for it, and "no device" would misstate how that account signs in. */}
+          {profile.identity_type !== "sso" && (
+            <>
+              <dt>{t("secondFactorTitle")}</dt>
+              <dd>
+                {devices === null && <p className="muted">{t("secondFactorUnknown")}</p>}
+                {devices?.length === 0 && <p className="muted">{t("secondFactorNone")}</p>}
+                {devices && devices.length > 0 && (
+                  <>
+                    <ul className="mfa-devices">
+                      {devices.map(device => (
+                        <li key={device.id}>
+                          <Icon name="smartphone" />
+                          <div>
+                            <strong>{device.label || t("unnamedDevice")}</strong>
+                            <span>{t("deviceAddedOn", [new Intl.DateTimeFormat(language, { dateStyle: "long" }).format(new Date(device.created_at))])}</span>
+                          </div>
+                          {manageMFA && (
+                            <a className="button danger small" href={action("remove_mfa", `&credential=${encodeURIComponent(device.id)}`)} aria-label={t("removeDeviceNamed", [device.label || t("unnamedDevice")])}>{t("remove")}</a>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="field-help">{t("secondFactorAsked")}</p>
+                  </>
+                )}
+              </dd>
+              <dd>
+                {manageMFA && devices !== null && (
+                  <a className={devices.length === 0 ? "button primary small" : "button secondary small"} href={action("configure_totp")}>
+                    <Icon name="plus" />
+                    {t(devices.length === 0 ? "configureMySecondFactor" : "addDevice")}
+                  </a>
+                )}
+              </dd>
+            </>
+          )}
         </dl>
       </Card>
       <ApiKeysPanel />

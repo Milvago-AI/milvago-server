@@ -67,7 +67,7 @@ describe('Identity: profile, member account types and LDAP directory', () => {
 
   it('hides identity-provider-managed actions for an SSO profile', async () => {
     window.location.hash = '#profile';
-    const profile: Profile = { email: 'sso@example.org', display_name: 'Compte SSO', first_name: 'Compte', last_name: 'SSO', language: 'fr', identity_type: 'sso', mfa_configured: null, mfa_devices: null, editable: { profile: false, email: false, password: false, mfa: false } };
+    const profile: Profile = { email: 'sso@example.org', display_name: 'Compte SSO', first_name: 'Compte', last_name: 'SSO', language: 'fr', identity_type: 'sso', mfa_configured: false, mfa_devices: [], editable: { profile: false, email: false, password: false, mfa: false } };
     serve({ '/api/profile/api-keys': noApiKeys, '/api/profile': profile });
     render(<App />);
     await screen.findByRole('heading', { level: 1, name: 'Mon profil' });
@@ -78,6 +78,9 @@ describe('Identity: profile, member account types and LDAP directory', () => {
     expect(screen.queryByRole('link', { name: 'Changer mon mot de passe' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Configurer mon second facteur|Ajouter un appareil|Retirer/ })).not.toBeInTheDocument();
     expect(screen.getByText(/fournisseur d'identité \(SSO\)/)).toBeInTheDocument();
+    // Keycloak holds no device for it: the provider owns its second factor, so no row claims
+    // the sign-in asks only for a password.
+    expect(screen.queryByText(/ne demande que votre mot de passe/)).not.toBeInTheDocument();
   });
 
   it('shows only the second-factor action for an LDAP profile', async () => {
