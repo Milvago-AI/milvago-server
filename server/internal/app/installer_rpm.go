@@ -273,7 +273,7 @@ UMask=0077
 WantedBy=multi-user.target
 `, 0644),
 		rpmDirectory("/etc/milvago-model-filter", 0750),
-		rpmpack.RPMFile{Name: "/etc/milvago-model-filter/config.json", Body: []byte(`{"state_dir":"/var/lib/milvago-model-filter/state","provision_file":"/etc/milvago-model-filter/provision.json","hostname":"","bindings":[]}` + "\n"), Mode: 0600, Owner: "root", Group: "root", Type: rpmpack.ConfigFile | rpmpack.NoReplaceFile},
+		rpmpack.RPMFile{Name: "/etc/milvago-model-filter/config.json", Body: []byte(`{"state_dir":"/var/lib/milvago-model-filter/state","provision_file":"/etc/milvago-model-filter/provision.json","bindings":[]}` + "\n"), Mode: 0600, Owner: "root", Group: "root", Type: rpmpack.ConfigFile | rpmpack.NoReplaceFile},
 		rpmpack.RPMFile{Name: "/etc/milvago-model-filter/provision.json", Body: provision, Mode: 0600, Owner: "root", Group: "root", Type: rpmpack.ConfigFile | rpmpack.NoReplaceFile},
 	)
 	// --user-group: files and units name the milvago-agent group, which useradd creates
@@ -284,19 +284,10 @@ if [ -f /etc/systemd/system/milvago-model-filter.service ]; then
  systemctl stop milvago-model-filter.service || exit 1
 fi
 `
-	p.post = `python3 - <<'PY'
-import json, os, pathlib, socket, tempfile
-p=pathlib.Path("/etc/milvago-model-filter/config.json")
-c=json.loads(p.read_text())
-if not c.get("hostname"):
- c["hostname"]=socket.gethostname()[:100]+"-filter"
- fd,temporary=tempfile.mkstemp(dir=p.parent,prefix=".config-")
- with os.fdopen(fd,"w") as output:
-  json.dump(c,output)
- os.chmod(temporary,0o600)
- os.replace(temporary,p)
-PY
-configure_machinefilter() {
+	// The model filter has no server identity of its own (one machine, one device): it
+	// takes its policy from the agent and hands its events to it, so its configuration
+	// needs no hostname.
+	p.post = `configure_machinefilter() {
  /opt/milvago-commercial/register-model-filter.sh /etc/milvago-model-filter/config.json /opt/milvago-commercial/milvago-model-filter
 }
 # A registration refusal (a registered AI client still running, on upgrade) must not skip
