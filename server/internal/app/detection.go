@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"regexp"
 	"slices"
@@ -77,6 +78,16 @@ type DetectionNetwork struct {
 	// reachable without an account (anonymous ChatGPT's `/unauth-mweb/`), "signed_in"
 	// for one that requires it. A property of the measured route, never of the page.
 	Session string `json:"session,omitempty"`
+	// A form field carrying the whole message as one JSON document, which then becomes
+	// the body every path of the rule reads: Gemini sends `f.req=<json>`. Its name may
+	// hold a dot, which no path segment can name.
+	FormField string `json:"form_field,omitempty"`
+	// A request header holding JSON from which ModelPath reads the model instead of the
+	// body: Gemini states it only in `x-goog-ext-525001261-jspb`. Lower case.
+	ModelHeader string `json:"model_header,omitempty"`
+	// Opaque model identifiers mapped to canonical names. An identifier the map does not
+	// know is reported as `<provider>:<id>`, so the canonical names never hold `:`.
+	ModelMap map[string]string `json:"model_map,omitempty"`
 	// `omitempty` on all of these, like `conversation_url_segment` and for the same reason:
 	// `Network` refuses unknown fields on the agent side, so a catalogue that always
 	// carried them would be rejected outright by every earlier agent.
@@ -305,6 +316,32 @@ func validateProviderNetworkRule(p DetectionProvider, n DetectionNetwork) error 
 	if n.ConversationURLSegment != nil && (*n.ConversationURLSegment < 0 || *n.ConversationURLSegment > 16) {
 		return bad("Invalid conversation segment.")
 	}
+	return validateNetworkModelSource(n)
+}
+
+var detectionFormField = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,64}$`)
+var detectionHeaderName = regexp.MustCompile(`^[a-z0-9-]{1,64}$`)
+var detectionModelID = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,64}$`)
+var detectionModelName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`)
+
+// validateNetworkModelSource bounds the form field, the model header and the model map
+// as the agent and the extension bound them. A header named without a path reads nothing.
+func validateNetworkModelSource(n DetectionNetwork) error {
+	reserved := []string{"__proto__", "constructor", "prototype"}
+	if n.FormField != "" && (!detectionFormField.MatchString(n.FormField) || slices.Contains(reserved, n.FormField)) {
+		return bad("Invalid form field.")
+	}
+	if n.ModelHeader != "" && (!detectionHeaderName.MatchString(n.ModelHeader) || n.ModelPath == "") {
+		return bad("Invalid model header.")
+	}
+	if len(n.ModelMap) > 32 {
+		return bad("Invalid model map.")
+	}
+	for id, name := range n.ModelMap {
+		if !detectionModelID.MatchString(id) || slices.Contains(reserved, id) || !detectionModelName.MatchString(name) {
+			return bad("Invalid model map.")
+		}
+	}
 	return nil
 }
 
@@ -442,6 +479,7 @@ func cloneDetection(c DetectionContent) DetectionContent {
 		for j, n := range out.Providers[i].Network {
 			out.Providers[i].Network[j].TextPaths = slices.Clone(n.TextPaths)
 			out.Providers[i].Network[j].JSONFields = slices.Clone(n.JSONFields)
+			out.Providers[i].Network[j].ModelMap = maps.Clone(n.ModelMap)
 			// A slice clone copies this struct by value, and the struct carries a
 			// pointer: without this the memo and every copy handed to a caller share
 			// the same *int. The shipped factory catalogue sets it on one rule, so
