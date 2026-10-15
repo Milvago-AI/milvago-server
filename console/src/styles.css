@@ -600,7 +600,7 @@ output.notice{margin-top:1em}
 @page{size:A4;margin:14mm 12mm}
 @media print{
   html,body{background:#fff}
-  .skip-link,.sidebar,.overlay,.mobile-bar,.pagebar,.report-controls{display:none!important}
+  .skip-link,.sidebar,.overlay,.overlay.open,.mobile-bar,.pagebar,.report-controls{display:none}
   .report{padding:0;gap:0;min-height:0}
   .report-sheet{max-width:none;min-height:269mm;border:0;border-radius:0;padding:0;break-before:page;break-inside:avoid}
   .report-sheet:first-of-type{break-before:auto}

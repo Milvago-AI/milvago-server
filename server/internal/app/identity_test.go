@@ -849,7 +849,11 @@ func (f *identityScenarioFixture) testCredentialMFA(t *testing.T) {
 	cookie, state = f.followMFA(t, w)
 	p.acr = "2"
 	requireHTTP(t, f.finishLogin(cookie, state, ""), 302)
+	f.testKeptActionOutcome(t)
+}
 
+func (f *identityScenarioFixture) testKeptActionOutcome(t *testing.T) {
+	p := f.identity
 	// A first second factor set up from the profile is asked for at once: the outcome of
 	// that action survives the continuation, and only as fixed values.
 	finishWith := func(login, kept *http.Cookie, state string) *httptest.ResponseRecorder {
@@ -861,8 +865,8 @@ func (f *identityScenarioFixture) testCredentialMFA(t *testing.T) {
 		return w
 	}
 	p.acr = ""
-	cookie, state, _ = f.beginLogin(t, "/auth/login")
-	w = f.finishLogin(cookie, state, "&kc_action=CONFIGURE_TOTP&kc_action_status=success")
+	cookie, state, _ := f.beginLogin(t, "/auth/login")
+	w := f.finishLogin(cookie, state, "&kc_action=CONFIGURE_TOTP&kc_action_status=success")
 	var kept *http.Cookie
 	for _, c := range w.Result().Cookies() {
 		if c.Name == cookieName("return") && c.MaxAge > 0 {

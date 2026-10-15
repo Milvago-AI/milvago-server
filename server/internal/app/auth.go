@@ -89,28 +89,33 @@ func (a *App) loginProfileAction(w http.ResponseWriter, r *http.Request) (string
 		return "", true
 	}
 	if action == "remove_mfa" {
-		// Keycloak deletes the device, after a fresh authentication when the last
-		// one is old; the server only lets an account name one of its own devices.
-		admin, e := a.identityAdminFor(r.Context(), session.Realm)
-		if e != nil {
-			a.fail(w, e)
-			return "", true
-		}
-		devices, e := admin.otpCredentials(r.Context(), session.Subject)
-		if e != nil {
-			a.fail(w, e)
-			return "", true
-		}
-		id := r.URL.Query().Get("credential")
-		for _, device := range devices {
-			if id != "" && device.ID == id {
-				return "delete_credential:" + id, false
-			}
-		}
-		a.fail(w, apiError{404, "credential_not_found", "This second-factor device was not found."})
-		return "", true
+		return a.removeMFAAction(w, r, session)
 	}
 	return kcAction, false
+}
+
+// removeMFAAction resolves the Keycloak action that deletes one second-factor device.
+// Keycloak deletes the device, after a fresh authentication when the last one is old;
+// the server only lets an account name one of its own devices.
+func (a *App) removeMFAAction(w http.ResponseWriter, r *http.Request, session *Session) (string, bool) {
+	admin, e := a.identityAdminFor(r.Context(), session.Realm)
+	if e != nil {
+		a.fail(w, e)
+		return "", true
+	}
+	devices, e := admin.otpCredentials(r.Context(), session.Subject)
+	if e != nil {
+		a.fail(w, e)
+		return "", true
+	}
+	id := r.URL.Query().Get("credential")
+	for _, device := range devices {
+		if id != "" && device.ID == id {
+			return "delete_credential:" + id, false
+		}
+	}
+	a.fail(w, apiError{404, "credential_not_found", "This second-factor device was not found."})
+	return "", true
 }
 
 func (a *App) login(w http.ResponseWriter, r *http.Request) {
@@ -449,25 +454,7 @@ func (a *App) completeLogin(w http.ResponseWriter, r *http.Request, ctx context.
 	}
 	action, status := r.URL.Query().Get("kc_action"), r.URL.Query().Get("kc_action_status")
 	if requireMFA && !mfa {
-		if flow.attempt.stepUp {
-			return apiError{403, "mfa_required", "Multi-factor authentication is required for this organization."}
-		}
-		var language string
-		if e = tx.QueryRow(ctx, sqlDefaultLanguage).Scan(&language); e != nil {
-			return e
-		}
-		if e = tx.Rollback(ctx); e != nil {
-			return e
-		}
-		// An account action that ends without a second-factor proof (a first device just
-		// set up, for one) is followed by that proof: its outcome waits in a cookie and is
-		// re-checked on the way back. The cookie names the continuation it belongs to, so an
-		// abandoned or refused continuation leaves nothing a later sign-in would display.
-		binding, e := a.startOIDCLogin(w, r, language, "", true, false, loginTarget{realm: realm})
-		if e == nil && status != "" {
-			a.cookie(w, a.cookieName("return"), keptActionOutcome(binding, action, status), 600)
-		}
-		return e
+		return a.continueWithMFA(w, r, ctx, tx, flow, action, status)
 	}
 	if e = a.endPendingInvitation(ctx, tx, realm, user, flow.id.Subject); e != nil {
 		return e
@@ -477,15 +464,48 @@ func (a *App) completeLogin(w http.ResponseWriter, r *http.Request, ctx context.
 		return e
 	}
 	a.cookie(w, a.cookieName("session"), session, int(time.Until(expiry).Seconds()))
-	if kept, e := r.Cookie(a.cookieName("return")); e == nil {
-		a.cookie(w, a.cookieName("return"), "", -1)
-		saved, _ := url.ParseQuery(kept.Value)
-		if flow.attempt.stepUp && status == "" && saved.Get("b") == bindingTag(flow.attempt.binding) {
-			action, status = saved.Get("a"), saved.Get("s")
-		}
-	}
+	action, status = a.restoreKeptAction(w, r, flow, action, status)
 	http.Redirect(w, r, profileReturn(action, status), http.StatusFound)
 	return nil
+}
+
+// continueWithMFA ends a sign-in that still lacks the second factor: a step-up is refused,
+// anything else restarts as a step-up to obtain the proof.
+func (a *App) continueWithMFA(w http.ResponseWriter, r *http.Request, ctx context.Context, tx pgx.Tx, flow verifiedLogin, action, status string) error {
+	if flow.attempt.stepUp {
+		return apiError{403, "mfa_required", "Multi-factor authentication is required for this organization."}
+	}
+	var language string
+	if e := tx.QueryRow(ctx, sqlDefaultLanguage).Scan(&language); e != nil {
+		return e
+	}
+	if e := tx.Rollback(ctx); e != nil {
+		return e
+	}
+	// An account action that ends without a second-factor proof (a first device just
+	// set up, for one) is followed by that proof: its outcome waits in a cookie and is
+	// re-checked on the way back. The cookie names the continuation it belongs to, so an
+	// abandoned or refused continuation leaves nothing a later sign-in would display.
+	binding, e := a.startOIDCLogin(w, r, language, "", true, false, loginTarget{realm: flow.attempt.realm})
+	if e == nil && status != "" {
+		a.cookie(w, a.cookieName("return"), keptActionOutcome(binding, action, status), 600)
+	}
+	return e
+}
+
+// restoreKeptAction consumes the outcome cookie of an earlier account action. It is
+// honoured only on the step-up continuation it was bound to, and is dropped otherwise.
+func (a *App) restoreKeptAction(w http.ResponseWriter, r *http.Request, flow verifiedLogin, action, status string) (string, string) {
+	kept, e := r.Cookie(a.cookieName("return"))
+	if e != nil {
+		return action, status
+	}
+	a.cookie(w, a.cookieName("return"), "", -1)
+	saved, _ := url.ParseQuery(kept.Value)
+	if flow.attempt.stepUp && status == "" && saved.Get("b") == bindingTag(flow.attempt.binding) {
+		return saved.Get("a"), saved.Get("s")
+	}
+	return action, status
 }
 
 // keptActionOutcome is the value of the cookie that carries an account action outcome

@@ -160,6 +160,27 @@ func (a *App) updateProfileName(r *http.Request, tx pgx.Tx, s *Session, first, l
 	return changed, nil
 }
 
+// setProfileLanguage stores the requested language and reports whether it differs from the
+// current one. A change that changes nothing writes no audit line: any member could
+// otherwise fill the journal with one request after another (audit of 2026-09-24).
+func setProfileLanguage(r *http.Request, tx pgx.Tx, s *Session, requested *string) (string, bool, error) {
+	language := ""
+	if e := tx.QueryRow(r.Context(), `SELECT language FROM users WHERE id=$1`, s.UserID).Scan(&language); e != nil {
+		return "", false, e
+	}
+	if requested == nil {
+		return language, false, nil
+	}
+	if !languageAllowed(*requested) {
+		return "", false, bad("Language must be one of fr, en, es, pt-BR, or empty to follow the browser.")
+	}
+	changed := *requested != language
+	if _, e := tx.Exec(r.Context(), `UPDATE users SET language=$1 WHERE id=$2`, *requested, s.UserID); e != nil {
+		return "", false, e
+	}
+	return *requested, changed, nil
+}
+
 func (a *App) putProfile(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
 	var body struct {
 		FirstName *string `json:"first_name"`
@@ -173,21 +194,9 @@ func (a *App) putProfile(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *S
 	if kind == "" {
 		kind = "local"
 	}
-	language := ""
-	if e := tx.QueryRow(r.Context(), `SELECT language FROM users WHERE id=$1`, s.UserID).Scan(&language); e != nil {
+	language, changed, e := setProfileLanguage(r, tx, s, body.Language)
+	if e != nil {
 		return e
-	}
-	// A change that changes nothing writes no audit line: any member could otherwise
-	// fill the journal with one request after another (audit of 2026-09-24).
-	changed := body.Language != nil && *body.Language != language
-	if body.Language != nil {
-		if !languageAllowed(*body.Language) {
-			return bad("Language must be one of fr, en, es, pt-BR, or empty to follow the browser.")
-		}
-		language = *body.Language
-		if _, e := tx.Exec(r.Context(), `UPDATE users SET language=$1 WHERE id=$2`, language, s.UserID); e != nil {
-			return e
-		}
 	}
 	first, last, e := validateProfileNames(kind, body.FirstName, body.LastName, s.DisplayName)
 	if e != nil {

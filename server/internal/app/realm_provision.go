@@ -54,31 +54,15 @@ func (a *App) ensureOrganizationRealms(ctx context.Context) {
 	if a.config.Issuer == "" || a.config.AdminClientSecret == "" {
 		return
 	}
-	if admin, e := a.identityAdmin(ctx); e == nil {
-		if e = convergeBrowserRedirector(ctx, admin); e != nil {
-			a.log.Warn("root realm sign-in flow not converged", "error", e)
-		}
-		if e = closeAccountConsole(ctx, admin); e != nil {
-			a.log.Warn("root realm account console not closed", "error", e)
-		}
-	}
+	a.convergeRootRealm(ctx)
 	if Edition != "commercial" {
 		return
 	}
-	rows, e := a.db.Query(ctx, `SELECT o.id,o.name FROM organizations o, app_config c WHERE o.id<>c.organization_id`)
+	orgs, e := a.childOrganizations(ctx)
 	if e != nil {
 		a.log.Warn("organization realms not converged", "error", e)
 		return
 	}
-	type org struct{ id, name string }
-	var orgs []org
-	for rows.Next() {
-		var o org
-		if rows.Scan(&o.id, &o.name) == nil {
-			orgs = append(orgs, o)
-		}
-	}
-	rows.Close()
 	origin, e := a.publicIdentityOrigin(ctx)
 	if e != nil {
 		a.log.Warn("organization realms not converged", "error", e)
@@ -89,6 +73,37 @@ func (a *App) ensureOrganizationRealms(ctx context.Context) {
 			a.log.Warn("organization realm not converged", "organization", o.id, "error", e)
 		}
 	}
+}
+
+func (a *App) convergeRootRealm(ctx context.Context) {
+	admin, e := a.identityAdmin(ctx)
+	if e != nil {
+		return
+	}
+	if e = convergeBrowserRedirector(ctx, admin); e != nil {
+		a.log.Warn("root realm sign-in flow not converged", "error", e)
+	}
+	if e = closeAccountConsole(ctx, admin); e != nil {
+		a.log.Warn("root realm account console not closed", "error", e)
+	}
+}
+
+type childOrganization struct{ id, name string }
+
+func (a *App) childOrganizations(ctx context.Context) ([]childOrganization, error) {
+	rows, e := a.db.Query(ctx, `SELECT o.id,o.name FROM organizations o, app_config c WHERE o.id<>c.organization_id`)
+	if e != nil {
+		return nil, e
+	}
+	defer rows.Close()
+	var orgs []childOrganization
+	for rows.Next() {
+		var o childOrganization
+		if rows.Scan(&o.id, &o.name) == nil {
+			orgs = append(orgs, o)
+		}
+	}
+	return orgs, nil
 }
 
 // ensureOrganizationRealm creates the realm of a child organization when missing, then
@@ -363,33 +378,34 @@ func closeAccountConsole(ctx context.Context, admin *identityAdmin) error {
 
 const resetSecondFactor = "Reset - Conditional OTP"
 
-func convergeResetSecondFactor(ctx context.Context, root, admin *identityAdmin) error {
-	requirement := func(a *identityAdmin) (map[string]any, string, error) {
-		var realm map[string]any
-		if e := adminJSON(ctx, a, "GET", "", nil, 200, &realm); e != nil {
-			return nil, "", e
-		}
-		flow, _ := realm["resetCredentialsFlow"].(string)
-		if flow == "" {
-			flow = "reset credentials"
-		}
-		path := flowExecutionsPath(flow)
-		var executions []map[string]any
-		if e := adminJSON(ctx, a, "GET", path, nil, 200, &executions); e != nil {
-			return nil, "", e
-		}
-		for _, x := range executions {
-			if x["displayName"] == resetSecondFactor {
-				return x, path, nil
-			}
-		}
-		return nil, path, nil
+func resetSecondFactorExecution(ctx context.Context, a *identityAdmin) (map[string]any, string, error) {
+	var realm map[string]any
+	if e := adminJSON(ctx, a, "GET", "", nil, 200, &realm); e != nil {
+		return nil, "", e
 	}
-	want, _, e := requirement(root)
+	flow, _ := realm["resetCredentialsFlow"].(string)
+	if flow == "" {
+		flow = "reset credentials"
+	}
+	path := flowExecutionsPath(flow)
+	var executions []map[string]any
+	if e := adminJSON(ctx, a, "GET", path, nil, 200, &executions); e != nil {
+		return nil, "", e
+	}
+	for _, x := range executions {
+		if x["displayName"] == resetSecondFactor {
+			return x, path, nil
+		}
+	}
+	return nil, path, nil
+}
+
+func convergeResetSecondFactor(ctx context.Context, root, admin *identityAdmin) error {
+	want, _, e := resetSecondFactorExecution(ctx, root)
 	if e != nil || want == nil {
 		return e
 	}
-	have, path, e := requirement(admin)
+	have, path, e := resetSecondFactorExecution(ctx, admin)
 	if e != nil || have == nil || have["requirement"] == want["requirement"] {
 		return e
 	}

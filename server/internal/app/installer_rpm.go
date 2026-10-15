@@ -357,6 +357,51 @@ fi
 	return p, nil
 }
 
+// addInstallerPayloadFiles walks the extracted payload and adds each directory and regular
+// file under root; anything else is refused.
+func addInstallerPayloadFiles(payload, root string, add func(rpmpack.RPMFile)) error {
+	return filepath.WalkDir(payload, func(file string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil || file == payload {
+			return walkErr
+		}
+		relative, err := filepath.Rel(payload, file)
+		if err != nil {
+			return err
+		}
+		name := path.Join(root, filepath.ToSlash(relative))
+		if entry.IsDir() {
+			add(rpmDirectory(name, 0755))
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			return fmt.Errorf("invalid installer payload file")
+		}
+		body, err := readConfined(file)
+		if err != nil {
+			return err
+		}
+		mode := uint(0644)
+		if info.Mode()&0111 != 0 {
+			mode = 0755
+		}
+		add(rpmpack.RPMFile{Name: name, Body: body, Mode: mode, Owner: "root", Group: "root"})
+		return nil
+	})
+}
+
+// cpioArchiveSize is the uncompressed cpio length that rpm2cpio and rpm expect, where
+// rpmpack records the file bytes as the archive size (newc: 110-byte header, name, data,
+// each 4-aligned).
+func cpioArchiveSize(files map[string]rpmpack.RPMFile) int {
+	align := func(n int) int { return (n + 3) &^ 3 }
+	archive := align(110 + len("TRAILER!!!") + 1)
+	for name, file := range files {
+		archive += align(110+len(name)+1) + align(len(file.Body))
+	}
+	return archive
+}
+
 func buildInstallerRPM(directory, source string, provision InstallerProvision) (string, error) {
 	payload := filepath.Join(directory, "payload")
 	if err := os.Mkdir(payload, 0700); err != nil {
@@ -393,35 +438,7 @@ func buildInstallerRPM(directory, source string, provision InstallerProvision) (
 	files := map[string]rpmpack.RPMFile{}
 	add := func(file rpmpack.RPMFile) { files[file.Name] = file }
 	add(rpmDirectory(root, 0755))
-	err = filepath.WalkDir(payload, func(file string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil || file == payload {
-			return walkErr
-		}
-		relative, err := filepath.Rel(payload, file)
-		if err != nil {
-			return err
-		}
-		name := path.Join(root, filepath.ToSlash(relative))
-		if entry.IsDir() {
-			add(rpmDirectory(name, 0755))
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil || !info.Mode().IsRegular() {
-			return fmt.Errorf("invalid installer payload file")
-		}
-		body, err := readConfined(file)
-		if err != nil {
-			return err
-		}
-		mode := uint(0644)
-		if info.Mode()&0111 != 0 {
-			mode = 0755
-		}
-		add(rpmpack.RPMFile{Name: name, Body: body, Mode: mode, Owner: "root", Group: "root"})
-		return nil
-	})
-	if err != nil {
+	if err = addInstallerPayloadFiles(payload, root, add); err != nil {
 		return "", err
 	}
 	// Added after the payload so the server's provisioning always wins over the release's.
@@ -434,14 +451,7 @@ func buildInstallerRPM(directory, source string, provision InstallerProvision) (
 	for _, file := range files {
 		rpm.AddFile(file)
 	}
-	// rpmpack records the file bytes as the archive size; rpm2cpio and rpm expect the
-	// uncompressed cpio length (newc: 110-byte header, name, data, each 4-aligned).
-	align := func(n int) int { return (n + 3) &^ 3 }
-	archive := align(110 + len("TRAILER!!!") + 1)
-	for name, file := range files {
-		archive += align(110+len(name)+1) + align(len(file.Body))
-	}
-	rpm.AddCustomSig(0x03ef, rpmpack.EntryInt32([]int32{int32(archive)}))
+	rpm.AddCustomSig(0x03ef, rpmpack.EntryInt32([]int32{int32(cpioArchiveSize(files))}))
 	rpm.AddPrein(plan.pre)
 	rpm.AddPostin(plan.post)
 	rpm.AddPreun(plan.preun)
