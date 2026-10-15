@@ -4,7 +4,7 @@
 main() {
 set -euo pipefail
 
-MILVAGO_RELEASE_VERSION='1.0.5'
+MILVAGO_RELEASE_VERSION='1.0.6'
 SOURCE_COMMIT='@SOURCE_COMMIT@'
 IMAGE='@IMAGE@'
 
@@ -694,10 +694,17 @@ cat > "$caddyfile" <<EOF
   }
 }
 :8080 {
-  # Keycloak administration, the master realm, and account linking at will: users
-  # never operate the identity provider, and SSO is configured from the console.
-  @private_identity path /admin /admin/* /realms/master /realms/master/* /realms/*/broker/*/link /realms/*/broker/*/link/*
+  # Keycloak administration, the master realm, its account pages and account linking at
+  # will: users never operate the identity provider, SSO is configured from the console
+  # and second factors are managed from the console profile.
+  # A wildcard inside a path pattern stops at a slash, so the account pages (a single-page
+  # application and its REST API, any depth) are closed by a pattern instead.
+  @private_identity path /admin /admin/* /realms/master /realms/master/*
+  @private_account path_regexp (?i)^/realms/[^/]+/(account|broker/[^/]+/link)
   handle @private_identity {
+    respond 404
+  }
+  handle @private_account {
     respond 404
   }
   @identity path /realms /realms/* /resources /resources/* /js /js/*

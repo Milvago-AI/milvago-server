@@ -46,6 +46,9 @@
 }
 /* The light tertiary text is 4.30:1 on surface-2; use secondary text there. */
 [data-theme=light] :is(.tag-empty,.bubble,.fd-tile,.vnav-item.active,.vnav-item[aria-pressed=true],.shadow-area-nav button:hover,.shadow-area-nav button.selected,.shadow-area-nav button[aria-pressed=true],.user:hover,.user[aria-current],.org-tree-item:hover,.org-tree-item:focus-visible,.platform-row:hover,tbody tr:hover td,.catalog-row.is-selected){--text-3:var(--text-2)}
+/* A soft fade between the console and its sign-in pages, which share this frame
+   (effective when they share the origin, as behind the installer's proxy). */
+@view-transition{navigation:auto}
 *{box-sizing:border-box}
 html{overflow-x:hidden}
 body{margin:0;min-width:320px;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
@@ -428,6 +431,17 @@ output.notice{margin-top:1em}
 .profile-fields label{display:flex;flex-direction:column;gap:6px;font-size:13px;min-width:0}
 .profile-rows{display:grid;grid-template-columns:180px minmax(0,1fr);gap:10px 16px;font-size:13px;margin:0}
 .profile-rows dt{color:var(--text-2)}.profile-rows dd{margin:0;overflow-wrap:anywhere}
+/* Security and access: one row per thing to change, its action at the end. */
+.security-rows{display:grid;grid-template-columns:180px minmax(0,1fr) auto;column-gap:16px;font-size:13px;margin:0}
+.security-rows>dt,.security-rows>dd{margin:0;padding:14px 0;border-top:1px solid var(--border);overflow-wrap:anywhere}
+.security-rows>dt{font-weight:600}
+.security-rows>dd p{margin:0}
+.mfa-devices{list-style:none;margin:0 0 8px;padding:0;display:grid;gap:8px}
+.mfa-devices li{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--surface-2)}
+.mfa-devices li>svg{width:18px;height:18px;color:var(--text-2)}
+.mfa-devices li>div{flex:1;min-width:0;display:flex;flex-direction:column}
+.mfa-devices li span{font-size:12px;color:var(--text-2)}
+@media(max-width:580px){.security-rows{grid-template-columns:minmax(0,1fr) auto}.security-rows>dt{grid-column:1/-1;padding-bottom:0}.security-rows>dt+dd{border-top:0}.security-rows>dt+dd+dd{border-top:0}}
 .directory-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
 .sso-provider + .sso-provider{margin-top:28px;padding-top:20px;border-top:1px solid var(--border)}
 .sso-domain{padding:12px 0;border-bottom:1px solid var(--border)}
@@ -586,7 +600,7 @@ output.notice{margin-top:1em}
 @page{size:A4;margin:14mm 12mm}
 @media print{
   html,body{background:#fff}
-  .skip-link,.sidebar,.overlay,.mobile-bar,.pagebar,.report-controls{display:none!important}
+  .skip-link,.sidebar,.overlay,.overlay.open,.mobile-bar,.pagebar,.report-controls{display:none}
   .report{padding:0;gap:0;min-height:0}
   .report-sheet{max-width:none;min-height:269mm;border:0;border-radius:0;padding:0;break-before:page;break-inside:avoid}
   .report-sheet:first-of-type{break-before:auto}

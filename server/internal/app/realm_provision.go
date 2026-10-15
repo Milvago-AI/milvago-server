@@ -54,28 +54,15 @@ func (a *App) ensureOrganizationRealms(ctx context.Context) {
 	if a.config.Issuer == "" || a.config.AdminClientSecret == "" {
 		return
 	}
-	if admin, e := a.identityAdmin(ctx); e == nil {
-		if e = convergeBrowserRedirector(ctx, admin); e != nil {
-			a.log.Warn("root realm sign-in flow not converged", "error", e)
-		}
-	}
+	a.convergeRootRealm(ctx)
 	if Edition != "commercial" {
 		return
 	}
-	rows, e := a.db.Query(ctx, `SELECT o.id,o.name FROM organizations o, app_config c WHERE o.id<>c.organization_id`)
+	orgs, e := a.childOrganizations(ctx)
 	if e != nil {
 		a.log.Warn("organization realms not converged", "error", e)
 		return
 	}
-	type org struct{ id, name string }
-	var orgs []org
-	for rows.Next() {
-		var o org
-		if rows.Scan(&o.id, &o.name) == nil {
-			orgs = append(orgs, o)
-		}
-	}
-	rows.Close()
 	origin, e := a.publicIdentityOrigin(ctx)
 	if e != nil {
 		a.log.Warn("organization realms not converged", "error", e)
@@ -86,6 +73,37 @@ func (a *App) ensureOrganizationRealms(ctx context.Context) {
 			a.log.Warn("organization realm not converged", "organization", o.id, "error", e)
 		}
 	}
+}
+
+func (a *App) convergeRootRealm(ctx context.Context) {
+	admin, e := a.identityAdmin(ctx)
+	if e != nil {
+		return
+	}
+	if e = convergeBrowserRedirector(ctx, admin); e != nil {
+		a.log.Warn("root realm sign-in flow not converged", "error", e)
+	}
+	if e = closeAccountConsole(ctx, admin); e != nil {
+		a.log.Warn("root realm account console not closed", "error", e)
+	}
+}
+
+type childOrganization struct{ id, name string }
+
+func (a *App) childOrganizations(ctx context.Context) ([]childOrganization, error) {
+	rows, e := a.db.Query(ctx, `SELECT o.id,o.name FROM organizations o, app_config c WHERE o.id<>c.organization_id`)
+	if e != nil {
+		return nil, e
+	}
+	defer rows.Close()
+	var orgs []childOrganization
+	for rows.Next() {
+		var o childOrganization
+		if rows.Scan(&o.id, &o.name) == nil {
+			orgs = append(orgs, o)
+		}
+	}
+	return orgs, nil
 }
 
 // ensureOrganizationRealm creates the realm of a child organization when missing, then
@@ -312,38 +330,82 @@ func convergeRealm(ctx context.Context, root, admin *identityAdmin) error {
 	if e := convergeResetSecondFactor(ctx, root, admin); e != nil {
 		return e
 	}
-	return convergeBrowserRedirector(ctx, admin)
+	if e := convergeBrowserRedirector(ctx, admin); e != nil {
+		return e
+	}
+	return closeAccountConsole(ctx, admin)
+}
+
+// closeAccountConsole retires Keycloak's own account pages in a realm. Second factors
+// are managed from the console profile, through actions that need neither the
+// account-console client nor the manage-account role, and that role also let a user
+// link another identity to the account at will.
+func closeAccountConsole(ctx context.Context, admin *identityAdmin) error {
+	var clients []map[string]any
+	if e := adminJSON(ctx, admin, "GET", "/clients?clientId=account-console", nil, 200, &clients); e != nil {
+		return e
+	}
+	for _, client := range clients {
+		id, _ := client["id"].(string)
+		if id == "" || client["clientId"] != "account-console" || client["enabled"] == false {
+			continue
+		}
+		client["enabled"] = false
+		if e := adminJSON(ctx, admin, "PUT", "/clients/"+url.PathEscape(id), client, http.StatusNoContent, nil); e != nil {
+			return e
+		}
+	}
+	var realm struct {
+		DefaultRole struct {
+			ID string `json:"id"`
+		} `json:"defaultRole"`
+	}
+	if e := adminJSON(ctx, admin, "GET", "", nil, 200, &realm); e != nil || realm.DefaultRole.ID == "" {
+		return e
+	}
+	path := "/roles-by-id/" + url.PathEscape(realm.DefaultRole.ID) + "/composites"
+	var composites []map[string]any
+	if e := adminJSON(ctx, admin, "GET", path, nil, 200, &composites); e != nil {
+		return e
+	}
+	for _, role := range composites {
+		if role["name"] == "manage-account" && role["clientRole"] == true {
+			return adminJSON(ctx, admin, "DELETE", path, []map[string]any{role}, http.StatusNoContent, nil)
+		}
+	}
+	return nil
 }
 
 const resetSecondFactor = "Reset - Conditional OTP"
 
-func convergeResetSecondFactor(ctx context.Context, root, admin *identityAdmin) error {
-	requirement := func(a *identityAdmin) (map[string]any, string, error) {
-		var realm map[string]any
-		if e := adminJSON(ctx, a, "GET", "", nil, 200, &realm); e != nil {
-			return nil, "", e
-		}
-		flow, _ := realm["resetCredentialsFlow"].(string)
-		if flow == "" {
-			flow = "reset credentials"
-		}
-		path := flowExecutionsPath(flow)
-		var executions []map[string]any
-		if e := adminJSON(ctx, a, "GET", path, nil, 200, &executions); e != nil {
-			return nil, "", e
-		}
-		for _, x := range executions {
-			if x["displayName"] == resetSecondFactor {
-				return x, path, nil
-			}
-		}
-		return nil, path, nil
+func resetSecondFactorExecution(ctx context.Context, a *identityAdmin) (map[string]any, string, error) {
+	var realm map[string]any
+	if e := adminJSON(ctx, a, "GET", "", nil, 200, &realm); e != nil {
+		return nil, "", e
 	}
-	want, _, e := requirement(root)
+	flow, _ := realm["resetCredentialsFlow"].(string)
+	if flow == "" {
+		flow = "reset credentials"
+	}
+	path := flowExecutionsPath(flow)
+	var executions []map[string]any
+	if e := adminJSON(ctx, a, "GET", path, nil, 200, &executions); e != nil {
+		return nil, "", e
+	}
+	for _, x := range executions {
+		if x["displayName"] == resetSecondFactor {
+			return x, path, nil
+		}
+	}
+	return nil, path, nil
+}
+
+func convergeResetSecondFactor(ctx context.Context, root, admin *identityAdmin) error {
+	want, _, e := resetSecondFactorExecution(ctx, root)
 	if e != nil || want == nil {
 		return e
 	}
-	have, path, e := requirement(admin)
+	have, path, e := resetSecondFactorExecution(ctx, admin)
 	if e != nil || have == nil || have["requirement"] == want["requirement"] {
 		return e
 	}

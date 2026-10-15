@@ -20,6 +20,16 @@ var profileActions = map[string]string{
 	"configure_totp":  "CONFIGURE_TOTP",
 }
 
+// profileActionReturns names, for the console, the action Keycloak reports on
+// its way back (kc_action); removing a device comes back without its id.
+var profileActionReturns = map[string]string{
+	"UPDATE_PROFILE":    "profile",
+	"UPDATE_EMAIL":      "email",
+	"UPDATE_PASSWORD":   "password",
+	"CONFIGURE_TOTP":    "mfa_added",
+	"delete_credential": "mfa_removed",
+}
+
 // profileActionAllowed enforces who manages what: an SSO (brokered) account is
 // entirely managed by its identity provider; an LDAP account only owns its
 // Keycloak second factor; a local account owns everything.
@@ -28,7 +38,7 @@ func profileActionAllowed(identityType, action string) bool {
 	case "sso":
 		return false
 	case "ldap":
-		return action == "configure_totp" || action == "manage_mfa"
+		return action == "configure_totp" || action == "remove_mfa"
 	}
 	return true
 }
@@ -54,15 +64,15 @@ func (a *App) profile(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Sess
 		return e
 	}
 	first, last := splitName(s.DisplayName)
-	// Whether an OTP credential exists is only known to Keycloak; report null
-	// when identity administration is unavailable rather than guessing.
-	var mfaConfigured any
+	// Second-factor devices are only known to Keycloak; report null when identity
+	// administration is unavailable rather than guessing.
+	var mfaConfigured, mfaDevices any
 	if admin, e := a.identityAdminFor(r.Context(), s.Realm); e == nil {
 		if u, e := admin.user(r.Context(), s.Subject); e == nil && u != nil {
 			first, last = strings.TrimSpace(u.FirstName), strings.TrimSpace(u.LastName)
 		}
-		if configured, e := admin.hasOTP(r.Context(), s.Subject); e == nil {
-			mfaConfigured = configured
+		if devices, e := admin.otpCredentials(r.Context(), s.Subject); e == nil {
+			mfaConfigured, mfaDevices = len(devices) > 0, devices
 		}
 	}
 	reply(w, 200, map[string]any{
@@ -73,6 +83,7 @@ func (a *App) profile(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Sess
 		"language":       language,
 		"identity_type":  kind,
 		"mfa_configured": mfaConfigured,
+		"mfa_devices":    mfaDevices,
 		"editable": map[string]bool{
 			"profile":  profileActionAllowed(kind, "update_profile"),
 			"email":    profileActionAllowed(kind, "update_email"),
@@ -149,6 +160,27 @@ func (a *App) updateProfileName(r *http.Request, tx pgx.Tx, s *Session, first, l
 	return changed, nil
 }
 
+// setProfileLanguage stores the requested language and reports whether it differs from the
+// current one. A change that changes nothing writes no audit line: any member could
+// otherwise fill the journal with one request after another (audit of 2026-09-24).
+func setProfileLanguage(r *http.Request, tx pgx.Tx, s *Session, requested *string) (string, bool, error) {
+	language := ""
+	if e := tx.QueryRow(r.Context(), `SELECT language FROM users WHERE id=$1`, s.UserID).Scan(&language); e != nil {
+		return "", false, e
+	}
+	if requested == nil {
+		return language, false, nil
+	}
+	if !languageAllowed(*requested) {
+		return "", false, bad("Language must be one of fr, en, es, pt-BR, or empty to follow the browser.")
+	}
+	changed := *requested != language
+	if _, e := tx.Exec(r.Context(), `UPDATE users SET language=$1 WHERE id=$2`, *requested, s.UserID); e != nil {
+		return "", false, e
+	}
+	return *requested, changed, nil
+}
+
 func (a *App) putProfile(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
 	var body struct {
 		FirstName *string `json:"first_name"`
@@ -162,21 +194,9 @@ func (a *App) putProfile(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *S
 	if kind == "" {
 		kind = "local"
 	}
-	language := ""
-	if e := tx.QueryRow(r.Context(), `SELECT language FROM users WHERE id=$1`, s.UserID).Scan(&language); e != nil {
+	language, changed, e := setProfileLanguage(r, tx, s, body.Language)
+	if e != nil {
 		return e
-	}
-	// A change that changes nothing writes no audit line: any member could otherwise
-	// fill the journal with one request after another (audit of 2026-09-24).
-	changed := body.Language != nil && *body.Language != language
-	if body.Language != nil {
-		if !languageAllowed(*body.Language) {
-			return bad("Language must be one of fr, en, es, pt-BR, or empty to follow the browser.")
-		}
-		language = *body.Language
-		if _, e := tx.Exec(r.Context(), `UPDATE users SET language=$1 WHERE id=$2`, language, s.UserID); e != nil {
-			return e
-		}
 	}
 	first, last, e := validateProfileNames(kind, body.FirstName, body.LastName, s.DisplayName)
 	if e != nil {

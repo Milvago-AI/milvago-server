@@ -273,7 +273,7 @@ UMask=0077
 WantedBy=multi-user.target
 `, 0644),
 		rpmDirectory("/etc/milvago-model-filter", 0750),
-		rpmpack.RPMFile{Name: "/etc/milvago-model-filter/config.json", Body: []byte(`{"state_dir":"/var/lib/milvago-model-filter/state","provision_file":"/etc/milvago-model-filter/provision.json","hostname":"","bindings":[]}` + "\n"), Mode: 0600, Owner: "root", Group: "root", Type: rpmpack.ConfigFile | rpmpack.NoReplaceFile},
+		rpmpack.RPMFile{Name: "/etc/milvago-model-filter/config.json", Body: []byte(`{"state_dir":"/var/lib/milvago-model-filter/state","provision_file":"/etc/milvago-model-filter/provision.json","bindings":[]}` + "\n"), Mode: 0600, Owner: "root", Group: "root", Type: rpmpack.ConfigFile | rpmpack.NoReplaceFile},
 		rpmpack.RPMFile{Name: "/etc/milvago-model-filter/provision.json", Body: provision, Mode: 0600, Owner: "root", Group: "root", Type: rpmpack.ConfigFile | rpmpack.NoReplaceFile},
 	)
 	// --user-group: files and units name the milvago-agent group, which useradd creates
@@ -284,19 +284,10 @@ if [ -f /etc/systemd/system/milvago-model-filter.service ]; then
  systemctl stop milvago-model-filter.service || exit 1
 fi
 `
-	p.post = `python3 - <<'PY'
-import json, os, pathlib, socket, tempfile
-p=pathlib.Path("/etc/milvago-model-filter/config.json")
-c=json.loads(p.read_text())
-if not c.get("hostname"):
- c["hostname"]=socket.gethostname()[:100]+"-filter"
- fd,temporary=tempfile.mkstemp(dir=p.parent,prefix=".config-")
- with os.fdopen(fd,"w") as output:
-  json.dump(c,output)
- os.chmod(temporary,0o600)
- os.replace(temporary,p)
-PY
-configure_machinefilter() {
+	// The model filter has no server identity of its own (one machine, one device): it
+	// takes its policy from the agent and hands its events to it, so its configuration
+	// needs no hostname.
+	p.post = `configure_machinefilter() {
  /opt/milvago-commercial/register-model-filter.sh /etc/milvago-model-filter/config.json /opt/milvago-commercial/milvago-model-filter
 }
 # A registration refusal (a registered AI client still running, on upgrade) must not skip
@@ -366,6 +357,51 @@ fi
 	return p, nil
 }
 
+// addInstallerPayloadFiles walks the extracted payload and adds each directory and regular
+// file under root; anything else is refused.
+func addInstallerPayloadFiles(payload, root string, add func(rpmpack.RPMFile)) error {
+	return filepath.WalkDir(payload, func(file string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil || file == payload {
+			return walkErr
+		}
+		relative, err := filepath.Rel(payload, file)
+		if err != nil {
+			return err
+		}
+		name := path.Join(root, filepath.ToSlash(relative))
+		if entry.IsDir() {
+			add(rpmDirectory(name, 0755))
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			return fmt.Errorf("invalid installer payload file")
+		}
+		body, err := readConfined(file)
+		if err != nil {
+			return err
+		}
+		mode := uint(0644)
+		if info.Mode()&0111 != 0 {
+			mode = 0755
+		}
+		add(rpmpack.RPMFile{Name: name, Body: body, Mode: mode, Owner: "root", Group: "root"})
+		return nil
+	})
+}
+
+// cpioArchiveSize is the uncompressed cpio length that rpm2cpio and rpm expect, where
+// rpmpack records the file bytes as the archive size (newc: 110-byte header, name, data,
+// each 4-aligned).
+func cpioArchiveSize(files map[string]rpmpack.RPMFile) int {
+	align := func(n int) int { return (n + 3) &^ 3 }
+	archive := align(110 + len("TRAILER!!!") + 1)
+	for name, file := range files {
+		archive += align(110+len(name)+1) + align(len(file.Body))
+	}
+	return archive
+}
+
 func buildInstallerRPM(directory, source string, provision InstallerProvision) (string, error) {
 	payload := filepath.Join(directory, "payload")
 	if err := os.Mkdir(payload, 0700); err != nil {
@@ -402,35 +438,7 @@ func buildInstallerRPM(directory, source string, provision InstallerProvision) (
 	files := map[string]rpmpack.RPMFile{}
 	add := func(file rpmpack.RPMFile) { files[file.Name] = file }
 	add(rpmDirectory(root, 0755))
-	err = filepath.WalkDir(payload, func(file string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil || file == payload {
-			return walkErr
-		}
-		relative, err := filepath.Rel(payload, file)
-		if err != nil {
-			return err
-		}
-		name := path.Join(root, filepath.ToSlash(relative))
-		if entry.IsDir() {
-			add(rpmDirectory(name, 0755))
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil || !info.Mode().IsRegular() {
-			return fmt.Errorf("invalid installer payload file")
-		}
-		body, err := readConfined(file)
-		if err != nil {
-			return err
-		}
-		mode := uint(0644)
-		if info.Mode()&0111 != 0 {
-			mode = 0755
-		}
-		add(rpmpack.RPMFile{Name: name, Body: body, Mode: mode, Owner: "root", Group: "root"})
-		return nil
-	})
-	if err != nil {
+	if err = addInstallerPayloadFiles(payload, root, add); err != nil {
 		return "", err
 	}
 	// Added after the payload so the server's provisioning always wins over the release's.
@@ -443,14 +451,7 @@ func buildInstallerRPM(directory, source string, provision InstallerProvision) (
 	for _, file := range files {
 		rpm.AddFile(file)
 	}
-	// rpmpack records the file bytes as the archive size; rpm2cpio and rpm expect the
-	// uncompressed cpio length (newc: 110-byte header, name, data, each 4-aligned).
-	align := func(n int) int { return (n + 3) &^ 3 }
-	archive := align(110 + len("TRAILER!!!") + 1)
-	for name, file := range files {
-		archive += align(110+len(name)+1) + align(len(file.Body))
-	}
-	rpm.AddCustomSig(0x03ef, rpmpack.EntryInt32([]int32{int32(archive)}))
+	rpm.AddCustomSig(0x03ef, rpmpack.EntryInt32([]int32{int32(cpioArchiveSize(files))}))
 	rpm.AddPrein(plan.pre)
 	rpm.AddPostin(plan.post)
 	rpm.AddPreun(plan.preun)

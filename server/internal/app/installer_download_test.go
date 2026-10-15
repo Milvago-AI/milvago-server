@@ -199,13 +199,19 @@ func assertCommercialRPMContents(t *testing.T, commercial installerRPMPlan) {
 		"User=root\nGroup=milvago-agent", "User=milvago-agent\nGroup=milvago-agent", "provision-json",
 		"/etc/claude-code", "/etc/codex", "WantedBy=multi-user.target", "ProtectHome=read-only",
 		"python3-setools", "selinux-policy-devel", "/etc/milvago-model-filter/config.json", "/etc/milvago-model-filter/provision.json",
-		"configure_machinefilter || filter_failed=1", "register-model-filter.sh --remove", "gethostname()", "bindings",
+		"configure_machinefilter || filter_failed=1", "register-model-filter.sh --remove", "bindings",
 		// The agent account keeps no capability, and reads its configuration from root's /etc.
 		"CapabilityBoundingSet=\nReadWritePaths=/var/lib/milvago-commercial", "SystemCallFilter=@system-service\n",
 		"/var/lib/milvago-commercial /etc/milvago-commercial <<'PY'", "os.O_NONBLOCK,dir_fd=directory", "st_nlink!=1", "ExecStart=/opt/milvago-commercial/milvago-collector run\n",
 	} {
 		if !strings.Contains(spec, required) {
 			t.Fatalf("system RPM missing %q", required)
+		}
+	}
+	// One machine, one device: the model filter enrolls nothing under a name of its own.
+	for _, forbidden := range []string{`+"-filter"`, `"hostname"`, "gethostname()"} {
+		if strings.Contains(spec, forbidden) {
+			t.Fatalf("system RPM still gives the model filter an identity: %q", forbidden)
 		}
 	}
 	for _, forbidden := range []string{"/usr/lib/systemd/user", "ExecStart=/opt/milvago-commercial/agent-session.sh", "WantedBy=default.target", "chmod 777", "rm -rf"} {

@@ -40,31 +40,48 @@ type identityUser struct {
 	Enabled *bool `json:"enabled"`
 }
 
-// hasOTP reads the current Keycloak credential list. A missing or unreadable list
-// cannot prove that a password-only login is safe.
-func (admin *identityAdmin) hasOTP(ctx context.Context, subject string) (bool, error) {
+// otpDevice is one second-factor credential as the account owner may see it:
+// never its secret, only what tells two devices apart.
+type otpDevice struct {
+	ID        string `json:"id"`
+	Label     string `json:"label"`
+	CreatedAt int64  `json:"created_at"`
+}
+
+// otpCredentials reads the current Keycloak credential list. A missing or
+// unreadable list cannot prove that a password-only login is safe.
+func (admin *identityAdmin) otpCredentials(ctx context.Context, subject string) ([]otpDevice, error) {
 	status, _, raw, err := admin.call(ctx, "GET", keycloakUsersPath+url.PathEscape(subject)+"/credentials", nil)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	if status != http.StatusOK {
-		return false, apiError{503, "identity_admin_unavailable", "Could not verify the account MFA configuration."}
+		return nil, apiError{503, "identity_admin_unavailable", "Could not verify the account MFA configuration."}
 	}
 	var credentials []struct {
-		Type string `json:"type"`
+		ID          string `json:"id"`
+		Type        string `json:"type"`
+		UserLabel   string `json:"userLabel"`
+		CreatedDate int64  `json:"createdDate"`
 	}
 	if err := json.Unmarshal(raw, &credentials); err != nil {
-		return false, err
+		return nil, err
 	}
 	if credentials == nil {
-		return false, apiError{503, "identity_admin_unavailable", "Could not verify the account MFA configuration."}
+		return nil, apiError{503, "identity_admin_unavailable", "Could not verify the account MFA configuration."}
 	}
+	devices := []otpDevice{}
 	for _, credential := range credentials {
 		if credential.Type == "otp" {
-			return true, nil
+			devices = append(devices, otpDevice{credential.ID, credential.UserLabel, credential.CreatedDate})
 		}
 	}
-	return false, nil
+	return devices, nil
+}
+
+func (admin *identityAdmin) hasOTP(ctx context.Context, subject string) (bool, error) {
+	devices, err := admin.otpCredentials(ctx, subject)
+	return len(devices) > 0, err
 }
 
 // withdrawn reports whether the identity provider has stopped honouring this

@@ -1,6 +1,5 @@
 import { useContext, useEffect, useState } from "react";
 import type { SubmitEvent } from "react";
-import { request } from "./api";
 import type { Profile } from "./api";
 import { ApiKeysPanel } from "./ApiKeysPanel";
 import {
@@ -8,6 +7,7 @@ import {
   Card,
   Context,
   ErrorNotice,
+  Icon,
   Notice,
   PageBar,
   ResourceView,
@@ -44,47 +44,42 @@ function identityLabel(
   return t("local");
 }
 
-function mfaStatusLabel(t: Translate, configured: Profile["mfa_configured"]): string {
-  if (configured === null) return t("unknownStatus");
-  return configured ? t("configured") : t("notConfigured");
+// What the server says on the way back from an account action (fixed values only,
+// see /auth/callback): the confirmation to show, or nothing for a cancelled one.
+const returnedActions = {
+  password: "passwordChanged",
+  email: "emailChangeRequested",
+  mfa_added: "deviceAdded",
+  mfa_removed: "deviceRemoved",
+  profile: "profileSaved",
+} as const;
+
+function returnedNotice(): { tone: "success" | "danger"; key: (typeof returnedActions)[keyof typeof returnedActions] | "accountActionFailed" } | null {
+  const query = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
+  const done = query.get("done");
+  if (!done || !Object.hasOwn(returnedActions, done)) return null;
+  if (query.get("status") === "success") return { tone: "success", key: returnedActions[done as keyof typeof returnedActions] };
+  if (query.get("status") === "error") return { tone: "danger", key: "accountActionFailed" };
+  return null;
 }
 
 function ProfileView({ profile }: Readonly<{ profile: Profile }>) {
   const t = useText();
   const { language, refreshSession, session } = useContext(Context);
   const frozen = readOnly(session);
-  const [mfaConfigured, setMfaConfigured] = useState(profile.mfa_configured);
-  const [managingMFA, setManagingMFA] = useState(false);
-  const mfaStatus = mfaStatusLabel(t, mfaConfigured);
-  const enrollMFA = mfaConfigured === false;
+  const [returned] = useState(returnedNotice);
+  // Read once: a reload of the page must not repeat the confirmation.
   useEffect(() => {
-    if (!managingMFA) return;
-    const controller = new AbortController();
-    let refreshing = false;
-    const refreshMFA = () => {
-      if (document.visibilityState === "hidden" || refreshing) return;
-      refreshing = true;
-      // Keep unsaved identity fields intact when returning from the security tab.
-      request<Profile>("/api/profile", { signal: controller.signal })
-        .then(updated => { if (!controller.signal.aborted) setMfaConfigured(updated.mfa_configured); })
-        .catch(() => { if (!controller.signal.aborted) setMfaConfigured(null); })
-        .finally(() => { refreshing = false; });
-    };
-    window.addEventListener("focus", refreshMFA);
-    document.addEventListener("visibilitychange", refreshMFA);
-    return () => {
-      controller.abort();
-      window.removeEventListener("focus", refreshMFA);
-      document.removeEventListener("visibilitychange", refreshMFA);
-    };
-  }, [managingMFA]);
+    if (window.location.hash.includes("?")) window.history.replaceState(null, "", "#profile");
+  }, []);
+  const action = (name: string, extra = "") => `/auth/login?action=${name}${extra}&lang=${language}`;
+  const devices = profile.mfa_devices ?? null;
+  const manageMFA = !frozen && profile.editable.mfa;
   return (
     <>
+      {returned && <Notice tone={returned.tone} role="status">{t(returned.key)}</Notice>}
       <IdentityForm profile={profile} refreshSession={refreshSession} />
-      <Card title={t("securityAndAccess")}>
-        <p>
-          <strong>{t("secondFactor")}</strong> {mfaStatus}
-        </p>
+      <Card title={t("securityAndAccess")} description={!frozen && profile.identity_type !== "sso" ? t("securityActionsHelp") : undefined}>
         {profile.identity_type !== "local" && (
           <Notice tone="neutral">
             {profile.identity_type === "sso"
@@ -98,38 +93,64 @@ function ProfileView({ profile }: Readonly<{ profile: Profile }>) {
             already refuses `?action=` under this flag; this removes the buttons that
             led there. */}
         {frozen && <Notice tone="neutral">{t("demoReadOnlyProfileNotice")}</Notice>}
-        <div className="actions">
-          {!frozen && profile.editable.email && (
-            <a
-              className="button secondary"
-              href={`/auth/login?action=update_email&lang=${language}`}
-            >
-              {t("changeMyEmailAddress")}
-            </a>
+        <dl className="security-rows">
+          <dt>{t("emailAddress")}</dt>
+          <dd>{profile.email}</dd>
+          <dd>
+            {!frozen && profile.editable.email && (
+              <a className="button secondary small" href={action("update_email")} aria-label={t("changeMyEmailAddress")}>{t("change")}</a>
+            )}
+          </dd>
+          {profile.editable.password && (
+            <>
+              <dt>{t("credentialLabel")}</dt>
+              <dd aria-hidden="true">••••••••</dd>
+              <dd>
+                {!frozen && (
+                  <a className="button secondary small" href={action("update_password")} aria-label={t("changeMyPassword")}>{t("change")}</a>
+                )}
+              </dd>
+            </>
           )}
-          {!frozen && profile.editable.password && (
-            <a
-              className="button secondary"
-              href={`/auth/login?action=update_password&lang=${language}`}
-            >
-              {t("changeMyPassword")}
-            </a>
+          {/* The identity provider owns an SSO account's second factor: Keycloak holds no
+              device for it, and "no device" would misstate how that account signs in. */}
+          {profile.identity_type !== "sso" && (
+            <>
+              <dt>{t("secondFactorTitle")}</dt>
+              <dd>
+                {devices === null && <p className="muted">{t("secondFactorUnknown")}</p>}
+                {devices?.length === 0 && <p className="muted">{t("secondFactorNone")}</p>}
+                {devices && devices.length > 0 && (
+                  <>
+                    <ul className="mfa-devices">
+                      {devices.map(device => (
+                        <li key={device.id}>
+                          <Icon name="smartphone" />
+                          <div>
+                            <strong>{device.label || t("unnamedDevice")}</strong>
+                            <span>{t("deviceAddedOn", [new Intl.DateTimeFormat(language, { dateStyle: "long" }).format(new Date(device.created_at))])}</span>
+                          </div>
+                          {manageMFA && (
+                            <a className="button danger small" href={action("remove_mfa", `&credential=${encodeURIComponent(device.id)}`)} aria-label={t("removeDeviceNamed", [device.label || t("unnamedDevice")])}>{t("remove")}</a>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="field-help">{t("secondFactorAsked")}</p>
+                  </>
+                )}
+              </dd>
+              <dd>
+                {manageMFA && devices !== null && (
+                  <a className={devices.length === 0 ? "button primary small" : "button secondary small"} href={action("configure_totp")}>
+                    <Icon name="plus" />
+                    {t(devices.length === 0 ? "configureMySecondFactor" : "addDevice")}
+                  </a>
+                )}
+              </dd>
+            </>
           )}
-          {!frozen && profile.editable.mfa && (
-            <a
-              className="button secondary"
-              href={`/auth/login?action=${enrollMFA ? "configure_totp" : "manage_mfa"}&lang=${language}`}
-              target={enrollMFA ? undefined : "_blank"}
-              rel={enrollMFA ? undefined : "noopener noreferrer"}
-              onClick={() => { if (!enrollMFA) setManagingMFA(true); }}
-            >
-              {t(enrollMFA ? "configureMySecondFactor" : "manageMySecondFactors")}
-            </a>
-          )}
-        </div>
-        {!frozen && profile.editable.mfa && !enrollMFA && (
-          <p className="field-help">{t("manageSecondFactorsHelp")}</p>
-        )}
+        </dl>
       </Card>
       <ApiKeysPanel />
     </>

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -72,7 +73,7 @@ func (a *App) loginProfileAction(w http.ResponseWriter, r *http.Request) (string
 		return "", true
 	}
 	kcAction, known := profileActions[action]
-	if action == "" || (!known && action != "manage_mfa") {
+	if action == "" || (!known && action != "remove_mfa") {
 		return "", false
 	}
 	cookie, e := r.Cookie(a.cookieName("session"))
@@ -87,16 +88,34 @@ func (a *App) loginProfileAction(w http.ResponseWriter, r *http.Request) (string
 		a.fail(w, apiError{403, "action_forbidden", "This account setting is managed by your identity provider."})
 		return "", true
 	}
-	if action == "manage_mfa" {
-		// Keycloak owns credential management; only the configured issuer receives this redirect.
-		accountURL := a.publicRealmIssuer(session.Realm) + "/account/account-security/signing-in"
-		if language := r.URL.Query().Get("lang"); slices.Contains(consoleLanguages, language) {
-			accountURL += "?" + url.Values{"kc_locale": {language}}.Encode()
-		}
-		http.Redirect(w, r, accountURL, http.StatusFound)
-		return "", true
+	if action == "remove_mfa" {
+		return a.removeMFAAction(w, r, session)
 	}
 	return kcAction, false
+}
+
+// removeMFAAction resolves the Keycloak action that deletes one second-factor device.
+// Keycloak deletes the device, after a fresh authentication when the last one is old;
+// the server only lets an account name one of its own devices.
+func (a *App) removeMFAAction(w http.ResponseWriter, r *http.Request, session *Session) (string, bool) {
+	admin, e := a.identityAdminFor(r.Context(), session.Realm)
+	if e != nil {
+		a.fail(w, e)
+		return "", true
+	}
+	devices, e := admin.otpCredentials(r.Context(), session.Subject)
+	if e != nil {
+		a.fail(w, e)
+		return "", true
+	}
+	id := r.URL.Query().Get("credential")
+	for _, device := range devices {
+		if id != "" && device.ID == id {
+			return "delete_credential:" + id, false
+		}
+	}
+	a.fail(w, apiError{404, "credential_not_found", "This second-factor device was not found."})
+	return "", true
 }
 
 func (a *App) login(w http.ResponseWriter, r *http.Request) {
@@ -124,20 +143,22 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, e)
 		return
 	}
-	if e := a.startOIDCLogin(w, r, language, kcAction, r.URL.Query().Get("mfa") == "1", true, target); e != nil {
+	if _, e := a.startOIDCLogin(w, r, language, kcAction, r.URL.Query().Get("mfa") == "1", true, target); e != nil {
 		a.fail(w, e)
 	}
 }
 
-func (a *App) startOIDCLogin(w http.ResponseWriter, r *http.Request, language, kcAction string, stepUp, fresh bool, target loginTarget) error {
+// startOIDCLogin returns the attempt's browser binding, which ties anything carried
+// alongside the attempt to that attempt alone.
+func (a *App) startOIDCLogin(w http.ResponseWriter, r *http.Request, language, kcAction string, stepUp, fresh bool, target loginTarget) (string, error) {
 	identity, err := a.currentOIDCFor(r.Context(), target.realm)
 	if err != nil {
-		return err
+		return "", err
 	}
 	state, binding, nonce, verifier := randomToken(), randomToken(), randomToken(), oauth2.GenerateVerifier()
 	_, e := a.db.Exec(r.Context(), `INSERT INTO login_attempts(state_hash,binding_hash,verifier,nonce,expires_at,step_up,realm) VALUES($1,$2,$3,$4,now()+interval '10 minutes',$5,$6)`, hash(state), hash(binding), verifier, nonce, stepUp, target.realm)
 	if e != nil {
-		return e
+		return "", e
 	}
 	a.cookie(w, a.cookieName("login"), binding, 600)
 	opts := []oauth2.AuthCodeOption{oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("ui_locales", language)}
@@ -159,7 +180,7 @@ func (a *App) startOIDCLogin(w http.ResponseWriter, r *http.Request, language, k
 		opts = append(opts, oauth2.SetAuthURLParam("kc_action", kcAction))
 	}
 	http.Redirect(w, r, identity.oauth.AuthCodeURL(state, opts...), http.StatusFound)
-	return nil
+	return binding, nil
 }
 
 type loginAttempt struct {
@@ -169,6 +190,8 @@ type loginAttempt struct {
 	stepUp                            bool
 	// realm is the stored realm the sign-in was started in ("" for the root one).
 	realm string
+	// binding is the browser half of the attempt, already proved against the stored hash.
+	binding string
 }
 
 type loginClaims struct {
@@ -193,6 +216,7 @@ func (a *App) consumeLoginAttempt(w http.ResponseWriter, r *http.Request) (login
 	if e != nil || r.URL.Query().Get("code") == "" {
 		return attempt, bad("Invalid or reused login attempt.")
 	}
+	attempt.binding = cookie.Value
 	return attempt, nil
 }
 
@@ -428,18 +452,9 @@ func (a *App) completeLogin(w http.ResponseWriter, r *http.Request, ctx context.
 	if e != nil {
 		return e
 	}
+	action, status := r.URL.Query().Get("kc_action"), r.URL.Query().Get("kc_action_status")
 	if requireMFA && !mfa {
-		if flow.attempt.stepUp {
-			return apiError{403, "mfa_required", "Multi-factor authentication is required for this organization."}
-		}
-		var language string
-		if e = tx.QueryRow(ctx, sqlDefaultLanguage).Scan(&language); e != nil {
-			return e
-		}
-		if e = tx.Rollback(ctx); e != nil {
-			return e
-		}
-		return a.startOIDCLogin(w, r, language, "", true, false, loginTarget{realm: realm})
+		return a.continueWithMFA(w, r, ctx, tx, flow, action, status)
 	}
 	if e = a.endPendingInvitation(ctx, tx, realm, user, flow.id.Subject); e != nil {
 		return e
@@ -449,12 +464,69 @@ func (a *App) completeLogin(w http.ResponseWriter, r *http.Request, ctx context.
 		return e
 	}
 	a.cookie(w, a.cookieName("session"), session, int(time.Until(expiry).Seconds()))
-	target := "/"
-	if r.URL.Query().Get("kc_action_status") != "" {
-		target = "/#profile"
-	}
-	http.Redirect(w, r, target, http.StatusFound)
+	action, status = a.restoreKeptAction(w, r, flow, action, status)
+	http.Redirect(w, r, profileReturn(action, status), http.StatusFound)
 	return nil
+}
+
+// continueWithMFA ends a sign-in that still lacks the second factor: a step-up is refused,
+// anything else restarts as a step-up to obtain the proof.
+func (a *App) continueWithMFA(w http.ResponseWriter, r *http.Request, ctx context.Context, tx pgx.Tx, flow verifiedLogin, action, status string) error {
+	if flow.attempt.stepUp {
+		return apiError{403, "mfa_required", "Multi-factor authentication is required for this organization."}
+	}
+	var language string
+	if e := tx.QueryRow(ctx, sqlDefaultLanguage).Scan(&language); e != nil {
+		return e
+	}
+	if e := tx.Rollback(ctx); e != nil {
+		return e
+	}
+	// An account action that ends without a second-factor proof (a first device just
+	// set up, for one) is followed by that proof: its outcome waits in a cookie and is
+	// re-checked on the way back. The cookie names the continuation it belongs to, so an
+	// abandoned or refused continuation leaves nothing a later sign-in would display.
+	binding, e := a.startOIDCLogin(w, r, language, "", true, false, loginTarget{realm: flow.attempt.realm})
+	if e == nil && status != "" {
+		a.cookie(w, a.cookieName("return"), keptActionOutcome(binding, action, status), 600)
+	}
+	return e
+}
+
+// restoreKeptAction consumes the outcome cookie of an earlier account action. It is
+// honoured only on the step-up continuation it was bound to, and is dropped otherwise.
+func (a *App) restoreKeptAction(w http.ResponseWriter, r *http.Request, flow verifiedLogin, action, status string) (string, string) {
+	kept, e := r.Cookie(a.cookieName("return"))
+	if e != nil {
+		return action, status
+	}
+	a.cookie(w, a.cookieName("return"), "", -1)
+	saved, _ := url.ParseQuery(kept.Value)
+	if flow.attempt.stepUp && status == "" && saved.Get("b") == bindingTag(flow.attempt.binding) {
+		return saved.Get("a"), saved.Get("s")
+	}
+	return action, status
+}
+
+// keptActionOutcome is the value of the cookie that carries an account action outcome
+// across the second-factor continuation started with binding.
+func keptActionOutcome(binding, action, status string) string {
+	return url.Values{"a": {action}, "s": {status}, "b": {bindingTag(binding)}}.Encode()
+}
+
+func bindingTag(binding string) string { return hex.EncodeToString(hash(binding)) }
+
+// profileReturn is where a sign-in lands: the profile after an account action, with its
+// confirmation when Keycloak reports a known action and outcome. Only fixed values reach
+// the console, which words the confirmation itself.
+func profileReturn(action, status string) string {
+	if status == "" {
+		return "/"
+	}
+	if done, ok := profileActionReturns[action]; ok && slices.Contains([]string{"success", "cancelled", "error"}, status) {
+		return "/#profile?" + url.Values{"done": {done}, "status": {status}}.Encode()
+	}
+	return "/#profile"
 }
 
 func (a *App) callback(w http.ResponseWriter, r *http.Request) {

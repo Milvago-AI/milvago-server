@@ -226,20 +226,23 @@ func validateDetectionProviders(c DetectionContent) error {
 	return nil
 }
 
+// Shared by every conversation-path check so the refusal text stays identical.
+const errInvalidConversationPath = "Invalid conversation path."
+
 func validateDetectionProvider(p DetectionProvider, ids, domains, assetHosts map[string]bool) error {
 	if !detectionID.MatchString(p.ID) || slices.Contains([]string{"codex", "claude-code", "claude-desktop", "claude-desktop-agent"}, p.ID) || ids[p.ID] || !validMetadata(p.Label, 100) || len(p.Domains) == 0 || len(p.Domains)+len(p.Aliases) > 32 || len(p.Network) > 32 || p.ConversationSegment < 0 || p.ConversationSegment > 16 || len(p.AssetHosts) > 8 {
 		return bad("Invalid provider.")
 	}
 	ids[p.ID] = true
 	if p.ConversationPath != "" && (!detectionPath.MatchString(p.ConversationPath) || strings.Count(p.ConversationPath, "*") > 8) {
-		return bad("Invalid conversation path.")
+		return bad(errInvalidConversationPath)
 	}
 	if len(p.ConversationPaths) > 4 {
-		return bad("Invalid conversation path.")
+		return bad(errInvalidConversationPath)
 	}
 	for _, path := range p.ConversationPaths {
 		if path == "" || !detectionPath.MatchString(path) || strings.Count(path, "*") > 8 {
-			return bad("Invalid conversation path.")
+			return bad(errInvalidConversationPath)
 		}
 	}
 	if e := validateProviderDomains(p, domains); e != nil {
