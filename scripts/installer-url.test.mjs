@@ -5,7 +5,10 @@ import {spawnSync} from 'node:child_process';
 const source=readFileSync('install-private.sh','utf8');
 const start=source.indexOf('valid_public_origin() {');
 const end=source.indexOf('\numask 077',start);
-assert.ok(start>0 && end>start);
+// Checked inside a test case so a missing marker fails this file by name.
+test('installer URL section markers exist',()=>{
+ assert.ok(start>0 && end>start);
+});
 const bash=process.platform==='win32'?'C:/Program Files/Git/bin/bash.exe':'/usr/bin/bash';
 function select({value,terminal=false,answer='',host}={}){
  const env={...process.env,URL_TEST_ANSWER:answer};

@@ -7,11 +7,14 @@ import {spawnSync} from 'node:child_process';
 const source=readFileSync('install-private.sh','utf8');
 const begin=source.indexOf('inspect_docker_cli() {');
 const end=source.indexOf('valid_public_origin() {',begin);
-assert.ok(begin>0 && end>begin);
-assert.ok(source.indexOf('\ninspect_docker_cli\n')<source.indexOf('\nensure_prerequisites\n'));
 const planStart=source.indexOf('install_compose=0');
 const planEnd=source.indexOf('if (( install_engine || install_compose )); then',planStart);
-assert.ok(planEnd>planStart);
+// Checked inside a test case so a missing marker fails this file by name.
+test('installer markers exist and the Docker check precedes prerequisites',()=>{
+ assert.ok(begin>0 && end>begin);
+ assert.ok(source.indexOf('\ninspect_docker_cli\n')<source.indexOf('\nensure_prerequisites\n'));
+ assert.ok(planEnd>planStart);
+});
 const bash=process.platform==='win32'?'C:/Program Files/Git/bin/bash.exe':'/usr/bin/bash';
 function run(path,version=0,compose=0){
  const log=join(mkdtempSync(join(tmpdir(),'milvago-cli-test-')),'calls');
