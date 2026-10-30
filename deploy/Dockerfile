@@ -1,4 +1,4 @@
-FROM node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2 AS ui
+FROM node:26.12.0-bookworm-slim@sha256:742a0fe7320e09e0321222b68165e6ac731d30470e7ea7f98f9bfc3a6e1034fe AS ui
 WORKDIR /build/console
 COPY console/package*.json ./
 RUN npm ci --ignore-scripts
