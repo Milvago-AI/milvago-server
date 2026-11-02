@@ -55,9 +55,9 @@ by `deploy/Dockerfile` (build stages and the shipped base).
 | axllent/mailpit | v1.31.4 | MIT | compose service (mail) |
 | quay.io/keycloak/keycloak | 26.8.1 | Apache-2.0 | compose service (identity) |
 | caddy | 2.11.4-alpine | Apache-2.0 | private installer gateway (pinned by digest) |
-| node | 26.10.0-bookworm-slim | MIT | build stage (console) |
-| golang | 1.27.2-bookworm | BSD-3-Clause | build stage (server) |
-| gcr.io/distroless/static-debian12 | nonroot | Apache-2.0 | shipped base |
+| node | 26.13.0-trixie-slim | MIT | build stage (console) |
+| golang | 1.27.3-trixie | BSD-3-Clause | build stage (server) |
+| gcr.io/distroless/static-debian13 | nonroot | Apache-2.0 | shipped base |
 
 ## Regenerating this list
 
