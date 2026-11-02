@@ -12,12 +12,11 @@ Direct modules: the `require` entries in `server/go.mod` without `// indirect`.
 | Module | Version | License |
 |---|---|---|
 | github.com/coreos/go-oidc/v3 | v3.21.0 | Apache-2.0 |
-| github.com/go-jose/go-jose/v4 | v4.1.5 | Apache-2.0 |
+| github.com/go-jose/go-jose/v4 | v4.1.6 | Apache-2.0 |
 | github.com/google/rpmpack | v0.7.1 | Apache-2.0 |
 | github.com/jackc/pgx/v5 | v5.11.0 | MIT |
-| github.com/prometheus/client_golang | v1.24.1 | Apache-2.0 |
-| github.com/prometheus/client_model | v0.6.3 | Apache-2.0 |
-| golang.org/x/crypto | v0.57.0 | BSD-3-Clause |
+| github.com/prometheus/client_golang | v1.25.0 | Apache-2.0 |
+| golang.org/x/crypto | v0.58.0 | BSD-3-Clause |
 | golang.org/x/oauth2 | v0.37.0 | BSD-3-Clause |
 
 ## Console (`console/`)
@@ -27,22 +26,22 @@ Versions are the exact pins declared there, as resolved in `console/package-lock
 
 | Package | Version | License | Scope |
 |---|---|---|---|
-| react | 19.3.0 | MIT | runtime |
-| react-dom | 19.3.0 | MIT | runtime |
-| lucide-react | 1.52.0 | ISC | runtime |
+| react | 19.3.1 | MIT | runtime |
+| react-dom | 19.3.1 | MIT | runtime |
+| lucide-react | 1.62.0 | ISC | runtime |
 | @fontsource-variable/inter | 5.3.0 | OFL-1.1 | runtime |
 | @testing-library/jest-dom | 7.0.1 | MIT | dev |
 | @testing-library/react | 16.3.3 | MIT | dev |
-| @testing-library/user-event | 14.6.7 | MIT | dev |
-| @types/node | 26.6.4 | MIT | dev |
+| @testing-library/user-event | 14.6.8 | MIT | dev |
+| @types/node | 26.6.5 | MIT | dev |
 | @types/react | 19.3.0 | MIT | dev |
 | @types/react-dom | 19.3.0 | MIT | dev |
 | @vitejs/plugin-react | 6.1.2 | MIT | dev |
-| @vitest/coverage-v8 | 5.0.3 | MIT | dev |
-| jsdom | 30.1.2 | MIT | dev |
+| @vitest/coverage-v8 | 5.0.5 | MIT | dev |
+| jsdom | 30.1.3 | MIT | dev |
 | typescript | 7.0.2 | Apache-2.0 | dev |
-| vite | 8.3.3 | MIT | dev |
-| vitest | 5.0.3 | MIT | dev |
+| vite | 8.3.5 | MIT | dev |
+| vitest | 5.0.5 | MIT | dev |
 
 ## Container images
 
@@ -52,7 +51,7 @@ by `deploy/Dockerfile` (build stages and the shipped base).
 | Image | Tag | License | Role |
 |---|---|---|---|
 | postgres | 18.4 | PostgreSQL License | compose service (database) |
-| axllent/mailpit | v1.31.4 | MIT | compose service (mail) |
+| axllent/mailpit | v1.32.0 | MIT | compose service (mail) |
 | quay.io/keycloak/keycloak | 26.8.1 | Apache-2.0 | compose service (identity) |
 | caddy | 2.11.4-alpine | Apache-2.0 | private installer gateway (pinned by digest) |
 | node | 26.13.0-trixie-slim | MIT | build stage (console) |
@@ -82,5 +81,5 @@ Console table — for each key of `dependencies` and `devDependencies` in
 Container images table — read the `image:` values in `compose.yaml` and the `FROM` lines
 of `deploy/Dockerfile`, then look up each image's license.
 
-Updated on 2026-09-26 from `server/go.mod`, `console/package-lock.json`, `compose.yaml`,
+Updated on 2026-11-02 from `server/go.mod`, `console/package-lock.json`, `compose.yaml`,
 `install-private.sh` and `deploy/Dockerfile`.
