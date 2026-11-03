@@ -164,7 +164,9 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 	if os.Getenv("MILVAGO_DISCOVERY_LOAD_SMOKE") != "1" {
 		t.Skip("separate required load smoke: MILVAGO_DISCOVERY_LOAD_SMOKE=1 with an isolated test database")
 	}
-	f := newObservabilityFixture(t)
+	dbTiming := &discoveryLoadTrace{}
+	f := newObservabilityFixtureWithTracer(t, dbTiming)
+	t.Cleanup(func() { dbTiming.logFailure(t) })
 	t.Logf("RESOURCE PROFILE: CPUs=%d GOMAXPROCS=%d runtime_pool=%d ingest_slots=%d WASM_slots=4", runtime.NumCPU(), runtime.GOMAXPROCS(0), f.a.db.Config().MaxConns, max(1, int(f.a.db.Config().MaxConns)-2))
 	ctx := context.Background()
 	type device struct {
@@ -322,6 +324,7 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 	// Keep both the client concurrency and queue bounded; WASM remains capped at 4.
 	// At 99 arrivals/s a 200 ms handler needs at least 20 concurrent clients.
 	// Bound the generator at 32 so it does not impose its own lower throughput.
+	dbTiming.begin()
 	for n := 0; n < 32; n++ {
 		workers.Add(1)
 		go func() {

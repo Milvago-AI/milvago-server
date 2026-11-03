@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -29,6 +30,11 @@ type observabilityFixture struct {
 }
 
 func newObservabilityFixture(t *testing.T) *observabilityFixture {
+	t.Helper()
+	return newObservabilityFixtureWithTracer(t, nil)
+}
+
+func newObservabilityFixtureWithTracer(t *testing.T, tracer pgx.QueryTracer) *observabilityFixture {
 	t.Helper()
 	runtimeURL, migrationURL := os.Getenv("TEST_DATABASE_URL"), os.Getenv("TEST_MIGRATION_DATABASE_URL")
 	if runtimeURL == "" || migrationURL == "" {
@@ -56,6 +62,21 @@ func newObservabilityFixture(t *testing.T) *observabilityFixture {
 	pool, e := OpenDatabase(ctx, cfg)
 	if e != nil {
 		t.Fatal(e)
+	}
+	if tracer != nil {
+		// Migration/role validation finishes before choosing the final runtime
+		// pool. No App or background worker can retain the untraced pool.
+		runtimeConfig := pool.Config()
+		if runtimeConfig.ConnConfig.Tracer != nil {
+			pool.Close()
+			t.Fatal("fixture already has a runtime tracer")
+		}
+		runtimeConfig.ConnConfig.Tracer = tracer
+		pool.Close()
+		pool, e = pgxpool.NewWithConfig(ctx, runtimeConfig)
+		if e != nil {
+			t.Fatal(e)
+		}
 	}
 	t.Cleanup(pool.Close)
 	a, e := New(ctx, cfg, pool, slog.New(slog.NewTextHandler(io.Discard, nil)))

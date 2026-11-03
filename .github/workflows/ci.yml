@@ -193,8 +193,8 @@ jobs:
           result=0
           go test ./internal/app -run "^TestDiscoveryLoad${DISCOVERY_LOAD_PROFILE}$" -count=1 -timeout=8m -cpuprofile="$RUNNER_TEMP/discovery.cpu" || result=$?
           if [ "$result" -ne 0 ]; then
-            go tool pprof -top -nodecount=35 "$RUNNER_TEMP/discovery.cpu" || :
-            go tool pprof -top -cum -nodecount=35 "$RUNNER_TEMP/discovery.cpu" || :
+            go tool pprof -top -nodecount=100 "$RUNNER_TEMP/discovery.cpu" || :
+            go tool pprof -top -cum -nodecount=100 "$RUNNER_TEMP/discovery.cpu" || :
           fi
           exit "$result"
         working-directory: server
