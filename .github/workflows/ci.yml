@@ -156,8 +156,9 @@ jobs:
       fail-fast: false
       matrix:
         profile: [Smoke, FleetSmoke, FleetDenseSmoke, DNSHintsSmoke]
-        # Keep qualification on the runner's shipped four-connection default.
-        pool: [4]
+        # Compare the shipped budget and a bounded candidate on identical code.
+        # Production defaults remain unchanged during this measurement.
+        pool: [4, 6]
     services:
       database:
         image: postgres:18.4@sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636
