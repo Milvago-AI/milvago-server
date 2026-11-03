@@ -172,6 +172,7 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 	dbTiming := &discoveryLoadTrace{}
 	instrumentDiscoveryLoadWASM(t, dbTiming)
 	f := newObservabilityFixtureWithTracer(t, dbTiming)
+	failureSnapshot := newDiscoveryLoadFailureSnapshot(t)
 	t.Cleanup(func() { dbTiming.logFailure(t) })
 	t.Logf("RESOURCE PROFILE: CPUs=%d GOMAXPROCS=%d runtime_pool=%d ingest_slots=%d WASM_slots=4", runtime.NumCPU(), runtime.GOMAXPROCS(0), f.a.db.Config().MaxConns, max(1, int(f.a.db.Config().MaxConns)-2))
 	ctx := context.Background()
@@ -345,24 +346,32 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 				response := call(d, "/v1/discovery/reports", report)
 				elapsed := time.Since(start)
 				activeIngest.Add(-1)
+				firstFailure, slowResponse := false, false
 				mutex.Lock()
 				serviceTimes = append(serviceTimes, elapsed)
 				queueTimes = append(queueTimes, start.Sub(job.offered))
 				ingest++
 				if time.Since(job.offered) >= time.Second {
 					ingestSlow++
+					slowResponse = true
 				}
 				if response.Code != 200 {
 					failed++
 					responseCodes[response.Code]++
 					ingestCodes[response.Code]++
 					if abort.fail() {
+						firstFailure = true
 						t.Logf("first workload failure: ingest HTTP %d handler=%s offered_to_start=%s generator_attempt_lateness=%s worker_wait_after_attempt=%s report_build=%s queued_at_log=%d active_ingest_at_log=%d active_reads_at_log=%d; stop scheduling", response.Code, elapsed, start.Sub(job.offered), job.attempted.Sub(job.offered), received.Sub(job.attempted), start.Sub(received), len(work), activeIngest.Load(), activeReads.Load())
 					}
 				} else if job.sequence > acknowledged[d.ID] {
 					acknowledged[d.ID] = job.sequence
 				}
 				mutex.Unlock()
+				if firstFailure {
+					failureSnapshot.trigger(t, "http_failure")
+				} else if response.Code == 200 && slowResponse {
+					failureSnapshot.trigger(t, "slow_response")
+				}
 			}
 		}()
 	}
@@ -396,6 +405,7 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 					response := person.call("GET", path, nil, "")
 					elapsed := time.Since(start)
 					activeReads.Add(-1)
+					firstFailure := false
 					mutex.Lock()
 					reads++
 					readPathCounts[path]++
@@ -420,10 +430,16 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 						}
 						readPathFailures[path][response.Code]++
 						if abort.fail() {
+							firstFailure = true
 							t.Logf("first workload failure: interactive HTTP %d route=%s elapsed=%s reader_tick_lateness=%s queued_at_log=%d active_ingest_at_log=%d active_reads_at_log=%d; stop scheduling", response.Code, path, elapsed, start.Sub(offered), len(work), activeIngest.Load(), activeReads.Load())
 						}
 					}
 					mutex.Unlock()
+					if firstFailure {
+						failureSnapshot.trigger(t, "http_failure")
+					} else if response.Code == 200 && elapsed >= time.Second {
+						failureSnapshot.trigger(t, "slow_response")
+					}
 				}
 			}
 		}(n)
@@ -470,13 +486,18 @@ phases:
 			case work <- job{index: sent % fleet, sequence: sequence + int64(sent), offered: offered, attempted: attempted}:
 				sent++
 			default:
+				firstFailure := false
 				mutex.Lock()
 				failed++
 				rejectedAdmission++
 				if abort.fail() {
+					firstFailure = true
 					t.Logf("first workload failure: admission rejected generator_attempt_lateness=%s queued_at_log=%d active_ingest_at_log=%d active_reads_at_log=%d; stop scheduling", attempted.Sub(offered), len(work), activeIngest.Load(), activeReads.Load())
 				}
 				mutex.Unlock()
+				if firstFailure {
+					failureSnapshot.trigger(t, "admission")
+				}
 			}
 		}
 		mutex.Lock()
@@ -498,6 +519,9 @@ phases:
 	cpuAfter := discoveryLoadCPUStats()
 	quota, _ := os.ReadFile("/sys/fs/cgroup/cpu.max")
 	t.Logf("cgroup CPU: quota=%q wall=%s usage=%s throttled=%s throttled periods=%d/%d", strings.TrimSpace(string(quota)), time.Since(measurementStarted), time.Duration(cpuAfter["usage_usec"]-cpuBefore["usage_usec"])*time.Microsecond, time.Duration(cpuAfter["throttled_usec"]-cpuBefore["throttled_usec"])*time.Microsecond, cpuAfter["nr_throttled"]-cpuBefore["nr_throttled"], cpuAfter["nr_periods"]-cpuBefore["nr_periods"])
+	// All diagnostic producers have stopped; join its one owned worker before
+	// fixture cleanup. Its capture never holds the workload statistics mutex.
+	failureSnapshot.wait()
 	// A break out of phases skips its per-phase log. Always report completed
 	// requests after draining, including an aborted peak, without changing SLOs.
 	sort.Slice(serviceTimes, func(i, j int) bool { return serviceTimes[i] < serviceTimes[j] })
