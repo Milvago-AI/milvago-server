@@ -1,0 +1,68 @@
+# Explicit diagnostics only; functional and security regressions remain in ci.yml.
+# The recorded capacity failures are not a production sizing qualification.
+name: Discovery performance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: discovery-performance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  discovery-load:
+    name: discovery-load (${{ matrix.profile }}, managed Compose)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [Smoke, FleetSmoke, FleetDenseSmoke, DNSHintsSmoke]
+    services:
+      database:
+        image: postgres:18.4@sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636
+        env:
+          POSTGRES_USER: fixture_admin
+          POSTGRES_PASSWORD: fixture-only
+          POSTGRES_DB: milvago_test
+          POSTGRES_INITDB_ARGS: '--set=wal_compression=off'
+        options: >-
+          --publish 127.0.0.1:5432:5432
+          --health-cmd "pg_isready -U fixture_admin -d milvago_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DISCOVERY_FIXTURE_ADMIN_URL: postgres://fixture_admin:fixture-only@127.0.0.1/milvago_test?sslmode=disable
+      # Keep the shipped Compose application pool fixed in both database cases.
+      TEST_DATABASE_URL: postgres://milvago_runtime:fixture-runtime@127.0.0.1/milvago_test?sslmode=disable&pool_max_conns=12
+      TEST_MIGRATION_DATABASE_URL: postgres://milvago_migration:fixture-migration@127.0.0.1/milvago_test?sslmode=disable
+      MILVAGO_REQUIRE_INTEGRATION: '1'
+      MILVAGO_DISCOVERY_LOAD_SMOKE: '1'
+      MILVAGO_DISCOVERY_EXPECT_WAL_COMPRESSION: 'off'
+      DISCOVERY_LOAD_PROFILE: ${{ matrix.profile }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - run: rustup toolchain install 1.96.1 --profile minimal --target wasm32-unknown-unknown
+      - run: sh scripts/build-dlp.sh && sh scripts/build-discovery.sh
+      - run: go run ../scripts/discovery-fixture.go
+        working-directory: server
+      # Each unchanged load profile owns a fresh fixture and its own bounded budget.
+      - run: |
+          result=0
+          go test ./internal/app -run "^TestDiscoveryLoad${DISCOVERY_LOAD_PROFILE}$" -v -count=1 -timeout=8m -cpuprofile="$RUNNER_TEMP/discovery.cpu" -blockprofile="$RUNNER_TEMP/discovery.block" -blockprofilerate=0 || result=$?
+          if [ "$result" -ne 0 ]; then
+            go tool pprof -top -nodecount=100 "$RUNNER_TEMP/discovery.cpu" || :
+            go tool pprof -top -cum -nodecount=100 "$RUNNER_TEMP/discovery.cpu" || :
+            go tool pprof -top -sample_index=delay -nodecount=100 -nodefraction=0 "$RUNNER_TEMP/discovery.block" || :
+            go tool pprof -top -cum -sample_index=delay -nodecount=100 -nodefraction=0 "$RUNNER_TEMP/discovery.block" || :
+          fi
+          exit "$result"
+        working-directory: server
