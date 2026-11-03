@@ -497,7 +497,7 @@ phases:
 	runtime.SetBlockProfileRate(0)
 	cpuAfter := discoveryLoadCPUStats()
 	quota, _ := os.ReadFile("/sys/fs/cgroup/cpu.max")
-	t.Logf("application CPU: quota=%q wall=%s usage=%s throttled=%s throttled periods=%d/%d", strings.TrimSpace(string(quota)), time.Since(measurementStarted), time.Duration(cpuAfter["usage_usec"]-cpuBefore["usage_usec"])*time.Microsecond, time.Duration(cpuAfter["throttled_usec"]-cpuBefore["throttled_usec"])*time.Microsecond, cpuAfter["nr_throttled"]-cpuBefore["nr_throttled"], cpuAfter["nr_periods"]-cpuBefore["nr_periods"])
+	t.Logf("cgroup CPU: quota=%q wall=%s usage=%s throttled=%s throttled periods=%d/%d", strings.TrimSpace(string(quota)), time.Since(measurementStarted), time.Duration(cpuAfter["usage_usec"]-cpuBefore["usage_usec"])*time.Microsecond, time.Duration(cpuAfter["throttled_usec"]-cpuBefore["throttled_usec"])*time.Microsecond, cpuAfter["nr_throttled"]-cpuBefore["nr_throttled"], cpuAfter["nr_periods"]-cpuBefore["nr_periods"])
 	// A break out of phases skips its per-phase log. Always report completed
 	// requests after draining, including an aborted peak, without changing SLOs.
 	sort.Slice(serviceTimes, func(i, j int) bool { return serviceTimes[i] < serviceTimes[j] })
