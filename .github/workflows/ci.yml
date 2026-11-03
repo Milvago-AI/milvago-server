@@ -145,7 +145,7 @@ jobs:
       - run: sh scripts/build-dlp.sh && sh scripts/build-discovery.sh
       - run: go run ../scripts/discovery-fixture.go
         working-directory: server
-      - run: MILVAGO_INVENTORY_LOAD=1 go test ./internal/app -run 'TestDiscovery|TestInventorySearch|TestLegacyConversationPage|TestPaginatedMetadata' -count=1 -timeout=8m
+      - run: MILVAGO_INVENTORY_LOAD=1 go test ./internal/app -run 'TestDiscovery|TestInventorySearch|TestLegacyConversationPage|TestPaginatedMetadata|TestSharedRate|TestSharedPublicQuota' -count=1 -timeout=8m
         working-directory: server
 
   discovery-load:

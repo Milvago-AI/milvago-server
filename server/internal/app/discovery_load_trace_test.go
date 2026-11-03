@@ -16,9 +16,10 @@ import (
 
 type discoveryLoadTrace struct {
 	sync.Mutex
-	epoch  uint64
-	active bool
-	stats  map[string]discoveryLoadTiming
+	epoch        uint64
+	active       bool
+	stats        map[string]discoveryLoadTiming
+	transactions map[*pgx.Conn]discoveryLoadSpan
 }
 
 type discoveryLoadTiming struct {
@@ -42,6 +43,7 @@ func (trace *discoveryLoadTrace) begin() {
 	trace.epoch++
 	trace.active = true
 	trace.stats = make(map[string]discoveryLoadTiming)
+	trace.transactions = make(map[*pgx.Conn]discoveryLoadSpan)
 }
 
 func (trace *discoveryLoadTrace) span(class string) discoveryLoadSpan {
@@ -59,7 +61,11 @@ func (trace *discoveryLoadTrace) finish(span discoveryLoadSpan, duration time.Du
 	}
 	trace.Lock()
 	defer trace.Unlock()
-	if !trace.active || span.epoch != trace.epoch {
+	trace.finishLocked(span, duration, failed)
+}
+
+func (trace *discoveryLoadTrace) finishLocked(span discoveryLoadSpan, duration time.Duration, failed bool) {
+	if !trace.active || span.epoch == 0 || span.epoch != trace.epoch {
 		return
 	}
 	metric := trace.stats[span.class]
@@ -72,6 +78,59 @@ func (trace *discoveryLoadTrace) finish(span discoveryLoadSpan, duration time.Du
 		metric.failures++
 	}
 	trace.stats[span.class] = metric
+}
+
+// Timings start at BEGIN's successful response, not at the beginning of its
+// query. The pointer is only an in-memory key; it and connection details are never
+// logged. A transaction includes application/WASM work between SQL statements.
+const discoveryLoadMaxTransactions = 64
+
+func (trace *discoveryLoadTrace) transactionBoundary(conn *pgx.Conn, query discoveryLoadSpan, tag string, failed bool) {
+	if conn == nil || query.epoch == 0 {
+		return
+	}
+	trace.Lock()
+	defer trace.Unlock()
+	if !trace.active || query.epoch != trace.epoch {
+		return
+	}
+	switch query.class {
+	case "query:begin":
+		if failed || tag != "BEGIN" {
+			return
+		}
+		if _, exists := trace.transactions[conn]; exists {
+			// PostgreSQL accepts a repeated BEGIN with a warning; it does not
+			// restart the transaction whose original hold time we are measuring.
+			return
+		}
+		if len(trace.transactions) >= discoveryLoadMaxTransactions {
+			trace.finishLocked(discoveryLoadSpan{epoch: query.epoch, class: "transaction_tracking_dropped"}, 0, true)
+			return
+		}
+		trace.transactions[conn] = discoveryLoadSpan{start: time.Now(), epoch: query.epoch, class: "transaction_hold"}
+	case "query:commit", "query:rollback":
+		span, exists := trace.transactions[conn]
+		delete(trace.transactions, conn)
+		if exists {
+			// An aborted PostgreSQL COMMIT may return a ROLLBACK tag before
+			// pgx wraps it as ErrTxCommitRollback outside the query callback.
+			trace.finishLocked(span, time.Since(span.start), failed || query.class == "query:commit" && tag == "ROLLBACK")
+		}
+	}
+}
+
+func (trace *discoveryLoadTrace) TraceRelease(_ *pgxpool.Pool, data pgxpool.TraceReleaseData) {
+	trace.Lock()
+	defer trace.Unlock()
+	span, exists := trace.transactions[data.Conn]
+	delete(trace.transactions, data.Conn)
+	if exists {
+		// A release without an observed terminal query is measured separately;
+		// it must not pin a closed/abandoned connection in the diagnostic map.
+		span.class = "transaction_release_without_terminal"
+		trace.finishLocked(span, time.Since(span.start), true)
+	}
 }
 
 // Static categories keep storage and output bounded. Neither SQL text nor its
@@ -132,9 +191,10 @@ func discoveryLoadQueryClass(sql string) string {
 func (trace *discoveryLoadTrace) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
 	return context.WithValue(ctx, discoveryLoadQuerySpanKey{}, trace.span("query:"+discoveryLoadQueryClass(data.SQL)))
 }
-func (trace *discoveryLoadTrace) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryEndData) {
+func (trace *discoveryLoadTrace) TraceQueryEnd(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryEndData) {
 	if span, ok := ctx.Value(discoveryLoadQuerySpanKey{}).(discoveryLoadSpan); ok {
 		trace.finish(span, time.Since(span.start), data.Err != nil)
+		trace.transactionBoundary(conn, span, data.CommandTag.String(), data.Err != nil)
 	}
 }
 func (trace *discoveryLoadTrace) TraceAcquireStart(ctx context.Context, _ *pgxpool.Pool, _ pgxpool.TraceAcquireStartData) context.Context {
@@ -158,10 +218,13 @@ func (trace *discoveryLoadTrace) TraceBatchStart(ctx context.Context, _ *pgx.Con
 	}
 	return context.WithValue(ctx, discoveryLoadBatchSpanKey{}, trace.span(class))
 }
-func (trace *discoveryLoadTrace) TraceBatchQuery(ctx context.Context, _ *pgx.Conn, data pgx.TraceBatchQueryData) {
+func (trace *discoveryLoadTrace) TraceBatchQuery(ctx context.Context, conn *pgx.Conn, data pgx.TraceBatchQueryData) {
 	if span, ok := ctx.Value(discoveryLoadBatchSpanKey{}).(discoveryLoadSpan); ok {
 		// PGX supplies no per-statement start time: count responses without
 		// pretending this is a server execution-time measurement.
+		boundary := span
+		boundary.class = "query:" + discoveryLoadQueryClass(data.SQL)
+		trace.transactionBoundary(conn, boundary, data.CommandTag.String(), data.Err != nil)
 		span.class = "batch_statement_count:" + discoveryLoadQueryClass(data.SQL)
 		trace.finish(span, 0, data.Err != nil)
 	}
@@ -188,7 +251,7 @@ func (trace *discoveryLoadTrace) logFailure(t *testing.T) {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	t.Log("Stage wall timings overlap across concurrent requests; they are not CPU time or additive components of workload wall time. Event-slot waiting before pool acquisition is not traced.")
+	t.Log("Stage wall timings overlap across concurrent requests; they are not CPU time or additive components of workload wall time. Event-slot waiting before pool acquisition is not traced. transaction_hold spans successful BEGIN response through terminal COMMIT/ROLLBACK response and includes application/WASM gaps; release_without_terminal and tracking_dropped are separate diagnostics.")
 	for _, key := range keys {
 		value := snapshot[key]
 		t.Logf("load stage=%s count=%d total=%s max=%s errors=%d", key, value.count, value.total, value.maximum, value.failures)
@@ -285,3 +348,45 @@ func (function *discoveryLoadWASMFunction) CallWithStack(ctx context.Context, st
 var _ wazero.Runtime = (*discoveryLoadWASMRuntime)(nil)
 var _ api.Module = (*discoveryLoadWASMModule)(nil)
 var _ api.Function = (*discoveryLoadWASMFunction)(nil)
+
+func TestDiscoveryLoadTransactionTraceBoundsAndEpochs(t *testing.T) {
+	trace := &discoveryLoadTrace{}
+	trace.begin()
+	conn := new(pgx.Conn) // An identity key only: no connection methods or SQL.
+	begin := trace.span("query:begin")
+	trace.transactionBoundary(conn, begin, "", true)
+	if len(trace.transactions) != 0 {
+		t.Fatal("failed BEGIN was tracked")
+	}
+	trace.transactionBoundary(conn, begin, "BEGIN", false)
+	first := trace.transactions[conn]
+	trace.transactionBoundary(conn, begin, "BEGIN", false)
+	if trace.transactions[conn] != first {
+		t.Fatal("repeated BEGIN reset the transaction clock")
+	}
+	trace.transactionBoundary(conn, trace.span("query:commit"), "", true)
+	if len(trace.transactions) != 0 || trace.stats["transaction_hold"].count != 1 || trace.stats["transaction_hold"].failures != 1 {
+		t.Fatal("failed terminal query did not finish and remove its span")
+	}
+	stale := trace.span("query:rollback")
+	trace.begin()
+	trace.transactionBoundary(conn, trace.span("query:begin"), "BEGIN", false)
+	trace.transactionBoundary(conn, stale, "ROLLBACK", false)
+	if len(trace.transactions) != 1 {
+		t.Fatal("old epoch removed a current transaction")
+	}
+	trace.TraceRelease(nil, pgxpool.TraceReleaseData{Conn: conn})
+	if len(trace.transactions) != 0 || trace.stats["transaction_release_without_terminal"].count != 1 {
+		t.Fatal("connection release retained an unfinished span")
+	}
+	for range discoveryLoadMaxTransactions + 1 {
+		trace.transactionBoundary(new(pgx.Conn), trace.span("query:begin"), "BEGIN", false)
+	}
+	if len(trace.transactions) != discoveryLoadMaxTransactions || trace.stats["transaction_tracking_dropped"].count != 1 {
+		t.Fatal("active transaction diagnostic map exceeded its hard cap")
+	}
+	trace.begin()
+	if len(trace.transactions) != 0 || len(trace.stats) != 0 {
+		t.Fatal("a new measurement retained prior transaction keys or timings")
+	}
+}

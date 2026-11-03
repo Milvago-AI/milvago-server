@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -302,9 +303,10 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 		}
 	}
 	type job struct {
-		index    int
-		sequence int64
-		offered  time.Time
+		index     int
+		sequence  int64
+		offered   time.Time
+		attempted time.Time
 	}
 	// Absorb a brief client scheduler pause at the 99/s spike without losing
 	// arrivals. This queue is bounded at under one second of peak traffic;
@@ -312,6 +314,7 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 	work := make(chan job, 64)
 	abort := newDiscoveryLoadAbort()
 	var workers sync.WaitGroup
+	var activeIngest, activeReads atomic.Int64
 	var mutex sync.Mutex
 	acknowledged := map[string]int64{}
 	var ingest, ingestSlow, failed, reads, readSlow500, readSlow1000 int
@@ -331,11 +334,14 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 		go func() {
 			defer workers.Done()
 			for job := range work {
+				received := time.Now()
 				d := devices[job.index]
 				report := map[string]any{"version": 1, "catalog_revision": discoveryFixtureCatalogRevision, "settings_revision": d.Revision, "run_id": nil, "scope": "endpoint", "sequence": job.sequence, "page": 0, "pages": 1, "observed_at": time.Now().Unix(), "complete": false, "entities": entities, "relations": []any{}, "coverage": []any{}, "result": map[string]any{"identifications": matches, "communications": []any{}, "queries": queries, "evaluated_facts": 100, "unknown_conditions": 0}}
 				start := time.Now()
+				activeIngest.Add(1)
 				response := call(d, "/v1/discovery/reports", report)
 				elapsed := time.Since(start)
+				activeIngest.Add(-1)
 				mutex.Lock()
 				serviceTimes = append(serviceTimes, elapsed)
 				queueTimes = append(queueTimes, start.Sub(job.offered))
@@ -348,7 +354,7 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 					responseCodes[response.Code]++
 					ingestCodes[response.Code]++
 					if abort.fail() {
-						t.Logf("first workload failure: ingest HTTP %d; stop scheduling", response.Code)
+						t.Logf("first workload failure: ingest HTTP %d handler=%s offered_to_start=%s generator_attempt_lateness=%s worker_wait_after_attempt=%s report_build=%s queued_at_log=%d active_ingest_at_log=%d active_reads_at_log=%d; stop scheduling", response.Code, elapsed, start.Sub(job.offered), job.attempted.Sub(job.offered), received.Sub(job.attempted), start.Sub(received), len(work), activeIngest.Load(), activeReads.Load())
 					}
 				} else if job.sequence > acknowledged[d.ID] {
 					acknowledged[d.ID] = job.sequence
@@ -377,14 +383,16 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 					return
 				case <-abort.done:
 					return
-				case <-ticker.C:
+				case offered := <-ticker.C:
 					start := time.Now()
 					path := readPaths[turn%len(readPaths)]
 					turn++
 					person := people[personIndex]
 					personIndex = (personIndex + 10) % len(people)
+					activeReads.Add(1)
 					response := person.call("GET", path, nil, "")
 					elapsed := time.Since(start)
+					activeReads.Add(-1)
 					mutex.Lock()
 					reads++
 					readPathCounts[path]++
@@ -409,7 +417,7 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 						}
 						readPathFailures[path][response.Code]++
 						if abort.fail() {
-							t.Logf("first workload failure: interactive HTTP %d route=%s elapsed=%s; stop scheduling", response.Code, path, elapsed)
+							t.Logf("first workload failure: interactive HTTP %d route=%s elapsed=%s reader_tick_lateness=%s queued_at_log=%d active_ingest_at_log=%d active_reads_at_log=%d; stop scheduling", response.Code, path, elapsed, start.Sub(offered), len(work), activeIngest.Load(), activeReads.Load())
 						}
 					}
 					mutex.Unlock()
@@ -450,15 +458,18 @@ phases:
 				fds, _ := os.ReadDir("/proc/self/fd")
 				t.Logf("resource sample phase=%d second=%d: heap=%d bytes goroutines=%d fd=%d", phase+1, arrival/rate, sample.HeapAlloc, runtime.NumGoroutine(), len(fds))
 			}
+			// Timestamp the enqueue attempt, not a claimed exact channel-send instant.
+			// The original offered time remains the end-to-end latency/SLO origin.
+			attempted := time.Now()
 			select {
-			case work <- job{index: sent % fleet, sequence: sequence + int64(sent), offered: offered}:
+			case work <- job{index: sent % fleet, sequence: sequence + int64(sent), offered: offered, attempted: attempted}:
 				sent++
 			default:
 				mutex.Lock()
 				failed++
 				rejectedAdmission++
 				if abort.fail() {
-					t.Log("first workload failure: admission rejected; stop scheduling")
+					t.Logf("first workload failure: admission rejected generator_attempt_lateness=%s queued_at_log=%d active_ingest_at_log=%d active_reads_at_log=%d; stop scheduling", attempted.Sub(offered), len(work), activeIngest.Load(), activeReads.Load())
 				}
 				mutex.Unlock()
 			}
@@ -481,6 +492,13 @@ phases:
 	cpuAfter := discoveryLoadCPUStats()
 	quota, _ := os.ReadFile("/sys/fs/cgroup/cpu.max")
 	t.Logf("application CPU: quota=%q wall=%s usage=%s throttled=%s throttled periods=%d/%d", strings.TrimSpace(string(quota)), time.Since(measurementStarted), time.Duration(cpuAfter["usage_usec"]-cpuBefore["usage_usec"])*time.Microsecond, time.Duration(cpuAfter["throttled_usec"]-cpuBefore["throttled_usec"])*time.Microsecond, cpuAfter["nr_throttled"]-cpuBefore["nr_throttled"], cpuAfter["nr_periods"]-cpuBefore["nr_periods"])
+	// A break out of phases skips its per-phase log. Always report completed
+	// requests after draining, including an aborted peak, without changing SLOs.
+	sort.Slice(serviceTimes, func(i, j int) bool { return serviceTimes[i] < serviceTimes[j] })
+	sort.Slice(queueTimes, func(i, j int) bool { return queueTimes[i] < queueTimes[j] })
+	if len(serviceTimes) > 0 {
+		t.Logf("all completed workload: count=%d handler p95=%s max=%s; offered-to-handler-start p95=%s max=%s; queued=%d active_ingest=%d active_reads=%d", len(serviceTimes), serviceTimes[(len(serviceTimes)-1)*95/100], serviceTimes[len(serviceTimes)-1], queueTimes[(len(queueTimes)-1)*95/100], queueTimes[len(queueTimes)-1], len(work), activeIngest.Load(), activeReads.Load())
+	}
 	t.Logf("BOUNDED LOCAL PROFILE: %d devices, %d seeded current objects, %d seeded historical rows, 100 facts per report; peak=%ds; %d ingest responses, %d interactive reads, %d failures", fleet, fleet*objectsPerDevice, historicalRows, peakSeconds, ingest, reads, failed)
 	t.Logf("admission rejected=%d, HTTP errors=%v, ingest >=1s=%d, reads >=500ms=%d >=1s=%d", rejectedAdmission, responseCodes, ingestSlow, readSlow500, readSlow1000)
 	t.Logf("HTTP errors by operation: ingest=%v reads=%v", ingestCodes, readCodes)

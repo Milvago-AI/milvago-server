@@ -34,21 +34,39 @@ BEGIN
   WHERE family=p_family AND window_start=minute AND key_hash=p_key FOR UPDATE;
  IF NOT FOUND THEN
   INSERT INTO public.rate_windows(family,window_start) VALUES(p_family,minute) ON CONFLICT DO NOTHING;
-  -- Only admission of a new key holds this cardinality lock.
-  SELECT keys INTO cardinality FROM public.rate_windows WHERE family=p_family AND window_start=minute FOR UPDATE;
-  SELECT hits INTO spent FROM public.rate_counters
-   WHERE family=p_family AND window_start=minute AND key_hash=p_key FOR UPDATE;
+  -- Protect the parent from cleanup without blocking other counters' FK checks.
+  SELECT keys INTO cardinality FROM public.rate_windows WHERE family=p_family AND window_start=minute FOR KEY SHARE;
   IF NOT FOUND THEN
-   IF cardinality>=16384 AND p_family<>3 THEN
-    -- Full: admitted, not counted. Refusing let 16384 keys -- a fleet of a few
-    -- thousand devices, or as many source addresses -- lock every new caller out for
-    -- the minute (audit of 2026-09-24). The totals, counted from the first request
-    -- of the minute, still bound the public operations.
-    granted:=least(p_amount,p_budget);
+   RAISE EXCEPTION 'rate window unavailable';
+  END IF;
+  granted:=least(p_amount,p_budget);
+  IF cardinality>=16384 AND p_family<>3 THEN
+   -- A committed full window cannot gain another counted key. Recheck a key
+   -- committed between our first lookup and the full-window observation.
+   SELECT hits INTO spent FROM public.rate_counters
+    WHERE family=p_family AND window_start=minute AND key_hash=p_key FOR UPDATE;
+  ELSE
+   INSERT INTO public.rate_counters(family,window_start,key_hash,hits) VALUES(p_family,minute,p_key,granted)
+    ON CONFLICT DO NOTHING RETURNING hits INTO spent;
+   IF FOUND THEN
+    -- Only the successful new row claims a slot. The non-key update takes
+    -- NO KEY UPDATE, compatible with concurrent child FK KEY SHARE locks.
+    UPDATE public.rate_windows SET keys=keys+1
+     WHERE family=p_family AND window_start=minute AND (keys<16384 OR p_family=3)
+     RETURNING keys INTO cardinality;
+    IF NOT FOUND THEN
+     -- Another new key took the last slot. Preserve admitted/not-counted
+     -- saturation behavior; this transaction owns this uncommitted row only.
+     DELETE FROM public.rate_counters WHERE family=p_family AND window_start=minute AND key_hash=p_key;
+    END IF;
+    spent:=NULL;
    ELSE
-    granted:=least(p_amount,p_budget);
-    INSERT INTO public.rate_counters(family,window_start,key_hash,hits) VALUES(p_family,minute,p_key,granted);
-    UPDATE public.rate_windows SET keys=keys+1 WHERE family=p_family AND window_start=minute;
+    -- A same-key contender charged the first request; charge this one too.
+    SELECT hits INTO spent FROM public.rate_counters
+     WHERE family=p_family AND window_start=minute AND key_hash=p_key FOR UPDATE;
+    IF NOT FOUND THEN
+     RAISE EXCEPTION 'rate counter unavailable';
+    END IF;
    END IF;
   END IF;
  END IF;
