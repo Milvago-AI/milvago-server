@@ -13,7 +13,7 @@ import (
 func criteriaValues(criteria map[string]json.RawMessage) (url.Values, error) {
 	q := url.Values{}
 	for k, raw := range criteria {
-		if k != "from" && k != "to" && k != "actor_id" && k != "device_id" && k != "tool" && k != "provider" && k != "model" && k != "sensitivity" && k != "action" && k != "query" && k != "kind" && k != "attachment" {
+		if k != "regex" && k != "from" && k != "to" && k != "actor_id" && k != "device_name" && k != "device_id" && k != "tool" && k != "provider" && k != "model" && k != "sensitivity" && k != "action" && k != "query" && k != "kind" && k != "attachment" && k != "dlp_rule" && k != "dlp_mode" && k != "dlp_consequence" && k != "dlp_outcome" {
 			return nil, bad("Unknown saved filter field.")
 		}
 		var single string
@@ -180,6 +180,8 @@ func (a *App) shadowMetrics(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s
 	return jsonQuery(w, r, tx, `SELECT jsonb_build_object('events',count(*),'prompts',count(*) FILTER(WHERE kind='prompt'),'responses',count(*) FILTER(WHERE kind='response'),'navigations',count(*) FILTER(WHERE kind='navigation'),'blocked',count(*) FILTER(WHERE action='blocked')) FROM shadow_events e WHERE occurred_at>=now()-interval '24 hours' AND NOT `+attachmentOnly("e"))
 }
 func (a *App) registerShadowRoutes() {
+	a.mux.HandleFunc("GET /v4/policy", a.v4Policy)
+	a.mux.HandleFunc("POST /v4/dlp/enforcement", a.deviceFirst(a.dlpEnforcement))
 	a.mux.HandleFunc("GET /v3/policy", a.v3Policy)
 	a.mux.HandleFunc("POST /v3/enforcement", a.deviceFirst(a.modelEnforcement))
 	// Per-model control is an Enterprise capability: Community does not expose its

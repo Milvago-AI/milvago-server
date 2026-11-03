@@ -1,9 +1,12 @@
+import { DlpTraceView } from "../dlp/DlpDecisions";
 import { IdentityReveal } from "../IdentityReveal";
 import { useContext, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Badge, Card, clampPage, Context, DateValue, Dialog, Empty, Icon, Loading, PageBar, PageNumbers, PageSize, RefreshButton, ResourceView, Status, useResource, useText } from '../ui';
 import type { IconName, Translate } from '../ui';
-import { ExportMenu, FilterBar, SavedFilters } from './FilterBar';
+import { ExportMenu, SavedFilters } from './FilterBar';
+import { EventFilters } from './EventFilters';
+import { FilterPopover } from './FilterPopover';
 import { conversationsLink, criteriaFromHash, serializeCriteria } from './filters';
 import type { Conversation, Criteria, EventDetail, ShadowEvent, Thread, ThreadMessage } from './types';
 
@@ -50,7 +53,7 @@ export function ConversationsPage() {
   // reveal expires and the list comes back aliased, the dialog does not keep the name.
   useEffect(() => { setOpen(current => current && resource.data?.items.find(item => item.key === current.key)); }, [resource.data]);
   function change(next: Criteria) { setCriteria(next); setPage(1); location.hash = conversationsLink(next); }
-  return <><PageBar title={t("conversations")} actions={<><ExportMenu criteria={criteria} /><RefreshButton onClick={resource.reload} /></>} info={t("aConversationGroupsTheRecordsOf")} /><Card><FilterBar criteria={criteria} change={change} /><SavedFilters criteria={criteria} apply={change} /></Card>{correctingPage ? <Loading /> : <ResourceView resource={resource}>{data => <section className="panel table-panel"><div className="section-heading"><h2>{t("conversations")}</h2><div className="heading-controls"><span className="muted">{t("resultsCount", [total])}</span><PageSize value={size} label={t("perPage")} change={value => { setSize(value); setPage(1); }} /></div></div>{data.items.length ? <div className="table-scroll"><table><thead><tr>{[t("toolService"), t("model"), t("device"), t("person"), t("lastActivity"), t("messages"), t("attachedFiles"), t("action"), ...(sensitivity ? [t("sensitivity")] : [])].map(label => <th key={label}>{label}</th>)}</tr></thead><tbody>{data.items.map(item => <ConversationRow key={item.key} item={item} sensitivity={sensitivity} open={() => setOpen(item)} />)}</tbody></table></div> : <Empty title={t("noConversationsMatchTheseFilters")}>{t("expandThePeriodOrRemoveA")}</Empty>}<PageNumbers page={currentPage} pages={pages} go={setPage} label={t("pagination")} /></section>}</ResourceView>}<p className="fine-print conversations-export-note">{t("exportsContainMetadataMatchingTheExact")}</p>{open && <ConversationDialog conversation={open} close={() => setOpen(undefined)} />}</>;
+  return <><PageBar title={t("conversations")} actions={<><FilterPopover label={t("mapReportsExports")} align="end">{() => <ExportMenu criteria={criteria} />}</FilterPopover><RefreshButton onClick={resource.reload} /></>} info={t("aConversationGroupsTheRecordsOf")} /><Card className="event-filter-card"><EventFilters criteria={criteria} change={change} views={apply => <SavedFilters compact criteria={criteria} apply={apply} />}></EventFilters></Card>{correctingPage ? <Loading /> : <ResourceView resource={resource}>{data => <section className="panel table-panel"><div className="section-heading"><h2>{t("conversations")}</h2><div className="heading-controls"><span className="muted">{t("resultsCount", [total])}</span><PageSize value={size} label={t("perPage")} change={value => { setSize(value); setPage(1); }} /></div></div>{data.items.length ? <div className="table-scroll"><table><thead><tr>{[t("toolService"), t("model"), t("device"), t("person"), t("lastActivity"), t("messages"), t("attachedFiles"), t("action"), ...(sensitivity ? [t("sensitivity")] : [])].map(label => <th key={label}>{label}</th>)}</tr></thead><tbody>{data.items.map(item => <ConversationRow key={item.key} item={item} sensitivity={sensitivity} open={() => setOpen(item)} />)}</tbody></table></div> : <Empty title={t("noConversationsMatchTheseFilters")}>{t("expandThePeriodOrRemoveA")}</Empty>}<PageNumbers page={currentPage} pages={pages} go={setPage} label={t("pagination")} /></section>}</ResourceView>}<p className="fine-print conversations-export-note">{t("exportsContainMetadataMatchingTheExact")}</p>{open && <ConversationDialog conversation={open} close={() => setOpen(undefined)} />}</>;
 }
 
 // Signed-out services name no model: the tag says why the model is missing instead of
@@ -80,7 +83,7 @@ function ConversationRow({ item, sensitivity, open }: Readonly<{ item: Conversat
     <td className="nowrap">{item.has_attachment
       ? <Badge tone="warning"><Icon name="file" />{t("withAttachment")}</Badge>
       : <span className="muted">—</span>}</td>
-    <td>{action}</td>
+    <td>{action}{!!item.dlp_events&&<span className="cell-detail"><Badge>{t('dlpEventCount',[item.dlp_events])}</Badge></span>}</td>
     {sensitivity && <td>{event.sensitivity === 'sensitive' ? <Badge tone="warning">{t("sensitive")}</Badge> : <span className="muted">{event.sensitivity === 'normal' ? t("normal") : t("unknown")}</span>}</td>}
   </tr>;
 }
@@ -91,6 +94,10 @@ function refusalReason(t: Translate, reason: NonNullable<ShadowEvent['decision_r
   if (reason === 'model_denied') return t("modelDeniedByPolicy");
   if (reason === 'model_unknown') return t("modelCouldNotBeIdentified");
   if (reason === 'control_unavailable') return t("localControlUnavailable");
+  if (reason === 'service_blocked') return t("serviceBlockedByPolicy");
+  if (reason === 'service_redirected') return t("serviceRedirectedByPolicy");
+  if (reason === 'upload_blocked') return t("fileRefusedByPolicy");
+  if (reason === 'keyword') return t("protectedWordFound");
   return reason;
 }
 
@@ -216,6 +223,7 @@ function Message({ message, open }: Readonly<{ message: ThreadMessage; open: () 
       {bubbleContent}
       {files.length ? <ul className="bubble-files" aria-label={t("attachedFiles")}>{files.map(name => <li key={name} className="bubble-file" title={name}><Icon name={fileIcon(name)} /><span>{name}</span></li>)}</ul> : null}
       {message.action === 'blocked' && message.decision_reason ? <p className="bubble-refusal">{refusalReason(t, message.decision_reason)}</p> : null}
+      {message.dlp && <DlpTraceView trace={message.dlp} compact />}
       <p className="bubble-meta">
         <DateValue value={message.occurred_at} />
         {message.model ? <span>{message.model}</span> : null}
@@ -243,5 +251,5 @@ function RetainedText({ event, content }: Readonly<{ event: ShadowEvent; content
 
 function EventDialog({ event, close }: Readonly<{ event: ShadowEvent; close: () => void }>) {
   const t = useText(); const resource = useResource<EventDetail>(`/api/shadow/events/${encodeURIComponent(event.id)}?device_id=${encodeURIComponent(event.device_id)}`);
-  return <Dialog title={t("eventDetail")} close={close} side="right"><ResourceView resource={resource}>{data => <div className="dialog-body"><dl className="dl"><dt>{t("timestamp")}</dt><dd><DateValue value={data.event.occurred_at} /></dd><dt>{t("person")}</dt><dd><Person event={data.event} /></dd><dt>{t("device")}</dt><dd>{data.event.hostname || t("machineNameUnavailable")}<span className="cell-detail mono">{data.event.device_id}</span></dd><dt>{t("source")}</dt><dd>{data.event.source === 'native' ? t("localApplication") : t("browser")} · {data.event.tool}</dd><dt>{t("serviceModel")}</dt><dd>{data.event.provider} / {data.event.model || t("unknown2")}</dd><dt>{t("action")}</dt><dd><Status value={data.event.action} /></dd>{data.event.decision_reason && <><dt>{t("refusalReason")}</dt><dd>{refusalReason(t, data.event.decision_reason)}</dd></>}{data.event.platform_id && <><dt>{t("platform")}</dt><dd><code>{data.event.platform_id}</code></dd></>}<dt>{t("characters")}</dt><dd>{data.event.characters}</dd><dt>{t("categories")}</dt><dd>{data.event.labels.length ? data.event.labels.join(', ') : '—'}</dd>{data.event.files?.length ? <><dt>{t("attachedFiles")}</dt><dd>{data.event.files.map(name => <span key={name} className="cell-detail">{name}</span>)}</dd></> : null}<dt>{t("appliedRevision")}</dt><dd>{data.event.policy_revision}</dd>{data.event.url && <><dt>URL</dt><dd><code>{data.event.url}</code></dd></>}{data.event.conversation_id && <><dt>{t("conversation")}</dt><dd><code>{data.event.conversation_id}</code></dd></>}{data.event.correlation_id && <><dt>{t("correlation")}</dt><dd><code>{data.event.correlation_id}</code></dd></>}</dl><IdentityReveal subject={data.event.actor_id} expiresAt={data.event.identity_expires_at}/>{!data.can_read_content ? <div className="notice"><Icon name="shield" /><p>{t("rawContentRequiresExplicitPermissionNo")}</p></div> : <RetainedText event={data.event} content={data.content} />}<div className="dialog-actions"><button className="button primary" onClick={close}>{t("close")}</button></div></div>}</ResourceView></Dialog>;
+  return <Dialog title={t("eventDetail")} close={close} side="right"><ResourceView resource={resource}>{data => <div className="dialog-body"><dl className="dl"><dt>{t("timestamp")}</dt><dd><DateValue value={data.event.occurred_at} /></dd><dt>{t("person")}</dt><dd><Person event={data.event} /></dd><dt>{t("device")}</dt><dd>{data.event.hostname || t("machineNameUnavailable")}<span className="cell-detail mono">{data.event.device_id}</span></dd><dt>{t("source")}</dt><dd>{data.event.source === 'native' ? t("localApplication") : t("browser")} · {data.event.tool}</dd><dt>{t("serviceModel")}</dt><dd>{data.event.provider} / {data.event.model || t("unknown2")}</dd><dt>{t("action")}</dt><dd><Status value={data.event.action} /></dd>{data.event.decision_reason && <><dt>{t("refusalReason")}</dt><dd>{refusalReason(t, data.event.decision_reason)}</dd></>}{data.event.platform_id && <><dt>{t("platform")}</dt><dd><code>{data.event.platform_id}</code></dd></>}<dt>{t("characters")}</dt><dd>{data.event.characters}</dd><dt>{t("categories")}</dt><dd>{data.event.labels.length ? data.event.labels.join(', ') : '—'}</dd>{data.event.files?.length ? <><dt>{t("attachedFiles")}</dt><dd>{data.event.files.map(name => <span key={name} className="cell-detail">{name}</span>)}</dd></> : null}<dt>{t("appliedRevision")}</dt><dd>{data.event.policy_revision}</dd>{data.event.url && <><dt>URL</dt><dd><code>{data.event.url}</code></dd></>}{data.event.conversation_id && <><dt>{t("conversation")}</dt><dd><code>{data.event.conversation_id}</code></dd></>}{data.event.correlation_id && <><dt>{t("correlation")}</dt><dd><code>{data.event.correlation_id}</code></dd></>}</dl><DlpTraceView trace={data.event.dlp} device={data.event.device_id} /><IdentityReveal subject={data.event.actor_id} expiresAt={data.event.identity_expires_at}/>{!data.can_read_content ? <div className="notice"><Icon name="shield" /><p>{t("rawContentRequiresExplicitPermissionNo")}</p></div> : <RetainedText event={data.event} content={data.content} />}<div className="dialog-actions"><button className="button primary" onClick={close}>{t("close")}</button></div></div>}</ResourceView></Dialog>;
 }

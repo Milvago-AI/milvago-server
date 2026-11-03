@@ -126,7 +126,7 @@ func (a *App) reserveRate(ctx context.Context, family int16, key string, budget 
 func (a *App) loadPublicReservation(ctx context.Context, family int16, digest []byte, budget int) (quotaReservation, error) {
 	// A request straddling a database minute may receive an already expired lease.
 	// Retry once; do not turn expired permits into permission in a new window.
-	for range 2 {
+	for attempt := range 2 {
 		started := time.Now()
 		var granted int
 		var validForMS int64
@@ -142,6 +142,19 @@ func (a *App) loadPublicReservation(ctx context.Context, family int16, digest []
 		expires := started.Add(time.Duration(validForMS) * time.Millisecond)
 		if time.Now().Before(expires) {
 			return quotaReservation{budget: budget, remaining: granted - 1, expires: expires}, nil
+		}
+		if attempt == 0 {
+			// PostgreSQL floors its remaining TTL to milliseconds. Two immediate
+			// refills can both land in the last fractional millisecond and fail
+			// an otherwise healthy request. Wait for that window to pass; never
+			// extend or spend the expired permits, and retain the caller's deadline.
+			timer := time.NewTimer(time.Millisecond)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				return quotaReservation{}, rateUnavailable()
+			}
 		}
 	}
 	return quotaReservation{}, rateUnavailable()

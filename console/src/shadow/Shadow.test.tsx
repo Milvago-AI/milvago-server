@@ -5,7 +5,7 @@ import { Context } from '../ui';
 import type { Session } from '../api';
 import { CartographyPage } from './CartographyPage';
 import { ConversationsPage } from './ConversationsPage';
-import { ShadowAdministration } from './ShadowAdministration';
+import { ShadowAdministration, ScopedSettings } from './ShadowAdministration';
 import { browser } from '../secondFactor';
 import { SecondFactorConfirmation } from '../SecondFactorConfirmation';
 import type { Cartography, Conversation, ShadowEvent, ShadowSettings, Thread, ThreadMessage } from './types';
@@ -24,11 +24,18 @@ function message(base: ShadowEvent, content_state: ThreadMessage['content_state'
 function reply(body: unknown, status = 200) { return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }); }
 function serve(handler: (url: string, init?: RequestInit) => Response | undefined) { return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => handler(String(url), init) ?? (String(url).startsWith('/api/shadow/filters') ? reply({ items: [] }) : reply({ error: 'unexpected_request', message: String(url) }, 404))); }
 function show(children: React.ReactNode, current = session) { return render(<Context.Provider value={{ session: current, language: 'fr', refreshSession: async () => {} }}>{children}<SecondFactorConfirmation /></Context.Provider>); }
+async function showAdvancedMap(current = session) {
+  const view = show(<CartographyPage />, current);
+  fireEvent.click(await screen.findByRole('button', { name: 'Diagramme complet' }));
+  fireEvent.click(screen.getByText('Options avancées'));
+  fireEvent.click(screen.getByText('Rapports et exports'));
+  return view;
+}
 beforeEach(() => { location.hash = ''; Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { configurable: true, value() { this.setAttribute('open', ''); } }); Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value() { this.removeAttribute('open'); } }); });
 
 describe('Shadow AI workflows', () => {
   it('combines keyboard-selected graph nodes into exact repeated journal filters', async () => {
-    serve(url => url.startsWith('/api/shadow/cartography') ? reply(map) : undefined); show(<CartographyPage />);
+    serve(url => url.startsWith('/api/shadow/cartography') ? reply(map) : undefined); await showAdvancedMap();
     const diagram = await screen.findByRole('group', { name: /Cartographie des requêtes/ });
     const user = userEvent.setup();
     within(diagram).getByRole('button', { name: 'Personne de test · 5 requêtes' }).focus();
@@ -41,7 +48,7 @@ describe('Shadow AI workflows', () => {
     expect(params.getAll('actor_id')).toEqual(['actor-1']); expect(params.getAll('tool')).toEqual(['chrome', 'firefox']); expect(params.get('kind')).toBe('prompt'); expect(params.get('from')).toBeTruthy(); expect(params.get('to')).toBeTruthy();
   });
   it('preserves unknown model values when drilling a flow and never infers a model', async () => {
-    serve(url => url.startsWith('/api/shadow/cartography') ? reply(map) : undefined); show(<CartographyPage />);
+    serve(url => url.startsWith('/api/shadow/cartography') ? reply(map) : undefined); await showAdvancedMap();
     await screen.findByRole('group', { name: /Cartographie des requêtes/ });
     fireEvent.click(screen.getByRole('button', { name: 'Voir le tableau' }));
     fireEvent.click(screen.getAllByRole('button', { name: 'Journal' })[0]);
@@ -53,7 +60,7 @@ describe('Shadow AI workflows', () => {
   // that kept this table here is therefore removed rather than repaired; the behavior is
   // covered by the Discovery page and by `detectorState` on the server side.
   it('does not carry the capture-health table any more, which now lives in Discovery', async () => {
-    serve(url => url.startsWith('/api/shadow/cartography') ? reply(map) : undefined); show(<CartographyPage />);
+    serve(url => url.startsWith('/api/shadow/cartography') ? reply(map) : undefined); await showAdvancedMap();
     await screen.findByRole('group', { name: /Cartographie des requêtes/ });
     expect(screen.queryByText('Santé de la capture')).toBeNull();
   });
@@ -68,7 +75,7 @@ describe('Shadow AI workflows', () => {
       { actor_id: 'unknown', actor_name: 'Unattributed', tool: 'firefox', provider: 'chatgpt.com', model: 'unknown', count: 1, sensitive: 0, blocked: 0 }],
   };
   it('names a person by their OS account, marks that attribution and keeps unattributed for records without one', async () => {
-    serve(url => url.startsWith('/api/shadow/cartography') ? reply(osMap) : undefined); show(<CartographyPage />);
+    serve(url => url.startsWith('/api/shadow/cartography') ? reply(osMap) : undefined); await showAdvancedMap();
     const diagram = await screen.findByRole('group', { name: /Cartographie des requêtes/ });
     expect(within(diagram).getByRole('button', { name: 'Compte-analyste · 4 requêtes' })).toBeInTheDocument();
     expect(within(diagram).getByRole('button', { name: 'Non attribué · 1 requêtes' })).toBeInTheDocument();
@@ -87,7 +94,7 @@ describe('Shadow AI workflows', () => {
   const wide: Cartography = { ...map, totals: { ...map.totals, requests: 780, actors: 12 }, flows: Array.from({ length: 12 }, (_, i) => ({ actor_id: `actor-${String(i + 1).padStart(2, '0')}`, actor_name: `Personne ${String(i + 1).padStart(2, '0')}`, tool: i % 2 ? 'firefox' : 'chrome', provider: 'chatgpt.com', model: 'unknown', count: 120 - 10 * i, sensitive: 0, blocked: i === 0 ? 3 : 0 })) };
   const personTile = /^Personne \d\d · \d+ requêtes$/;
   it('shows the ten busiest people and lets the eleventh in when one is unchecked', async () => {
-    serve(url => url.startsWith('/api/shadow/cartography') ? reply(wide) : undefined); show(<CartographyPage />);
+    serve(url => url.startsWith('/api/shadow/cartography') ? reply(wide) : undefined); await showAdvancedMap();
     const diagram = await screen.findByRole('group', { name: /Cartographie des requêtes/ });
     expect(within(diagram).getAllByRole('button', { name: personTile })).toHaveLength(10);
     expect(within(diagram).queryByRole('button', { name: 'Personne 11 · 20 requêtes' })).not.toBeInTheDocument();
@@ -104,7 +111,7 @@ describe('Shadow AI workflows', () => {
     expect(params.getAll('actor_id')).toHaveLength(10); expect(params.getAll('actor_id')).toContain('actor-11'); expect(params.getAll('actor_id')).not.toContain('actor-03');
   });
   it('hides people to show overall usage across three columns', async () => {
-    serve(url => url.startsWith('/api/shadow/cartography') ? reply(wide) : undefined); show(<CartographyPage />);
+    serve(url => url.startsWith('/api/shadow/cartography') ? reply(wide) : undefined); await showAdvancedMap();
     await screen.findByRole('group', { name: /Cartographie des requêtes/ });
     fireEvent.click(screen.getByRole('checkbox', { name: 'Masquer les personnes (usage global)' }));
     const diagram = await screen.findByRole('group', { name: /outil, service, modèle/ });
@@ -118,7 +125,7 @@ describe('Shadow AI workflows', () => {
     expect(params.get('actor_id')).toBeNull(); expect(params.get('tool')).toBe('chrome'); expect(params.get('provider')).toBe('chatgpt.com'); expect(params.get('model')).toBe('unknown');
   });
   it('restricts the map to the people chosen in the top filter bar', async () => {
-    serve(url => url.startsWith('/api/shadow/cartography') ? reply(wide) : undefined); show(<CartographyPage />);
+    serve(url => url.startsWith('/api/shadow/cartography') ? reply(wide) : undefined); await showAdvancedMap();
     const diagram = await screen.findByRole('group', { name: /Cartographie des requêtes/ });
     fireEvent.click(screen.getByRole('button', { name: /Personnes : toutes/ }));
     const dialog = screen.getByRole('dialog', { name: 'Seulement ces personnes' });
@@ -132,7 +139,7 @@ describe('Shadow AI workflows', () => {
     expect(params.getAll('actor_id')).toEqual(['actor-05', 'actor-07']);
   });
   it('cross-filters the side panels and names the kept values in the journal link', async () => {
-    serve(url => url.startsWith('/api/shadow/cartography') ? reply(map) : undefined); show(<CartographyPage />);
+    serve(url => url.startsWith('/api/shadow/cartography') ? reply(map) : undefined); await showAdvancedMap();
     const diagram = await screen.findByRole('group', { name: /Cartographie des requêtes/ });
     fireEvent.click(screen.getByRole('checkbox', { name: 'firefox · 2 requêtes' }));
     expect(within(diagram).queryByRole('button', { name: 'firefox · 2 requêtes' })).not.toBeInTheDocument();
@@ -149,13 +156,13 @@ describe('Shadow AI workflows', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Analyse indisponible.'); expect(screen.queryByText('Aucune requête dans cette période')).not.toBeInTheDocument();
   });
   it('degrades a truncated cartography payload to zeros and an empty graph instead of a blank page', async () => {
-    serve(url => url.startsWith('/api/shadow/cartography') ? reply({ flows: { not: 'a list' }, totals: null, capture: [null, { provider: 42 }], series: null, unattributed: null }) : undefined); show(<CartographyPage />);
+    serve(url => url.startsWith('/api/shadow/cartography') ? reply({ flows: { not: 'a list' }, totals: null, capture: [null, { provider: 42 }], series: null, unattributed: null }) : undefined); await showAdvancedMap();
     expect(await screen.findByText('Aucune requête dans cette période')).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument(); expect(screen.getByText('Requêtes', { selector: '.kpi-label span' }).closest('article')).toHaveTextContent('0');
   });
   it('never shows usage sensitivity in Community, on the map or in the journal', async () => {
     serve(url => url.startsWith('/api/shadow/cartography') ? reply(map) : url.startsWith('/api/shadow/events?') ? reply({ items: [event], next_cursor: null }) : undefined);
-    const graph = show(<CartographyPage />);
+    const graph = await showAdvancedMap();
     await screen.findByRole('group', { name: /Cartographie des requêtes/ });
     expect(screen.queryByText('Événements sensibles')).not.toBeInTheDocument();
     expect(screen.queryByText('Sensible')).not.toBeInTheDocument();
@@ -207,17 +214,19 @@ describe('Shadow AI workflows', () => {
     expect(await screen.findByText('Poste de test')).toBeInTheDocument();
     expect(screen.queryByText('Aucune conversation ne correspond à ces filtres')).not.toBeInTheDocument();
   });
-  it('shows the conversation filters directly, without a refine button, while the map keeps its toggle', async () => {
+  it('keeps conversation criteria behind Add filter while the map keeps its refine toggle', async () => {
     serve(url => url.startsWith('/api/shadow/conversations?') ? reply({ items: [conversation], next_cursor: null }) : undefined);
     const journal = show(<ConversationsPage />);
     await screen.findByText('Poste de test');
-    // Product decision, 2026-09-14: on #events the fields are visible at once.
     expect(screen.queryByRole('button', { name: 'Affiner les filtres' })).not.toBeInTheDocument();
+    expect(screen.getByRole('searchbox', { name: 'Requête de recherche' })).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Action' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Ajouter un filtre' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Action' }));
     expect(screen.getByRole('combobox', { name: 'Action' })).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Nature' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Appliquer' })).toBeInTheDocument();
     journal.unmount();
-    serve(url => url.startsWith('/api/shadow/cartography') ? reply(map) : undefined); show(<CartographyPage />);
+    serve(url => url.startsWith('/api/shadow/cartography') ? reply(map) : undefined); await showAdvancedMap();
     await screen.findByRole('group', { name: /Cartographie des requêtes/ });
     expect(screen.queryByRole('combobox', { name: 'Action' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Affiner les filtres' }));
@@ -432,7 +441,7 @@ describe('Shadow AI workflows', () => {
     await screen.findByText('Administration Shadow AI'); await screen.findByRole('checkbox', { name: 'Activer la collecte' });
     // The step number is decorative (aria-hidden): the section is announced by its name alone.
     await user.click(screen.getByRole('button', { name: 'Services' })); await user.selectOptions(screen.getByRole('combobox', { name: 'Comportement' }), 'redirect'); await user.type(screen.getByRole('textbox', { name: 'Destination de redirection' }), 'https://ai.example.org'); await user.click(screen.getByRole('button', { name: 'Enregistrer les changements' }));
-    expect(await screen.findByRole('status')).toHaveTextContent('Configuration enregistrée.'); const call = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT')!; expect(JSON.parse(String(call[1]!.body))).toMatchObject({ revision: 5, config: { services: [{ id: 'chatgpt', mode: 'redirect', redirect_url: 'https://ai.example.org' }] } });
+    expect(await screen.findByText(/Configuration enregistrée\./)).toBeInTheDocument(); const call = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT')!; expect(JSON.parse(String(call[1]!.body))).toMatchObject({ revision: 5, config: { services: [{ id: 'chatgpt', mode: 'redirect', redirect_url: 'https://ai.example.org' }] } });
   });
 
   // Community covers two services: Services says what Enterprise adds, as information,
@@ -461,43 +470,17 @@ describe('Shadow AI workflows', () => {
     expect(screen.getByRole('dialog', { name: 'Purger les contenus ?' })).toBeInTheDocument();
     expect(document.querySelector('form form')).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Annuler' }));
-    await user.click(screen.getByRole('button', { name: /Masquage local/ }));
+    await user.click(screen.getByRole('button', { name: /Services/ }));
     expect(screen.queryByRole('button', { name: 'Purge' })).not.toBeInTheDocument();
   });
-  // Product decision of 2026-09-16: a label that its own expression matches is refused --
-  // the `[LABEL]` placeholder inserted into the masked text would itself be masked again, endlessly. The
-  // console explains it and withholds the save; the server refuses on its side.
-  it('refuses a custom masking rule whose label matches its own expression, and explains the loop', async () => {
-    serve((url, init) => url === '/api/shadow/settings' && init?.method !== 'PUT' ? reply(settings) : undefined); show(<ShadowAdministration />); const user = userEvent.setup();
-    await screen.findByText('Administration Shadow AI'); await screen.findByRole('checkbox', { name: 'Activer la collecte' });
-    await user.click(screen.getByRole('button', { name: /Masquage local/ }));
-    // Masking off: its settings would do nothing, so none of them is shown.
-    expect(screen.queryByRole('button', { name: 'Ajouter une règle' })).toBeNull(); expect(screen.queryByRole('checkbox', { name: 'Demander une relecture avant envoi' })).toBeNull();
-    await user.click(screen.getByRole('checkbox', { name: 'Activer le masquage' })); await user.click(screen.getByRole('button', { name: 'Ajouter une règle' }));
-    const label = screen.getAllByRole('textbox', { name: 'Libellé' }).at(-1)!, pattern = screen.getAllByRole('textbox', { name: 'Expression régulière' }).at(-1)!;
-    await user.type(label, 'ABC'); await user.type(pattern, 'A.C');
-    expect(await screen.findByRole('alert')).toHaveTextContent(/Le libellé correspond à l'expression de la règle/); expect(pattern).toHaveAttribute('aria-invalid', 'true');
-    expect(screen.getByRole('button', { name: 'Enregistrer les changements' })).toBeDisabled();
-    // An expression that does not match the label lifts the warning and enables the save.
-    await user.clear(pattern); await user.type(pattern, 'X.Z');
-    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull()); expect(screen.getByRole('button', { name: 'Enregistrer les changements' })).toBeEnabled();
-  });
-  // With masking off its rules are hidden, except one the server would refuse: hidden, it would
-  // block the save with nothing on screen to explain it or fix it.
-  it('keeps a custom masking rule the server would refuse in view while masking is off', async () => {
-    const rule = { id: '6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b', label: 'ABC', pattern: 'A.C', case_insensitive: false, enabled: true };
-    const withRule = (custom_rules: typeof rule[]) => ({ ...settings, config: { ...settings.config, privacy: { ...settings.config.privacy, enabled: false, custom_rules } } });
-    const user = userEvent.setup();
-    serve((url, init) => url === '/api/shadow/settings' && init?.method !== 'PUT' ? reply(withRule([rule])) : undefined); const { unmount } = show(<ShadowAdministration />);
-    await screen.findByText('Administration Shadow AI'); await screen.findByRole('checkbox', { name: 'Activer la collecte' });
-    await user.click(screen.getByRole('button', { name: /Masquage local/ }));
-    expect(screen.getByRole('textbox', { name: 'Libellé' })).toHaveValue('ABC'); expect(screen.getByRole('alert')).toHaveTextContent(/Le libellé correspond à l'expression de la règle/);
-    expect(screen.queryByRole('checkbox', { name: 'Demander une relecture avant envoi' })).toBeNull();
-    unmount();
-    serve((url, init) => url === '/api/shadow/settings' && init?.method !== 'PUT' ? reply(withRule([{ ...rule, pattern: 'X.Z' }])) : undefined); show(<ShadowAdministration />);
-    await screen.findByText('Administration Shadow AI'); await screen.findByRole('checkbox', { name: 'Activer la collecte' });
-    await user.click(screen.getByRole('button', { name: /Masquage local/ }));
-    expect(screen.queryByRole('textbox', { name: 'Libellé' })).toBeNull();
+  it('moves masking and protection to the dedicated DLP workspace', async () => {
+    serve(url => url === '/api/shadow/settings' ? reply(settings) : undefined);
+    show(<ShadowAdministration />);
+    await screen.findByRole('checkbox', { name: 'Activer la collecte' });
+    expect(screen.getByRole('link', { name: 'Data Loss Prevention' })).toHaveAttribute('href', '#dlp');
+    expect(screen.queryByRole('button', { name: /Masquage local/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Protections/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: 'Activer le masquage' })).not.toBeInTheDocument();
   });
   // The File column answers for the whole thread, not the last message: an attachment
   // leaves with the request, and the last record of a thread is most often the
@@ -518,7 +501,9 @@ describe('Shadow AI workflows', () => {
     expect(within(screen.getByRole('table')).getAllByText('Avec fichier')).toHaveLength(1);
     // And the filter does travel all the way to the request.
     const user = userEvent.setup();
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Fichiers joints' }), 'yes');
+    await user.click(screen.getByRole('button', { name: 'Ajouter un filtre' }));
+    await user.click(screen.getByRole('button', { name: 'Fichiers joints' }));
+    await user.type(screen.getByLabelText('Fichiers joints'), 'yes');
     await user.click(screen.getByRole('button', { name: /Appliquer/ }));
     await waitFor(() => expect(seen.some(url => url.includes('attachment=yes'))).toBe(true));
   });
@@ -602,7 +587,7 @@ describe('Shadow AI workflows', () => {
     expect(await screen.findByRole('checkbox', { name: 'Hériter · Collecte' })).not.toBeChecked();
   });
   it('surfaces export rejection without claiming a file was generated', async () => {
-    serve(url => url.startsWith('/api/shadow/cartography') ? reply(map) : url.startsWith('/api/shadow/export') ? reply({ error: 'forbidden', message: 'Export non autorisé.' }, 403) : undefined); show(<CartographyPage />);
+    serve(url => url.startsWith('/api/shadow/cartography') ? reply(map) : url.startsWith('/api/shadow/export') ? reply({ error: 'forbidden', message: 'Export non autorisé.' }, 403) : undefined); await showAdvancedMap();
     await screen.findByRole('group', { name: /Cartographie des requêtes/ }); fireEvent.click(screen.getByRole('button', { name: 'Exporter' })); expect(await screen.findByRole('alert')).toHaveTextContent('Export non autorisé.');
   });
 
@@ -692,10 +677,52 @@ describe('Shadow AI workflows', () => {
   });
 });
 
-// Section 05, added on the user's request 2026-09-16. It is the one area that is not a
+// Platform discovery, added on the user's request 2026-09-16. It is the one area that is not a
 // slice of the signed policy: which platforms Discovery may name is stored on its own, so
-// it saves on the spot and pushes Operations to 06 rather than sharing its save bar.
-describe('AI platforms (05)', () => {
+// it saves on the spot and keeps its own save action rather than sharing its save bar.
+describe('AI platforms (03)', () => {
+  it('ignores a delayed route event after manually selecting a topic', async () => {
+    servePlatforms();
+    show(<ShadowAdministration />);
+    await screen.findByRole('checkbox', { name: 'Activer la collecte' });
+    fireEvent.click(screen.getByRole('button', { name: /Plateformes IA/ }));
+    await screen.findByRole('checkbox', { name: 'Découvrir les domaines candidats' });
+    fireEvent(window, new HashChangeEvent('hashchange', { newURL: 'http://localhost/#overview' }));
+    expect(screen.getByRole('checkbox', { name: 'Découvrir les domaines candidats' })).toBeInTheDocument();
+  });
+  it.each(['device', 'group'])('keeps organization-wide topics out of a %s override', async scope => {
+    location.hash = '#shadow?area=platforms';
+    const fetcher = serve(url => url === '/api/devices/device-1/shadow' || url === '/api/groups/group-1/shadow' ? reply(settings) : undefined);
+    show(<ScopedSettings device={scope === 'device' ? 'device-1' : ''} group={scope === 'group' ? 'group-1' : undefined} />);
+    expect(await screen.findByRole('spinbutton', { name: 'Conservation des textes (jours)' })).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: 'Découvrir les domaines candidats' })).not.toBeInTheDocument();
+    expect(fetcher.mock.calls.some(([url]) => url === '/api/privacy')).toBe(false);
+  });
+  it('opens the platforms topic from a discovery deep link', async () => {
+    location.hash = '#shadow?area=platforms';
+    const fetcher = servePlatforms();
+    show(<ShadowAdministration />);
+    expect(await screen.findByRole('checkbox', { name: 'Découvrir les domaines candidats' })).toBeInTheDocument();
+    expect(fetcher.mock.calls.some(([, init]) => init?.method === 'PUT' || init?.method === 'PATCH')).toBe(false);
+  });
+  it('handles a same-page deep link without losing the policy draft', async () => {
+    servePlatforms();
+    show(<ShadowAdministration />);
+    const retention = await screen.findByRole('spinbutton', { name: 'Conservation des textes (jours)' });
+    fireEvent.change(retention, { target: { value: '8' } });
+    location.hash = '#shadow?area=platforms';
+    fireEvent(window, new HashChangeEvent('hashchange'));
+    await screen.findByRole('checkbox', { name: 'Découvrir les domaines candidats' });
+    fireEvent.click(screen.getByRole('button', { name: 'Enrôlement & collecte' }));
+    expect(await screen.findByRole('spinbutton', { name: 'Conservation des textes (jours)' })).toHaveValue(8);
+  });
+  it.each(['classification', 'operations', 'unrecognized'])('ignores an unavailable topic from a deep link (%s)', async area => {
+    location.hash = '#shadow?area=' + area;
+    servePlatforms();
+    show(<ShadowAdministration />);
+    expect(await screen.findByRole('spinbutton', { name: 'Conservation des textes (jours)' })).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: 'Découvrir les domaines candidats' })).not.toBeInTheDocument();
+  });
   const privacy = { revision: 3, config: { pseudonymous: true, aggregate_only: false, k_anonymity: 5, identity_link_days: 90, lock_descendants: false, retention_justification: '', team_claim: '', discovery_enabled: false, ignored_domains: [], auto_catalog: false, share_health: false, share_fleet: false } };
   const platforms = { platforms: [
     { id: 'fireflies', label: 'Fireflies', domains: ['fireflies.ai'], muted: false },
@@ -713,16 +740,17 @@ describe('AI platforms (05)', () => {
       return undefined;
     });
   }
-  it('numbers itself 05 and pushes Exploitation to 06 on a debug instance', async () => {
+  it('groups data and management before AI access on a debug instance', async () => {
     servePlatforms(); show(<ShadowAdministration />, debugSession);
     await screen.findByRole('checkbox', { name: 'Activer la collecte' });
-    expect(screen.getByRole('button', { name: /Plateformes IA/ })).toHaveTextContent('05');
-    expect(screen.getByRole('button', { name: /Exploitation/ })).toHaveTextContent('06');
+    const nav=screen.getByRole('button',{name:/Plateformes IA/}).closest('nav')!;
+    expect(Array.from(nav.querySelectorAll('.shadow-nav-caption')).map(node=>node.textContent)).toEqual(['Données et protection','Accès aux outils IA']);
+    const buttons=Array.from(nav.querySelectorAll('button'));expect(buttons.at(-2)).toHaveTextContent('Exploitation');expect(buttons.at(-1)).toHaveTextContent('Services');
   });
-  it('is the last section on an ordinary instance, where Exploitation is absent', async () => {
+  it('keeps platforms with data before access when operations are hidden', async () => {
     servePlatforms(); show(<ShadowAdministration />);
     await screen.findByRole('checkbox', { name: 'Activer la collecte' });
-    expect(screen.getByRole('button', { name: /Plateformes IA/ })).toHaveTextContent('05');
+    const nav=screen.getByRole('button',{name:/Plateformes IA/}).closest('nav')!;const buttons=Array.from(nav.querySelectorAll('button'));expect(buttons.at(-3)).toHaveTextContent('Plateformes IA');expect(buttons.at(-2)).toHaveTextContent('Gouvernance IA');expect(buttons.at(-1)).toHaveTextContent('Services');
     expect(screen.queryByRole('button', { name: /Exploitation/ })).toBeNull();
   });
   it('groups the platforms under the inventory categories and keeps hidden ones listed', async () => {

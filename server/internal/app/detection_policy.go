@@ -128,7 +128,10 @@ func (b *detectionEventBatch) authorize(ctx context.Context, tx pgx.Tx, v *V2Eve
 		v.InputTokens = nil
 		v.OutputTokens = nil
 		v.PlatformID = ""
-		v.DecisionReason = ""
+		// A blocked service, a refused file or a protected word is not a model decision: kept.
+		if _, kept := eventPolicyReasons[v.DecisionReason]; !kept {
+			v.DecisionReason = ""
+		}
 	}
 	if v.Source == "native" {
 		return nil

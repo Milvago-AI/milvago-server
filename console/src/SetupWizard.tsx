@@ -35,21 +35,23 @@ export function SetupWizard({ initial, close }: Readonly<{ initial: Settings; cl
     } catch { /* The dialog remains open with the server error. */ }
   }
   return <Dialog title={t("initialSetup")} close={close}>
-    <output style={{ display: 'block', margin: '1em 0' }}>{t("step")} {step} / 2 · {step === 1 ? t("language") : t("organizationAndAccess")}</output>
-    <form onSubmit={save}>
-      <ErrorNotice error={mutation.error} />
-      <fieldset disabled={mutation.pending}>
-        {step === 1 ? <Field label={t("instanceDefaultLanguage")} help={t("eachUserCanChooseAPersonal")}>
-          <select value={language} onChange={e => setLanguage(e.target.value as Language)}>{languages.map(l => <option key={l.code} value={l.code}>{l.label}</option>)}</select>
-        </Field> : <>
-          <Field label={t("organizationName")}><input required maxLength={120} value={name} onChange={e => setName(e.target.value)} /></Field>
-          <Field label={t("publicAgentHttpsUrl")} help={t("addressUsedByAgentsAndThe")}><input required type="url" value={url} onChange={e => setUrl(e.target.value)} /></Field>
-        </>}
-      </fieldset>
-      <div className="dialog-actions">
-        {step === 2 && <Button disabled={mutation.pending} onClick={() => setStep(1)}>{t("back")}</Button>}
-        <Button type="submit" variant="primary" disabled={mutation.pending}>{setupButtonLabel(t, mutation.pending, step)}</Button>
-      </div>
-    </form>
+    <div className="dialog-body">
+      <output style={{ display: 'block', margin: '1em 0' }}>{t("step")} {step} / 2 · {step === 1 ? t("language") : t("organizationAndAccess")}</output>
+      <form onSubmit={save}>
+        <ErrorNotice error={mutation.error} />
+        <fieldset disabled={mutation.pending}>
+          {step === 1 ? <Field label={t("instanceDefaultLanguage")} help={t("eachUserCanChooseAPersonal")}>
+            <select value={language} onChange={e => setLanguage(e.target.value as Language)}>{languages.map(l => <option key={l.code} value={l.code}>{l.label}</option>)}</select>
+          </Field> : <>
+            <Field label={t("organizationName")}><input required maxLength={120} value={name} onChange={e => setName(e.target.value)} /></Field>
+            <Field label={t("publicAgentHttpsUrl")} help={t("addressUsedByAgentsAndThe")}><input required type="url" value={url} onChange={e => setUrl(e.target.value)} /></Field>
+          </>}
+        </fieldset>
+        <div className="dialog-actions">
+          {step === 2 && <Button disabled={mutation.pending} onClick={() => setStep(1)}>{t("back")}</Button>}
+          <Button type="submit" variant="primary" disabled={mutation.pending}>{setupButtonLabel(t, mutation.pending, step)}</Button>
+        </div>
+      </form>
+    </div>
   </Dialog>;
 }

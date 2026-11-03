@@ -48,9 +48,16 @@ type otpDevice struct {
 	CreatedAt int64  `json:"created_at"`
 }
 
-// otpCredentials reads the current Keycloak credential list. A missing or
+type identityCredential struct {
+	ID          string `json:"id"`
+	Type        string `json:"type"`
+	UserLabel   string `json:"userLabel"`
+	CreatedDate int64  `json:"createdDate"`
+}
+
+// credentials reads the current Keycloak credential list. A missing or
 // unreadable list cannot prove that a password-only login is safe.
-func (admin *identityAdmin) otpCredentials(ctx context.Context, subject string) ([]otpDevice, error) {
+func (admin *identityAdmin) credentials(ctx context.Context, subject string) ([]identityCredential, error) {
 	status, _, raw, err := admin.call(ctx, "GET", keycloakUsersPath+url.PathEscape(subject)+"/credentials", nil)
 	if err != nil {
 		return nil, err
@@ -58,17 +65,20 @@ func (admin *identityAdmin) otpCredentials(ctx context.Context, subject string) 
 	if status != http.StatusOK {
 		return nil, apiError{503, "identity_admin_unavailable", "Could not verify the account MFA configuration."}
 	}
-	var credentials []struct {
-		ID          string `json:"id"`
-		Type        string `json:"type"`
-		UserLabel   string `json:"userLabel"`
-		CreatedDate int64  `json:"createdDate"`
-	}
+	var credentials []identityCredential
 	if err := json.Unmarshal(raw, &credentials); err != nil {
 		return nil, err
 	}
 	if credentials == nil {
 		return nil, apiError{503, "identity_admin_unavailable", "Could not verify the account MFA configuration."}
+	}
+	return credentials, nil
+}
+
+func (admin *identityAdmin) otpCredentials(ctx context.Context, subject string) ([]otpDevice, error) {
+	credentials, err := admin.credentials(ctx, subject)
+	if err != nil {
+		return nil, err
 	}
 	devices := []otpDevice{}
 	for _, credential := range credentials {

@@ -1,0 +1,1164 @@
+{
+  "version": 1,
+  "revision": 2,
+  "signatures": [
+    {
+      "id": "openclaw.process",
+      "application_id": "openclaw",
+      "name": "OpenClaw",
+      "revision": 1,
+      "sources": [
+        "host_process",
+        "guest_process",
+        "container_process"
+      ],
+      "state": "executed",
+      "condition": {
+        "op": "in",
+        "field": "executable",
+        "values": [
+          "openclaw",
+          "openclaw.exe"
+        ]
+      },
+      "provenance": "Milvago discovery catalog v1"
+    },
+    {
+      "id": "openclaw.gateway",
+      "application_id": "openclaw",
+      "name": "OpenClaw",
+      "revision": 1,
+      "sources": [
+        "host_process",
+        "guest_process",
+        "container_process"
+      ],
+      "state": "executed",
+      "condition": {
+        "op": "in",
+        "field": "executable",
+        "values": [
+          "openclaw-gateway",
+          "openclaw-gateway.exe"
+        ]
+      },
+      "provenance": "Milvago native qualification OpenClaw2026.10.9; exact runtime process title"
+    },
+    {
+      "id": "openclaw.installation",
+      "application_id": "openclaw",
+      "name": "OpenClaw",
+      "revision": 1,
+      "sources": [
+        "installation"
+      ],
+      "state": "installed",
+      "condition": {
+        "op": "eq",
+        "field": "package",
+        "value": "openclaw"
+      },
+      "provenance": "Milvago discovery catalog v1"
+    },
+    {
+      "id": "openclaw.image",
+      "application_id": "openclaw",
+      "name": "OpenClaw",
+      "revision": 1,
+      "sources": [
+        "container_metadata"
+      ],
+      "state": "indication",
+      "condition": {
+        "op": "in",
+        "field": "image_repository",
+        "values": [
+          "ghcr.io/openclaw/openclaw",
+          "docker.io/openclaw/openclaw",
+          "openclaw/openclaw"
+        ]
+      },
+      "provenance": "Milvago discovery catalog v1"
+    },
+    {
+      "id": "hermes.process",
+      "application_id": "hermes",
+      "name": "Hermes",
+      "revision": 1,
+      "sources": [
+        "host_process",
+        "guest_process",
+        "container_process"
+      ],
+      "state": "executed",
+      "condition": {
+        "op": "in",
+        "field": "executable",
+        "values": [
+          "hermes",
+          "hermes.exe",
+          "hermes-agent",
+          "hermes-agent.exe",
+          "hermes-acp",
+          "hermes-acp.exe"
+        ]
+      },
+      "provenance": "Milvago discovery catalog v1"
+    },
+    {
+      "id": "hermes.installation",
+      "application_id": "hermes",
+      "name": "Hermes",
+      "revision": 1,
+      "sources": [
+        "installation"
+      ],
+      "state": "installed",
+      "condition": {
+        "op": "in",
+        "field": "package",
+        "values": [
+          "hermes-agent",
+          "hermes agent"
+        ]
+      },
+      "provenance": "Milvago discovery catalog v1"
+    },
+    {
+      "id": "hermes.image",
+      "application_id": "hermes",
+      "name": "Hermes",
+      "revision": 1,
+      "sources": [
+        "container_metadata"
+      ],
+      "state": "indication",
+      "condition": {
+        "op": "in",
+        "field": "image_repository",
+        "values": [
+          "docker.io/nousresearch/hermes-agent",
+          "nousresearch/hermes-agent",
+          "hermes-agent"
+        ]
+      },
+      "provenance": "Milvago discovery catalog v1"
+    },
+    {
+      "id": "ollama.process",
+      "application_id": "ollama",
+      "name": "Ollama",
+      "revision": 1,
+      "sources": [
+        "host_process",
+        "guest_process",
+        "container_process"
+      ],
+      "state": "executed",
+      "condition": {
+        "op": "in",
+        "field": "executable",
+        "values": [
+          "ollama",
+          "ollama.exe"
+        ]
+      },
+      "provenance": "Milvago discovery catalog v1"
+    },
+    {
+      "id": "ollama.installation",
+      "application_id": "ollama",
+      "name": "Ollama",
+      "revision": 1,
+      "sources": [
+        "installation"
+      ],
+      "state": "installed",
+      "condition": {
+        "op": "eq",
+        "field": "package",
+        "value": "ollama"
+      },
+      "provenance": "Milvago discovery catalog v1"
+    },
+    {
+      "id": "ollama.image",
+      "application_id": "ollama",
+      "name": "Ollama",
+      "revision": 1,
+      "sources": [
+        "container_metadata"
+      ],
+      "state": "indication",
+      "condition": {
+        "op": "in",
+        "field": "image_repository",
+        "values": [
+          "docker.io/ollama/ollama",
+          "ollama/ollama"
+        ]
+      },
+      "provenance": "Milvago discovery catalog v1"
+    },
+    {
+      "id": "openclaw.node",
+      "application_id": "openclaw",
+      "name": "OpenClaw",
+      "revision": 1,
+      "sources": [
+        "host_process",
+        "guest_process",
+        "container_process"
+      ],
+      "state": "executed",
+      "condition": {
+        "op": "all",
+        "args": [
+          {
+            "op": "in",
+            "field": "executable",
+            "values": [
+              "node",
+              "nodejs"
+            ]
+          },
+          {
+            "op": "in",
+            "field": "argument_token",
+            "values": [
+              "openclaw",
+              "openclaw.mjs"
+            ]
+          }
+        ]
+      },
+      "provenance": "Milvago discovery catalog v1"
+    },
+    {
+      "id": "hermes.module",
+      "application_id": "hermes",
+      "name": "Hermes",
+      "revision": 1,
+      "sources": [
+        "host_process",
+        "guest_process",
+        "container_process"
+      ],
+      "state": "executed",
+      "condition": {
+        "op": "all",
+        "args": [
+          {
+            "op": "regex",
+            "field": "executable",
+            "value": "^python(3(\\.[0-9]{1,2})?)?$"
+          },
+          {
+            "op": "eq",
+            "field": "argument_token",
+            "value": "hermes_cli.main"
+          }
+        ]
+      },
+      "provenance": "Milvago discovery catalog v1"
+    },
+    {
+      "id": "hermes.launcher",
+      "application_id": "hermes",
+      "name": "Hermes",
+      "revision": 1,
+      "sources": [
+        "host_process",
+        "guest_process",
+        "container_process"
+      ],
+      "state": "executed",
+      "condition": {
+        "op": "all",
+        "args": [
+          {
+            "op": "regex",
+            "field": "executable",
+            "value": "^python(3(\\.[0-9]{1,2})?)?$"
+          },
+          {
+            "op": "in",
+            "field": "argument_token",
+            "values": [
+              "hermes",
+              "hermes.exe",
+              "hermes-agent",
+              "hermes-agent.exe",
+              "hermes-acp",
+              "hermes-acp.exe"
+            ]
+          }
+        ]
+      },
+      "provenance": "NousResearch/hermes-agent pyproject.toml console entry points; reviewed metadata"
+    },
+    {
+      "id": "openclaw.http",
+      "application_id": "openclaw",
+      "name": "OpenClaw",
+      "revision": 1,
+      "sources": [
+        "http"
+      ],
+      "state": "interface_recognized",
+      "condition": {
+        "op": "all",
+        "args": [
+          {
+            "op": "eq",
+            "field": "http_status",
+            "value": "200"
+          },
+          {
+            "op": "contains",
+            "field": "http_body",
+            "value": "<title>OpenClaw Control</title>"
+          },
+          {
+            "op": "contains",
+            "field": "http_body",
+            "value": "<openclaw-app>"
+          }
+        ]
+      },
+      "provenance": "Julius eb45b89 OpenClaw HTML matcher; reviewed adaptation"
+    },
+    {
+      "id": "ollama.http",
+      "application_id": "ollama",
+      "name": "Ollama",
+      "revision": 1,
+      "sources": [
+        "http"
+      ],
+      "state": "interface_recognized",
+      "condition": {
+        "op": "all",
+        "args": [
+          {
+            "op": "eq",
+            "field": "http_status",
+            "value": "200"
+          },
+          {
+            "op": "eq",
+            "field": "http_body",
+            "value": "Ollama is running"
+          }
+        ]
+      },
+      "provenance": "Milvago discovery catalog v1"
+    },
+    {
+      "id": "hermes.http_health",
+      "application_id": "hermes",
+      "name": "Hermes",
+      "revision": 1,
+      "sources": [
+        "http"
+      ],
+      "state": "interface_recognized",
+      "condition": {
+        "op": "all",
+        "args": [
+          {
+            "op": "eq",
+            "field": "http_status",
+            "value": "200"
+          },
+          {
+            "op": "eq",
+            "field": "http_content_type",
+            "value": "application/json"
+          },
+          {
+            "op": "in",
+            "field": "http_path",
+            "values": [
+              "/health",
+              "/v1/health"
+            ]
+          },
+          {
+            "op": "regex",
+            "field": "http_body",
+            "value": "^\\s*\\{"
+          },
+          {
+            "op": "regex",
+            "field": "http_body",
+            "value": "\"platform\"\\s*:\\s*\"hermes-agent\""
+          },
+          {
+            "op": "regex",
+            "field": "http_body",
+            "value": "\"status\"\\s*:\\s*\"ok\""
+          },
+          {
+            "op": "regex",
+            "field": "http_body",
+            "value": "\"version\"\\s*:"
+          }
+        ]
+      },
+      "provenance": "Julius Hermes contribution ed26a485 health fingerprint; reviewed metadata-only adaptation"
+    },
+    {
+      "id": "open-webui.http",
+      "application_id": "open-webui",
+      "name": "Open WebUI",
+      "revision": 1,
+      "sources": [
+        "http"
+      ],
+      "state": "interface_recognized",
+      "condition": {
+        "op": "all_http_responses",
+        "args": [
+          {
+            "op": "all",
+            "args": [
+              {
+                "op": "eq",
+                "field": "http_path",
+                "value": "/api/config"
+              },
+              {
+                "op": "eq",
+                "field": "http_status",
+                "value": "200"
+              },
+              {
+                "op": "eq",
+                "field": "http_content_type",
+                "value": "application/json"
+              },
+              {
+                "op": "contains",
+                "field": "http_body",
+                "value": "\"name\":\"Open WebUI\""
+              },
+              {
+                "op": "contains",
+                "field": "http_body",
+                "value": "\"features\":"
+              }
+            ]
+          },
+          {
+            "op": "all",
+            "args": [
+              {
+                "op": "eq",
+                "field": "http_path",
+                "value": "/api/version"
+              },
+              {
+                "op": "eq",
+                "field": "http_status",
+                "value": "200"
+              },
+              {
+                "op": "eq",
+                "field": "http_content_type",
+                "value": "application/json"
+              },
+              {
+                "op": "contains",
+                "field": "http_body",
+                "value": "\"version\""
+              },
+              {
+                "op": "contains",
+                "field": "http_body",
+                "value": "\"deployment_id\""
+              }
+            ]
+          },
+          {
+            "op": "all",
+            "args": [
+              {
+                "op": "eq",
+                "field": "http_path",
+                "value": "/"
+              },
+              {
+                "op": "eq",
+                "field": "http_status",
+                "value": "200"
+              },
+              {
+                "op": "contains",
+                "field": "http_body",
+                "value": "open-webui"
+              }
+            ]
+          }
+        ]
+      },
+      "provenance": "Julius eb45b89 openwebui.yaml; reviewed metadata-only adaptation"
+    },
+    {
+      "id": "librechat.http",
+      "application_id": "librechat",
+      "name": "LibreChat",
+      "revision": 1,
+      "sources": [
+        "http"
+      ],
+      "state": "interface_recognized",
+      "condition": {
+        "op": "all_http_responses",
+        "args": [
+          {
+            "op": "all",
+            "args": [
+              {
+                "op": "eq",
+                "field": "http_path",
+                "value": "/"
+              },
+              {
+                "op": "eq",
+                "field": "http_status",
+                "value": "200"
+              },
+              {
+                "op": "contains",
+                "field": "http_body",
+                "value": "<title>LibreChat</title>"
+              }
+            ]
+          },
+          {
+            "op": "all",
+            "args": [
+              {
+                "op": "eq",
+                "field": "http_path",
+                "value": "/api/config"
+              },
+              {
+                "op": "eq",
+                "field": "http_status",
+                "value": "200"
+              },
+              {
+                "op": "eq",
+                "field": "http_content_type",
+                "value": "application/json"
+              },
+              {
+                "op": "contains",
+                "field": "http_body",
+                "value": "librechat.ai"
+              }
+            ]
+          }
+        ]
+      },
+      "provenance": "Julius eb45b89 librechat.yaml; reviewed metadata-only adaptation"
+    },
+    {
+      "id": "langflow.http",
+      "application_id": "langflow",
+      "name": "Langflow",
+      "revision": 1,
+      "sources": [
+        "http"
+      ],
+      "state": "interface_recognized",
+      "condition": {
+        "op": "all_http_responses",
+        "args": [
+          {
+            "op": "all",
+            "args": [
+              {
+                "op": "eq",
+                "field": "http_path",
+                "value": "/api/v1/version"
+              },
+              {
+                "op": "eq",
+                "field": "http_status",
+                "value": "200"
+              },
+              {
+                "op": "eq",
+                "field": "http_content_type",
+                "value": "application/json"
+              },
+              {
+                "op": "contains",
+                "field": "http_body",
+                "value": "\"package\""
+              },
+              {
+                "op": "contains",
+                "field": "http_body",
+                "value": "Langflow"
+              }
+            ]
+          },
+          {
+            "op": "all",
+            "args": [
+              {
+                "op": "eq",
+                "field": "http_path",
+                "value": "/health_check"
+              },
+              {
+                "op": "eq",
+                "field": "http_status",
+                "value": "200"
+              },
+              {
+                "op": "eq",
+                "field": "http_content_type",
+                "value": "application/json"
+              },
+              {
+                "op": "contains",
+                "field": "http_body",
+                "value": "\"chat\":"
+              },
+              {
+                "op": "contains",
+                "field": "http_body",
+                "value": "\"db\":"
+              }
+            ]
+          }
+        ]
+      },
+      "provenance": "Julius eb45b89 langflow.yaml; reviewed metadata-only adaptation"
+    },
+    {
+      "id": "ragflow.http",
+      "application_id": "ragflow",
+      "name": "RAGFlow",
+      "revision": 1,
+      "sources": [
+        "http"
+      ],
+      "state": "interface_recognized",
+      "condition": {
+        "op": "all_http_responses",
+        "args": [
+          {
+            "op": "all",
+            "args": [
+              {
+                "op": "eq",
+                "field": "http_path",
+                "value": "/v1/system/healthz"
+              },
+              {
+                "op": "eq",
+                "field": "http_status",
+                "value": "200"
+              },
+              {
+                "op": "eq",
+                "field": "http_content_type",
+                "value": "application/json"
+              },
+              {
+                "op": "contains",
+                "field": "http_body",
+                "value": "\"doc_engine\""
+              }
+            ]
+          },
+          {
+            "op": "all",
+            "args": [
+              {
+                "op": "eq",
+                "field": "http_path",
+                "value": "/"
+              },
+              {
+                "op": "eq",
+                "field": "http_status",
+                "value": "200"
+              },
+              {
+                "op": "contains",
+                "field": "http_body",
+                "value": "<title>RAGFlow</title>"
+              }
+            ]
+          }
+        ]
+      },
+      "provenance": "Julius eb45b89 ragflow.yaml; require-all preserved; health status strengthened to 200"
+    },
+    {
+      "id": "sillytavern.http",
+      "application_id": "sillytavern",
+      "name": "SillyTavern",
+      "revision": 1,
+      "sources": [
+        "http"
+      ],
+      "state": "interface_recognized",
+      "condition": {
+        "op": "all_http_responses",
+        "args": [
+          {
+            "op": "all",
+            "args": [
+              {
+                "op": "eq",
+                "field": "http_path",
+                "value": "/manifest.json"
+              },
+              {
+                "op": "eq",
+                "field": "http_status",
+                "value": "200"
+              },
+              {
+                "op": "contains",
+                "field": "http_body",
+                "value": "\"name\": \"SillyTavern\""
+              }
+            ]
+          },
+          {
+            "op": "all",
+            "args": [
+              {
+                "op": "eq",
+                "field": "http_path",
+                "value": "/version"
+              },
+              {
+                "op": "eq",
+                "field": "http_status",
+                "value": "200"
+              },
+              {
+                "op": "contains",
+                "field": "http_body",
+                "value": "SillyTavern"
+              },
+              {
+                "op": "contains",
+                "field": "http_body",
+                "value": "\"pkgVersion\""
+              }
+            ]
+          }
+        ]
+      },
+      "provenance": "Julius eb45b89 sillytavern.yaml; reviewed metadata-only adaptation"
+    },
+    {
+      "id": "lobehub.http_manifest",
+      "application_id": "lobehub",
+      "name": "LobeHub",
+      "revision": 1,
+      "sources": [
+        "http"
+      ],
+      "state": "interface_recognized",
+      "condition": {
+        "op": "all",
+        "args": [
+          {
+            "op": "eq",
+            "field": "http_path",
+            "value": "/manifest.webmanifest"
+          },
+          {
+            "op": "eq",
+            "field": "http_status",
+            "value": "200"
+          },
+          {
+            "op": "eq",
+            "field": "http_content_type",
+            "value": "application/manifest+json"
+          },
+          {
+            "op": "contains",
+            "field": "http_body",
+            "value": "\"id\":\"lobe-hub\""
+          },
+          {
+            "op": "contains",
+            "field": "http_body",
+            "value": "\"name\":\"LobeHub\""
+          },
+          {
+            "op": "contains",
+            "field": "http_body",
+            "value": "\"short_name\":\"LobeHub\""
+          }
+        ]
+      },
+      "provenance": "Julius eb45b89 lobehub.yaml; manifest alternative only; signin alternative omitted"
+    },
+    {
+      "id": "dify.http_apps",
+      "application_id": "dify",
+      "name": "Dify",
+      "revision": 1,
+      "sources": [
+        "http"
+      ],
+      "state": "interface_recognized",
+      "condition": {
+        "op": "all",
+        "args": [
+          {
+            "op": "eq",
+            "field": "http_path",
+            "value": "/apps"
+          },
+          {
+            "op": "eq",
+            "field": "http_status",
+            "value": "200"
+          },
+          {
+            "op": "contains",
+            "field": "http_body",
+            "value": "<title>Dify</title>"
+          },
+          {
+            "op": "contains",
+            "field": "http_body",
+            "value": "data-public-edition"
+          }
+        ]
+      },
+      "provenance": "Julius eb45b89 dify.yaml; independent alternative; status strengthened to 200"
+    },
+    {
+      "id": "dify.http_root",
+      "application_id": "dify",
+      "name": "Dify",
+      "revision": 1,
+      "sources": [
+        "http"
+      ],
+      "state": "interface_recognized",
+      "condition": {
+        "op": "all",
+        "args": [
+          {
+            "op": "eq",
+            "field": "http_path",
+            "value": "/"
+          },
+          {
+            "op": "eq",
+            "field": "http_status",
+            "value": "200"
+          },
+          {
+            "op": "contains",
+            "field": "http_body",
+            "value": "<title>Dify</title>"
+          },
+          {
+            "op": "contains",
+            "field": "http_body",
+            "value": "data-public-edition"
+          }
+        ]
+      },
+      "provenance": "Julius eb45b89 dify.yaml; independent alternative; status strengthened to 200"
+    },
+    {
+      "id": "dify.http_mobile",
+      "application_id": "dify",
+      "name": "Dify",
+      "revision": 1,
+      "sources": [
+        "http"
+      ],
+      "state": "interface_recognized",
+      "condition": {
+        "op": "all",
+        "args": [
+          {
+            "op": "eq",
+            "field": "http_path",
+            "value": "/"
+          },
+          {
+            "op": "eq",
+            "field": "http_status",
+            "value": "200"
+          },
+          {
+            "op": "contains",
+            "field": "http_body",
+            "value": "apple-mobile-web-app-title\" content=\"Dify\""
+          },
+          {
+            "op": "contains",
+            "field": "http_body",
+            "value": "data-public-edition"
+          }
+        ]
+      },
+      "provenance": "Julius eb45b89 dify.yaml; independent alternative; status strengthened to 200"
+    },
+    {
+      "id": "aphrodite-engine.http",
+      "application_id": "aphrodite-engine",
+      "name": "Aphrodite Engine",
+      "revision": 1,
+      "sources": [
+        "http"
+      ],
+      "state": "interface_recognized",
+      "condition": {
+        "op": "all",
+        "args": [
+          {
+            "op": "eq",
+            "field": "http_path",
+            "value": "/.well-known/serviceinfo"
+          },
+          {
+            "op": "eq",
+            "field": "http_status",
+            "value": "200"
+          },
+          {
+            "op": "eq",
+            "field": "http_content_type",
+            "value": "application/json"
+          },
+          {
+            "op": "contains",
+            "field": "http_body",
+            "value": "\"software\""
+          },
+          {
+            "op": "contains",
+            "field": "http_body",
+            "value": "\"Aphrodite Engine\""
+          }
+        ]
+      },
+      "provenance": "Julius eb45b89 aphrodite-engine.yaml; reviewed metadata-only adaptation"
+    },
+    {
+      "id": "lm-studio.http_greeting",
+      "application_id": "lm-studio",
+      "name": "LM Studio",
+      "revision": 1,
+      "sources": [
+        "http"
+      ],
+      "state": "interface_recognized",
+      "condition": {
+        "op": "all",
+        "args": [
+          {
+            "op": "eq",
+            "field": "http_path",
+            "value": "/lmstudio-greeting"
+          },
+          {
+            "op": "eq",
+            "field": "http_status",
+            "value": "200"
+          },
+          {
+            "op": "eq",
+            "field": "http_content_type",
+            "value": "application/json"
+          },
+          {
+            "op": "contains",
+            "field": "http_body",
+            "value": "\"lmstudio\""
+          },
+          {
+            "op": "regex",
+            "field": "http_body",
+            "value": "\"lmstudio\"\\s*:\\s*true\\s*[,}]"
+          }
+        ]
+      },
+      "provenance": "Julius eb45b89 lm-studio.yaml; greeting only; JSON MIME and true value strengthened; models route omitted"
+    },
+    {
+      "id": "onyx.http_openapi",
+      "application_id": "onyx",
+      "name": "Onyx",
+      "revision": 1,
+      "sources": [
+        "http"
+      ],
+      "state": "interface_recognized",
+      "condition": {
+        "op": "all",
+        "args": [
+          {
+            "op": "eq",
+            "field": "http_path",
+            "value": "/openapi.json"
+          },
+          {
+            "op": "eq",
+            "field": "http_status",
+            "value": "200"
+          },
+          {
+            "op": "eq",
+            "field": "http_content_type",
+            "value": "application/json"
+          },
+          {
+            "op": "contains",
+            "field": "http_body",
+            "value": "\"title\":\"Onyx Backend\""
+          }
+        ]
+      },
+      "provenance": "Julius eb45b89 onyx.yaml; reviewed metadata-only adaptation"
+    },
+    {
+      "id": "onyx.http_docs",
+      "application_id": "onyx",
+      "name": "Onyx",
+      "revision": 1,
+      "sources": [
+        "http"
+      ],
+      "state": "interface_recognized",
+      "condition": {
+        "op": "all",
+        "args": [
+          {
+            "op": "eq",
+            "field": "http_path",
+            "value": "/api/docs"
+          },
+          {
+            "op": "eq",
+            "field": "http_status",
+            "value": "200"
+          },
+          {
+            "op": "contains",
+            "field": "http_body",
+            "value": "<title>Onyx Backend - Swagger UI</title>"
+          }
+        ]
+      },
+      "provenance": "Julius eb45b89 onyx.yaml; reviewed metadata-only adaptation"
+    },
+    {
+      "id": "jan.http_openapi",
+      "application_id": "jan",
+      "name": "Jan",
+      "revision": 1,
+      "sources": [
+        "http"
+      ],
+      "state": "interface_recognized",
+      "condition": {
+        "op": "all",
+        "args": [
+          {
+            "op": "eq",
+            "field": "http_path",
+            "value": "/openapi.json"
+          },
+          {
+            "op": "eq",
+            "field": "http_status",
+            "value": "200"
+          },
+          {
+            "op": "eq",
+            "field": "http_content_type",
+            "value": "application/json"
+          },
+          {
+            "op": "contains",
+            "field": "http_body",
+            "value": "\"title\": \"Jan API Server Endpoints\""
+          }
+        ]
+      },
+      "provenance": "Julius eb45b89 jan.yaml; reviewed metadata-only adaptation"
+    }
+  ],
+  "providers": [
+    {
+      "id": "openai",
+      "hosts": [
+        "api.openai.com"
+      ]
+    },
+    {
+      "id": "anthropic",
+      "hosts": [
+        "api.anthropic.com"
+      ]
+    },
+    {
+      "id": "google",
+      "hosts": [
+        "generativelanguage.googleapis.com"
+      ]
+    },
+    {
+      "id": "mistral",
+      "hosts": [
+        "api.mistral.ai"
+      ]
+    }
+  ],
+  "http_ports": [
+    11434,
+    18789,
+    8642,
+    80,
+    3000,
+    3080,
+    3210,
+    7860,
+    8000,
+    2242,
+    1337,
+    1234
+  ],
+  "http_paths": [
+    "/",
+    "/health",
+    "/v1/health",
+    "/api/config",
+    "/api/version",
+    "/api/v1/version",
+    "/health_check",
+    "/v1/system/healthz",
+    "/manifest.json",
+    "/version",
+    "/manifest.webmanifest",
+    "/apps",
+    "/.well-known/serviceinfo",
+    "/lmstudio-greeting",
+    "/openapi.json",
+    "/api/docs"
+  ]
+}

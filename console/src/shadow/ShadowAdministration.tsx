@@ -1,16 +1,19 @@
+import { AIGovernancePanel } from '../AIGovernance';
+import './NavigationGroups.css';
 import { useContext, useEffect, useState } from 'react';
 import { ApiError } from '../api';
 import { Badge, can, Context, Dialog, ErrorNotice, Notice, PageBar, ResourceView, readOnly, useMutation, useResource, useText } from '../ui';
 import { InheritanceContext } from './ConfigFields';
 import { KnownPlatformsPanel } from './KnownPlatformsPanel';
+import { useShadowArea } from './useShadowArea';
 import { CapturePanel, ClassificationPanel, OperationsPanel, PrivacyPanel, ProtectionPanel, ServicesPanel, labelMatchesPattern } from './ConfigurationPanels';
 import type { ShadowConfig, ShadowSection, ShadowSettings } from './types';
 
-type Area = 'capture' | 'services' | 'protection' | 'privacy' | 'classification' | 'platforms' | 'operations';
+type Area = 'capture' | 'services' | 'protection' | 'privacy' | 'classification' | 'platforms' | 'operations' | 'governance';
 // `platforms` maps to no configuration section: which platforms Discovery may name is
 // stored on its own and never travels in the signed policy, so it inherits nothing and
 // has nothing to save with the rest.
-const areaSections: Record<Area, ShadowSection[]> = { capture: ['enrollment', 'collection'], services: ['services', 'model_access'], protection: ['protection'], privacy: ['privacy'], classification: ['classification'], platforms: [], operations: ['operations'] };
+const areaSections: Record<Area, ShadowSection[]> = { capture: ['enrollment', 'collection'], services: ['services', 'model_access'], protection: ['protection'], privacy: ['privacy'], classification: ['classification'], platforms: [], governance: [], operations: ['operations'] };
 function cleanConfiguration(value: ShadowConfig): ShadowConfig {
   const next = structuredClone(value); const lines = (items: string[]) => items.map(item => item.trim()).filter(Boolean);
   next.enrollment.cidrs = lines(next.enrollment.cidrs); next.protection.keywords = lines(next.protection.keywords); next.protection.exceptions = lines(next.protection.exceptions); next.operations.updates.device_ids = lines(next.operations.updates.device_ids); next.operations.updates.paused_versions = lines(next.operations.updates.paused_versions); next.model_access = (next.model_access ?? []).map(item => ({ ...item, models: lines(item.models) })); next.classification.medical_terms = lines(next.classification.medical_terms ?? []);
@@ -24,7 +27,7 @@ export function ShadowAdministration() {
   // PageBar has to be a direct child of `.main`: it bleeds edge to edge through negative
   // margins and sticks to the top, and `.main>*:not(.pagebar)` is what keeps everything
   // else inside the content width. Nested in the section it would sit 24px off.
-  return <><PageBar title={t("shadowAiAdministration")} info={t("collectionProtectionAndOperationsInOne")} /><section className="shadow-admin"><ScopedSettings device="" /></section></>;
+  return <><PageBar title={t("shadowAiAdministration")} info={t("shadowAdministrationScope")} /><section className="shadow-admin"><ScopedSettings device="" /></section></>;
 }
 /** Scope of one settings editor: the organization policy, a device group's override, or a single device's override. */
 type Scope = 'organization' | 'group' | 'device';
@@ -38,7 +41,7 @@ export function ScopedSettings({ device, group, dirtyChanged, capabilitiesChange
 }
 
 function SettingsEditor({ initial, path, scope, reload, dirtyChanged, capabilitiesChanged }: Readonly<{ initial: ShadowSettings; path: string; scope: Scope; reload: () => void; dirtyChanged?: (dirty: boolean) => void; capabilitiesChanged?: (value: Record<string, boolean>) => void }>) {
-  const t = useText(); const { session } = useContext(Context); const [area, setArea] = useState<Area>('capture'); const [config, setConfig] = useState(initial.config); const [inherit, setInherit] = useState(initial.inherit_sections ?? []); const [revision, setRevision] = useState(initial.revision); const [baseline, setBaseline] = useState({ config: initial.config, inherit: initial.inherit_sections ?? [] }); const [saved, setSaved] = useState(false); const mutation = useMutation();
+  const t = useText(); const { session } = useContext(Context); const [config, setConfig] = useState(initial.config); const [inherit, setInherit] = useState(initial.inherit_sections ?? []); const [revision, setRevision] = useState(initial.revision); const [baseline, setBaseline] = useState({ config: initial.config, inherit: initial.inherit_sections ?? [] }); const [saved, setSaved] = useState(false); const mutation = useMutation();
   // A demonstration instance shows this configuration and refuses to change it. The
   // panels stay rendered with their real values -- that is what a visitor came to
   // see -- but the fields are inert and the save bar is replaced by a notice, so
@@ -51,7 +54,7 @@ function SettingsEditor({ initial, path, scope, reload, dirtyChanged, capabiliti
   const dirty = JSON.stringify({ config, inherit }) !== JSON.stringify(baseline);
   // Usage sensitivity is an Enterprise capability: without it the section does not
   // exist at all rather than showing an empty, unusable grid.
-  const sensitivity = Boolean(initial.capabilities.usage_sensitivity);
+
   const modelControl = Boolean(initial.capabilities.model_access_browser || initial.capabilities.model_access_native);
   // Both editions receive signed security updates, and they are on by default, so the
   // section has nothing an administrator has to decide. It is a maintenance surface --
@@ -60,13 +63,15 @@ function SettingsEditor({ initial, path, scope, reload, dirtyChanged, capabiliti
   // loaded with, so saving another panel never turns updates off by omission.
   const operations = Boolean(session.console_debug);
   const availableAreas: Area[] = ([
-    'capture', 'services', 'protection', 'privacy',
-    ...(sensitivity ? ['classification' as Area] : []),
+    'capture', 'services',
     // Discovery is read at the organization, so the platforms it may name are chosen
     // there too -- a group or a device override would have nothing to act on.
-    ...(device ? [] : ['platforms' as Area, ...(operations ? ['operations' as Area] : [])]),
+    ...(device ? [] : ['platforms' as Area, 'governance' as Area, ...(operations ? ['operations' as Area] : [])]),
   ] as Area[]);
-  const names: Record<Area, string> = { capture: t("enrollmentCollection"), services: t("services"), protection: t("protections"), privacy: t("localMasking"), classification: t("usageSensitivity"), platforms: t("aiPlatforms"), operations: t("operations") };
+  const [area, setArea] = useShadowArea(availableAreas, 'capture', !device);
+  const [governanceVisited,setGovernanceVisited]=useState(area==='governance');
+  useEffect(()=>{if(area==='governance')setGovernanceVisited(true);},[area]);
+  const names: Record<Area, string> = { capture: t("enrollmentCollection"), services: t("services"), protection: t("protections"), privacy: t("localMasking"), classification: t("usageSensitivity"), platforms: t("aiPlatforms"), governance:t("aiGovTitle"), operations: t("operations") };
   const sectionName: Record<ShadowSection, string> = { enrollment: t("enrollment"), collection: t("collection"), services: names.services, model_access: t("modelControls"), protection: names.protection, privacy: names.privacy, classification: names.classification, operations: names.operations };
   useEffect(() => { dirtyChanged?.(dirty); if (!dirty) { return; } const warn = (event: BeforeUnloadEvent) => event.preventDefault(); window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn); }, [dirty, dirtyChanged]);
   function update<K extends keyof ShadowConfig>(section: K, value: ShadowConfig[K]) { setSaved(false); setConfig(current => ({ ...current, [section]: value })); }
@@ -96,8 +101,9 @@ function SettingsEditor({ initial, path, scope, reload, dirtyChanged, capabiliti
     const sections = areaSections[area].filter(section => (!device || section !== 'enrollment') && (section !== 'model_access' || modelControl));
     return <div className="inheritance-controls">{sections.map(section => <label className="checkbox-label" key={section}><input type="checkbox" checked={inherit.includes(section)} disabled={mutation.pending || frozen} onChange={event => toggleInheritance(section, event.target.checked)} /><span>{t("inherit")} · {sectionName[section]}{initial.inherited_from[section] && <small>{initial.inherited_from[section].name}</small>}</span></label>)}</div>;
   }
-  function policyForm() { return <form className="panel shadow-config" onSubmit={event => { event.preventDefault(); void submit(); }}><div className="section-heading"><div><h2>{names[area]}</h2><p>{scopeName} · {t("revision")} {revision}</p></div>{dirty && <Badge tone="warning">{t("draft")}</Badge>}</div><ErrorNotice error={mutation.error} />{saved && <Notice tone="success">{t("configurationSavedInstallationsWillReceiveIt")}</Notice>}{inheritanceAllowed && inheritanceControls()}<fieldset disabled={mutation.pending || frozen}><InheritanceContext.Provider value={inherit}>{panel}</InheritanceContext.Provider></fieldset>{frozen ? <Notice>{t("demonstrationReadOnly")}</Notice> : <div className="config-save-bar"><p>{dirty ? t("changesWillApplyAfterServerValidation") : t("configurationSynchronizedWithTheServer")}</p><button type="button" className="button secondary" disabled={!dirty || mutation.pending} onClick={() => { setConfig(baseline.config); setInherit(baseline.inherit); setSaved(false); mutation.clear(); }}>{t("discardDraft")}</button><button type="submit" className="button primary" disabled={config.privacy.custom_rules.some(labelMatchesPattern) || !dirty || mutation.pending}>{mutation.pending ? t("validating") : t("saveChanges")}</button></div>}</form>; }
-  return <><div className="shadow-settings-layout"><nav className="vnav" aria-label={t("shadowAiSections")}>{availableAreas.map((item, index) => <button key={item} type="button" aria-pressed={area === item} className={`vnav-item${area === item ? ' active' : ''}`} onClick={() => setArea(item)}><span className="n" aria-hidden="true">0{index + 1}</span><span>{names[item]}</span></button>)}</nav>{area === 'platforms' ? platformView() : policyForm()}</div>{mutation.error instanceof ApiError && mutation.error.status === 409 && <Notice tone="warning" action={<button type="button" className="button secondary" onClick={reload}>{t("discardAndReload")}</button>}>{t("yourDraftIsPreservedForA")}</Notice>}{!device && area === 'capture' && can(session, 'content.purge') && <ContentPurge open={purgeOpen} close={() => setPurgeOpen(false)} />}</>;
+  function policyForm() { return <form className="panel shadow-config" onSubmit={event => { event.preventDefault(); void submit(); }}><div className="section-heading"><div><h2>{names[area]}</h2><p>{scopeName} · {t("revision")} {revision}</p></div>{dirty && <Badge>{t("draft")}</Badge>}</div><ErrorNotice error={mutation.error} />{saved && <Notice tone="success">{t("configurationSavedInstallationsWillReceiveIt")}</Notice>}{inheritanceAllowed && inheritanceControls()}<fieldset disabled={mutation.pending || frozen}><InheritanceContext.Provider value={inherit}>{panel}</InheritanceContext.Provider></fieldset>{frozen ? <Notice>{t("demonstrationReadOnly")}</Notice> : <div className="config-save-bar"><p>{dirty ? t("changesWillApplyAfterServerValidation") : t("configurationSynchronizedWithTheServer")}</p><button type="button" className="button secondary" disabled={!dirty || mutation.pending} onClick={() => { setConfig(baseline.config); setInherit(baseline.inherit); setSaved(false); mutation.clear(); }}>{t("discardDraft")}</button><button type="submit" className="button primary" disabled={config.privacy.custom_rules.some(labelMatchesPattern) || !dirty || mutation.pending}>{mutation.pending ? t("validating") : t("saveChanges")}</button></div>}</form>; }
+  const dlpTarget=scope==='organization'?'#dlp':`#dlp?${scope}=${encodeURIComponent(path.split('/')[3])}`;
+  return <><Notice action={<a className="button secondary" href={dlpTarget}>{t('dlpTitle')}</a>}>{t('dlpMoved')}</Notice><div className="shadow-settings-layout"><nav className="vnav" aria-label={t("shadowAiSections")}>{(['capture','platforms','governance','operations','services'] as Area[]).filter(item=>availableAreas.includes(item)).map((item, index) => <div key={item}>{index===0&&<p className="shadow-nav-caption">{t("shadowDataGroup")}</p>}{item==="services"&&<p className="shadow-nav-caption">{t("shadowAccessGroup")}</p>}<button type="button" aria-pressed={area === item} className={`vnav-item${area === item ? ' active' : ''}`} onClick={() => setArea(item)}><span>{names[item]}</span></button></div>)}</nav>{(governanceVisited||area==='governance')&&<div hidden={area!=='governance'}><AIGovernancePanel/></div>}{area === 'governance' ? null : area === 'platforms' ? platformView() : policyForm()}</div>{mutation.error instanceof ApiError && mutation.error.status === 409 && <Notice tone="warning" action={<button type="button" className="button secondary" onClick={reload}>{t("discardAndReload")}</button>}>{t("yourDraftIsPreservedForA")}</Notice>}{!device && area === 'capture' && can(session, 'content.purge') && <ContentPurge open={purgeOpen} close={() => setPurgeOpen(false)} />}</>;
 }
 
 function ContentPurge({ open, close }: Readonly<{ open: boolean; close: () => void }>) {

@@ -37,9 +37,10 @@ services:
       - "127.0.0.1:${MILVAGO_MAIL_PORT:-4081}:8025"
   identity:
     image: quay.io/keycloak/keycloak:26.8.1@sha256:79c623a22abacf3fe6c00a5fb30f5b7843d717b234033b80995891c06116d244
-    command: [start-dev, --import-realm]
+    command: [start, --import-realm]
     security_opt: [no-new-privileges:true]
     environment:
+      KC_HTTP_ENABLED: "true"
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://database:5432/milvago_identity
       KC_DB_USERNAME: milvago_identity

@@ -1,0 +1,52 @@
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
+import type { Overview, Session } from './api';
+import { UsageOverview } from './UsageOverview';
+import { Context } from './ui';
+const session: Session = { user: { id: 'viewer', email: 'viewer@example.invalid', display_name: 'Viewer' }, organization: { id: 'org', name: 'Synthetic organization', role: 'viewer' }, organizations: [], permissions: [], csrf_token: 'fixture', edition: 'community' };
+const data: Overview = { period_hours: 24, events: 4, blocked: 1, navigations: 2, devices: 3, active_devices: 2, pending_devices: 0, providers: [{ name: '<img src=x>', events: 4, blocked: 1 }], timeline: [{ hour: '2026-10-30T12:00:00Z', events: 4, blocked: 1 }] };
+afterEach(cleanup);
+it('presents real aggregate figures without granting detail links or interpreting provider names', () => {
+  render(<Context.Provider value={{ session, language: 'en', refreshSession: async () => undefined }}><UsageOverview data={data}/></Context.Provider>);
+  expect(screen.getByRole('img')).toHaveAccessibleName(/4 events/);
+  expect(screen.getByText('<img src=x>')).toBeVisible();
+  expect(document.querySelector('img[src=x]')).toBeNull();
+  expect(screen.queryByRole('link')).toBeNull();
+  expect(document.querySelector('.usage-chart-svg')?.outerHTML).not.toMatch(/NaN|Infinity/);
+});
+it('preserves a truthful empty state for an unobserved period', () => {
+  render(<Context.Provider value={{ session, language: 'en', refreshSession: async () => undefined }}><UsageOverview data={{ ...data, events: 0, blocked: 0, providers: [], timeline: [] }}/></Context.Provider>);
+  expect(screen.getByText('No events received')).toBeVisible();
+  expect(document.querySelector('.usage-chart-svg')).toBeNull();
+  expect(document.querySelectorAll('.usage-provider-grid>li')).toHaveLength(0);
+});
+it('inspects the nearest observed hour across the plot and dismisses on mouse exit', () => {
+  render(<Context.Provider value={{ session, language: 'en', refreshSession: async () => undefined }}><UsageOverview data={{ ...data, timeline: [data.timeline[0], { hour: '2026-10-30T13:00:00Z', events: 12, blocked: 3 }, { hour: '2026-10-30T14:00:00Z', events: 7, blocked: 0 }] }}/></Context.Provider>);
+  const hit = document.querySelector('.usage-chart-hit')!;
+  vi.spyOn(hit, 'getBoundingClientRect').mockReturnValue({ left: 100, width: 400 } as DOMRect);
+  fireEvent.pointerMove(hit, { clientX: 290, pointerType: 'mouse' });
+  expect(within(screen.getByRole('tooltip')).getByText('12')).toBeVisible();
+  expect(within(screen.getByRole('tooltip')).getByText('3')).toBeVisible();
+  expect(screen.getByRole('tooltip').querySelector('time')).toHaveAttribute('dateTime', '2026-10-30T13:00:00Z');
+  fireEvent.pointerMove(hit, { clientX: 999, pointerType: 'mouse' });
+  expect(within(screen.getByRole('tooltip')).getByText('7')).toBeVisible();
+  expect(within(screen.getByRole('tooltip')).getByText('0')).toBeVisible();
+  fireEvent.pointerLeave(screen.getByRole('group', { name: 'Usage rhythm' }), { pointerType: 'mouse' });
+  expect(screen.queryByRole('tooltip')).toBeNull();
+});
+it('supports keyboard inspection, bounds and dismissal without interpreting invalid timestamps', () => {
+  const { rerender } = render(<Context.Provider value={{ session, language: 'fr', refreshSession: async () => undefined }}><UsageOverview data={data}/></Context.Provider>);
+  const chart = screen.getByRole('group', { name: 'Rythme des usages' });
+  fireEvent.focus(chart);
+  expect(screen.getByRole('tooltip')).toHaveAttribute('aria-live', 'polite');
+  fireEvent.keyDown(chart, { key: 'Home' }); fireEvent.keyDown(chart, { key: 'ArrowLeft' });
+  expect(within(screen.getByRole('tooltip')).getByText('4')).toBeVisible();
+  fireEvent.keyDown(chart, { key: 'End' }); fireEvent.keyDown(chart, { key: 'ArrowRight' });
+  expect(within(screen.getByRole('tooltip')).getByText('1')).toBeVisible();
+  fireEvent.keyDown(chart, { key: 'Escape' }); expect(screen.queryByRole('tooltip')).toBeNull();
+  fireEvent.focus(chart);
+  rerender(<Context.Provider value={{ session, language: 'fr', refreshSession: async () => undefined }}><UsageOverview data={{ ...data, timeline: [{ hour: '<img src=x onerror=alert(1)>', events: 4, blocked: 1 }] }}/></Context.Provider>);
+  expect(screen.getByRole('tooltip')).toHaveTextContent('<img src=x onerror=alert(1)>');
+  expect(document.querySelector('img')).toBeNull();
+  fireEvent.blur(chart); expect(screen.queryByRole('tooltip')).toBeNull();
+});

@@ -18,7 +18,7 @@ const (
 	RoleMaintenance = "maintenance"
 	RoleMigrate     = "migrate"
 
-	runtimeSchemaVersion = 2026092801
+	runtimeSchemaVersion = 2026110301
 )
 
 func (c Config) ProcessRole() string {

@@ -200,7 +200,7 @@ fi
 fi
 `
 		p.postun = "systemctl daemon-reload >/dev/null 2>&1 || :\n"
-		return p, nil
+		return discoveryRPMFinalize(p, edition), nil
 	}
 	// Enterprise: system services own the device credential, the root collector
 	// the verified anchor and OS attribution; the model filter is confined by SELinux.
@@ -354,7 +354,7 @@ fi
 fi
 `
 	p.postun = "systemctl daemon-reload >/dev/null 2>&1 || :\n"
-	return p, nil
+	return discoveryRPMFinalize(p, edition), nil
 }
 
 // addInstallerPayloadFiles walks the extracted payload and adds each directory and regular

@@ -18,9 +18,16 @@ import (
 )
 
 type shadowFilter struct {
-	Where    string
-	Args     []any
-	Criteria map[string]any
+	// Event predicates can run before the device/person joins. Keeping the
+	// metadata search separate prevents one range scan per fleet member when
+	// planner statistics underestimate a join input.
+	EventWhere    string
+	JoinWhere     string
+	Where         string
+	Args          []any
+	Criteria      map[string]any
+	DeviceNameArg int
+	QueryNameArg  int
 	// The period is kept apart from Where because conversation grouping resolves
 	// a missing conversation identifier through correlation over the same window
 	// but deliberately ignores the other predicates: a kind=prompt filter would
@@ -120,43 +127,144 @@ func parseShadowFilter(q url.Values) (shadowFilter, error) {
 	f.From, f.To = from, to
 	f.Criteria["from"] = from.Format(time.RFC3339Nano)
 	f.Criteria["to"] = to.Format(time.RFC3339Nano)
+	regexFields, err := shadowRegexSelection(q)
+	if err != nil {
+		return f, err
+	}
+	if len(regexFields) > 0 {
+		selected := []string{}
+		for _, key := range shadowRegexFields {
+			if regexFields[key] {
+				selected = append(selected, key)
+			}
+		}
+		f.Criteria["regex"] = selected
+	}
 	columns := map[string]string{"actor_id": actorBucket, "device_id": "e.device_id::text", "tool": "e.tool", "provider": "e.provider", "model": "coalesce(nullif(e.model,''),'unknown')", "sensitivity": "e.sensitivity", "action": "e.action", "kind": "e.kind"}
 	for key, col := range columns {
-		out, err := shadowFilterValues(key, q[key])
+		var out []string
+		var err error
+		if regexFields[key] {
+			if key == "sensitivity" && Edition != "commercial" {
+				return f, apiError{409, "capability_unavailable", "Usage sensitivity requires the Enterprise edition."}
+			}
+			out, err = shadowRegexValues(q[key])
+		} else {
+			out, err = shadowFilterValues(key, q[key])
+		}
 		if err != nil {
 			return f, err
 		}
 		if len(out) > 0 {
-			add(col+" = ANY($%d::text[])", out)
+			if regexFields[key] {
+				add(col+" ~* ANY($%d::text[])", out)
+			} else if key == "device_id" {
+				add("e.device_id = ANY($%d::uuid[])", out)
+			} else {
+				add(col+" = ANY($%d::text[])", out)
+			}
 			f.Criteria[key] = out
 		}
 	}
-	// Whether the record carries attached file names. A plain predicate rather than a
-	// value list: the question is "are there any", and `files` is a jsonb array whose
-	// empty state is `[]`, not NULL, so an emptiness test is the only correct form.
-	//
-	// It applies per record, like every other filter here, which is what makes it
-	// behave the same way `kind` already does on the conversations listing: asking for
-	// attachments narrows a thread to the messages that carry one.
-	if attachment := q.Get("attachment"); attachment != "" {
-		if len(q["attachment"]) > 1 || !slices.Contains([]string{"yes", "no"}, attachment) {
+	if names := q["device_name"]; len(names) > 0 {
+		var values []string
+		var err error
+		if regexFields["device_name"] {
+			values, err = shadowRegexValues(names)
+		} else {
+			values, err = shadowFilterValues("device_name", names)
+		}
+		if err != nil {
+			return f, err
+		}
+		add("e.device_id = ANY($%d::uuid[])", []string{})
+		f.DeviceNameArg = len(f.Args)
+		f.Criteria["device_name"] = values
+	}
+	if attachment := q.Get("attachment"); attachment != "" && regexFields["attachment"] {
+		if len(q["attachment"]) != 1 {
 			return f, bad("Invalid attachment filter.")
 		}
-		if attachment == "yes" {
-			f.Where += " AND jsonb_array_length(e.files)>0"
-		} else {
-			f.Where += " AND jsonb_array_length(e.files)=0"
+		patterns, err := shadowRegexValues(q["attachment"])
+		if err != nil {
+			return f, err
 		}
+		add("(CASE WHEN jsonb_array_length(e.files)>0 THEN 'yes' ELSE 'no' END) ~* ANY($%d::text[])", patterns)
 		f.Criteria["attachment"] = attachment
+	} else {
+		// Whether the record carries attached file names. A plain predicate rather than a
+		// value list: the question is "are there any", and `files` is a jsonb array whose
+		// empty state is `[]`, not NULL, so an emptiness test is the only correct form.
+		//
+		// It applies per record, like every other filter here, which is what makes it
+		// behave the same way `kind` already does on the conversations listing: asking for
+		// attachments narrows a thread to the messages that carry one.
+		if attachment := q.Get("attachment"); attachment != "" {
+			if len(q["attachment"]) > 1 || !slices.Contains([]string{"yes", "no"}, attachment) {
+				return f, bad("Invalid attachment filter.")
+			}
+			if attachment == "yes" {
+				f.Where += " AND jsonb_array_length(e.files)>0"
+			} else {
+				f.Where += " AND jsonb_array_length(e.files)=0"
+			}
+			f.Criteria["attachment"] = attachment
+		}
 	}
+	if regexFields["dlp_rule"] || regexFields["dlp_mode"] || regexFields["dlp_consequence"] || regexFields["dlp_outcome"] {
+		if err := shadowRegexDLP(&f, q, regexFields); err != nil {
+			return f, err
+		}
+	} else {
+		dlpFilter := map[string]string{}
+		for _, key := range []string{"dlp_rule", "dlp_mode", "dlp_consequence", "dlp_outcome"} {
+			if value := q.Get(key); value != "" {
+				if len(q[key]) != 1 || len(value) > 100 {
+					return f, bad("Invalid DLP filter.")
+				}
+				field := map[string]string{"dlp_rule": "rule_id", "dlp_mode": "mode", "dlp_consequence": "consequence", "dlp_outcome": "outcome"}[key]
+				if key == "dlp_rule" && !dlpIdentifier(value) {
+					return f, bad("Invalid DLP rule ID.")
+				}
+				if key == "dlp_mode" && !slices.Contains([]string{"active", "simulation"}, value) {
+					return f, bad("Invalid DLP mode.")
+				}
+				if key == "dlp_consequence" && !slices.Contains([]string{"observe", "warn", "block", "mask", "replace"}, value) {
+					return f, bad("Invalid DLP consequence.")
+				}
+				if key == "dlp_outcome" && !slices.Contains([]string{"unavailable", "simulated", "blocked", "overridden", "prepared", "final_blocked", "observed", "cancelled", "observed_after_send", "matched"}, value) {
+					return f, bad("Invalid DLP outcome.")
+				}
+				dlpFilter[field] = value
+				f.Criteria[key] = value
+			}
+		}
+		if len(dlpFilter) > 0 {
+			f.Args = append(f.Args, dlpJSON([]map[string]string{dlpFilter}))
+			f.Where += fmt.Sprintf(` AND EXISTS(SELECT 1 FROM dlp_decisions dd WHERE dd.organization_id=e.organization_id AND dd.device_id=e.device_id AND dd.event_id=e.id AND dd.expires_at>now() AND dd.decisions @> $%d::jsonb)`, len(f.Args))
+		}
+	}
+	f.EventWhere, f.JoinWhere = f.Where, "TRUE"
 	query := q.Get("query")
 	if len(query) > 100 || len(q["query"]) > 1 {
 		return f, bad("Search is limited to one hundred characters.")
 	}
 	if query != "" {
+		if regexFields["query"] {
+			if err := validateShadowRegex(query); err != nil {
+				return f, err
+			}
+		}
 		f.Args = append(f.Args, query)
 		n := len(f.Args)
-		f.Where += fmt.Sprintf(" AND (e.provider ILIKE '%%'||$%d||'%%' OR e.tool ILIKE '%%'||$%d||'%%' OR e.model ILIKE '%%'||$%d||'%%' OR d.hostname ILIKE '%%'||$%d||'%%' OR c.alias ILIKE '%%'||$%d||'%%')", n, n, n, n, n)
+		searchWhere := fmt.Sprintf(" AND (e.provider ILIKE '%%'||$%d||'%%' OR e.tool ILIKE '%%'||$%d||'%%' OR e.model ILIKE '%%'||$%d||'%%' OR d.hostname ILIKE '%%'||$%d||'%%' OR c.alias ILIKE '%%'||$%d||'%%')", n, n, n, n, n)
+		if regexFields["query"] {
+			f.Args = append(f.Args, []string{})
+			f.QueryNameArg = len(f.Args)
+			searchWhere = shadowGlobalRegexWhere(n, f.QueryNameArg)
+		}
+		f.Where += searchWhere
+		f.JoinWhere += searchWhere
 		f.Criteria["query"] = query
 	}
 	return f, nil
@@ -183,7 +291,7 @@ const osAccountLimit = 500
 
 var osActorPattern = regexp.MustCompile(`^os:[0-9a-f]{64}$`)
 
-const shadowProjection = `e.id,e.kind,e.occurred_at,e.provider,e.source,e.tool,e.model,e.effort,e.session,e.conversation_id,e.correlation_id,e.url,e.action,e.platform_id,e.decision_reason,e.characters,e.labels,e.policy_revision,e.device_id,d.hostname,d.hostname_ciphertext,coalesce(e.collaborator_id::text,'unknown'),coalesce(c.alias,'Unattributed'),e.sensitivity,e.files,e."user",e.detector,e.catalog_revision,e.input_tokens,e.output_tokens,e.body_bytes,e.characters_known,EXISTS(SELECT 1 FROM shadow_content sc WHERE sc.organization_id=e.organization_id AND sc.device_id=e.device_id AND sc.event_id=e.id AND sc.expires_at>now()),` + actorBucket
+const shadowProjection = `e.id,e.kind,e.occurred_at,e.provider,e.source,e.tool,e.model,e.effort,e.session,e.conversation_id,e.correlation_id,e.url,e.action,e.platform_id,e.decision_reason,e.characters,e.labels,e.policy_revision,e.device_id,d.hostname,d.hostname_ciphertext,coalesce(e.collaborator_id::text,'unknown'),coalesce(c.alias,'Unattributed'),e.sensitivity,e.files,e."user",e.detector,e.catalog_revision,e.input_tokens,e.output_tokens,e.body_bytes,e.characters_known,EXISTS(SELECT 1 FROM shadow_content sc WHERE sc.organization_id=e.organization_id AND sc.device_id=e.device_id AND sc.event_id=e.id AND sc.expires_at>now()),` + actorBucket + `,` + dlpTraceProjection
 
 // A submission accompanied by a file leaves TWO records under the same correlation: the
 // file leaves for the provider as soon as it is attached, so it is recorded before the
@@ -247,7 +355,7 @@ func (v ShadowEventView) MarshalJSON() ([]byte, error) {
 // caller that selects extra columns after the projection appends its own
 // destinations to this slice rather than restating the thirty-odd of them.
 func shadowDest(v *ShadowEventView) []any {
-	return []any{&v.ID, &v.Kind, &v.OccurredAt, &v.Provider, &v.Source, &v.Tool, &v.Model, &v.Effort, &v.Session, &v.ConversationID, &v.CorrelationID, &v.URL, &v.Action, &v.PlatformID, &v.DecisionReason, &v.Characters, &v.Labels, &v.PolicyRevision, &v.DeviceID, &v.Hostname, &v.HostnameCiphertext, &v.ActorID, &v.ActorName, &v.Sensitivity, &v.Files, &v.User, &v.Detector, &v.CatalogRevision, &v.InputTokens, &v.OutputTokens, &v.BodyBytes, &v.CharactersKnown, &v.HasContent, &v.AuditSubject}
+	return []any{&v.ID, &v.Kind, &v.OccurredAt, &v.Provider, &v.Source, &v.Tool, &v.Model, &v.Effort, &v.Session, &v.ConversationID, &v.CorrelationID, &v.URL, &v.Action, &v.PlatformID, &v.DecisionReason, &v.Characters, &v.Labels, &v.PolicyRevision, &v.DeviceID, &v.Hostname, &v.HostnameCiphertext, &v.ActorID, &v.ActorName, &v.Sensitivity, &v.Files, &v.User, &v.Detector, &v.CatalogRevision, &v.InputTokens, &v.OutputTokens, &v.BodyBytes, &v.CharactersKnown, &v.HasContent, &v.AuditSubject, &v.DLP}
 }
 
 // finishShadow applies the edition rules every read path owes a scanned row.
@@ -298,7 +406,7 @@ func (a *App) shadowEvents(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s 
 	if e := requireIndividual(r); e != nil {
 		return e
 	}
-	f, e := parseShadowFilter(r.URL.Query())
+	f, e := a.requestShadowFilter(r, tx, s)
 	if e != nil {
 		return e
 	}
@@ -425,10 +533,17 @@ func (a *App) osAccountNames(r *http.Request, tx pgx.Tx, f shadowFilter) ([]byte
 	}
 	type bucket struct{ key, device, event, cipher string }
 	buckets := []bucket{}
-	order := ` ORDER BY e.occurred_at DESC,e.id DESC`
-	rows, e := tx.Query(r.Context(), `SELECT e.user_key,(array_agg(e.device_id::text`+order+`))[1],(array_agg(e.id::text`+order+`))[1],(array_agg(e."user"`+order+`))[1]`+
-		shadowJoins+` WHERE `+f.Where+` AND e.kind='prompt' AND e.collaborator_id IS NULL AND e.user_key<>'' AND e."user"<>'' AND NOT `+attachmentOnly("e")+
-		` GROUP BY 1 ORDER BY count(*) DESC,1 LIMIT `+strconv.Itoa(osAccountLimit), f.Args...)
+	// Select one complete representative row per account. Window counts avoid
+	// unbounded per-account arrays, and the event scope is read before fleet joins.
+	accountJoins := strings.Replace(shadowJoins, " FROM shadow_events e ", " FROM account_events e ", 1)
+	rows, e := tx.Query(r.Context(), `WITH account_events AS MATERIALIZED (
+      SELECT e.organization_id,e.user_key,e.device_id,e.id,e.occurred_at,e.provider,e.tool,e.model,e.collaborator_id,e."user"
+      FROM shadow_events e WHERE `+f.EventWhere+` AND e.kind='prompt' AND e.collaborator_id IS NULL AND e.user_key<>'' AND e."user"<>'' AND NOT `+attachmentOnly("e")+`
+    ), ranked AS (
+      SELECT e.user_key,e.device_id,e.id,e."user",
+      row_number() OVER(PARTITION BY e.user_key ORDER BY e.occurred_at DESC,e.id DESC,e.device_id DESC) recent,
+      count(*) OVER(PARTITION BY e.user_key) events`+accountJoins+` WHERE `+f.JoinWhere+`
+    ) SELECT user_key,device_id::text,id::text,"user" FROM ranked WHERE recent=1 ORDER BY events DESC,user_key LIMIT `+strconv.Itoa(osAccountLimit), f.Args...)
 	if e != nil {
 		return nil, 0, e
 	}
@@ -462,7 +577,7 @@ func (a *App) cartography(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *
 	if e := requireIndividual(r); e != nil {
 		return e
 	}
-	f, e := parseShadowFilter(r.URL.Query())
+	f, e := a.requestShadowFilter(r, tx, s)
 	if e != nil {
 		return e
 	}
@@ -491,12 +606,32 @@ func (a *App) cartography(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *
 	// every browser flow at "unknown" while the name was collected all along. The
 	// correlation the extension puts on one submission is what holds the two together.
 	namesArg, criteriaArg := "$"+strconv.Itoa(len(f.Args)+1), "$"+strconv.Itoa(len(f.Args)+2)
-	query := `WITH filtered AS (SELECT e.*,` + actorBucket + ` actor_bucket,coalesce(c.alias,` + namesArg + `::jsonb->>(` + actorBucket + `),` + osAliasSQL + `,'Unattributed') actor_name` + shadowJoins + ` WHERE ` + f.Where + ` AND NOT ` + attachmentOnly("e") + `), exchange AS (SELECT device_id,correlation_id,(array_agg(model ORDER BY occurred_at DESC,id DESC) FILTER (WHERE model<>''))[1] model FROM filtered WHERE correlation_id<>'' GROUP BY 1,2), flows AS (SELECT f.actor_bucket actor_id,f.actor_name,f.tool,f.provider,coalesce(nullif(f.model,''),nullif(xm.model,''),'unknown') model,count(*) count` + flowSensitive + `,count(*) FILTER(WHERE f.action='blocked') blocked FROM filtered f LEFT JOIN exchange xm ON xm.device_id=f.device_id AND xm.correlation_id=f.correlation_id WHERE f.kind='prompt' GROUP BY f.actor_bucket,f.actor_name,f.tool,f.provider,5), series AS (SELECT date_trunc('hour',occurred_at) at,count(*) requests FROM filtered WHERE kind='prompt' GROUP BY 1), capture AS (SELECT provider,count(*) FILTER(WHERE kind='navigation') navigations,count(*) FILTER(WHERE kind='prompt') requests,count(DISTINCT device_id) FILTER(WHERE kind='navigation') devices_seen,count(DISTINCT device_id) FILTER(WHERE kind='prompt') devices_reporting FROM filtered WHERE source='browser' GROUP BY provider) SELECT jsonb_build_object('totals',(SELECT jsonb_build_object('requests',count(*) FILTER(WHERE kind='prompt'),'responses',count(*) FILTER(WHERE kind='response'),'navigations',count(*) FILTER(WHERE kind='navigation'),'conversations',count(DISTINCT (device_id,conversation_id)) FILTER(WHERE conversation_id<>''),'actors',count(DISTINCT actor_bucket) FILTER(WHERE actor_bucket<>'unknown'),'tools',count(DISTINCT tool),'providers',count(DISTINCT provider),'models',count(DISTINCT model) FILTER(WHERE model<>'')` + totalSensitive + `,'blocked',count(*) FILTER(WHERE action='blocked')) FROM filtered),'flows',coalesce((SELECT jsonb_agg(x ORDER BY x.count DESC,x.actor_id,x.tool,x.provider,x.model) FROM flows x),'[]'::jsonb),'series',coalesce((SELECT jsonb_agg(x ORDER BY x.at) FROM series x),'[]'::jsonb),'capture',coalesce((SELECT jsonb_agg(x ORDER BY x.navigations DESC,x.provider) FROM capture x WHERE x.navigations>0),'[]'::jsonb),'unattributed',(SELECT count(*) FROM filtered WHERE collaborator_id IS NULL),'criteria',` + criteriaArg + `::jsonb)`
+	// Materialize the narrow event scope before joining fleet metadata. This
+	// preserves every filter while preventing repeated historical range scans.
+	mapJoins := strings.Replace(shadowJoins, " FROM shadow_events e ", " FROM cartography_events e ", 1)
+
+	projection := cartographyProjection
+	if f.QueryNameArg > 0 {
+		// Keep the default map's materialized rows narrow. Extra metadata is
+		// needed only for an explicitly requested global regular expression.
+		projection += ",e.effort,e.session,e.url,e.platform_id,e.decision_reason,e.labels,e.files"
+	}
+	query := `WITH cartography_events AS MATERIALIZED (SELECT ` + projection + `,e.organization_id,e.user_key FROM shadow_events e WHERE ` + f.EventWhere + ` AND NOT ` + attachmentOnly("e") + `), filtered AS (SELECT ` + projection + `,` + actorBucket + ` actor_bucket,coalesce(c.alias,` + namesArg + `::jsonb->>(` + actorBucket + `),` + osAliasSQL + `,'Unattributed') actor_name` + mapJoins + ` WHERE ` + f.JoinWhere + `), exchange AS (SELECT device_id,correlation_id,(array_agg(model ORDER BY occurred_at DESC,id DESC) FILTER (WHERE model<>''))[1] model FROM filtered WHERE correlation_id<>'' GROUP BY 1,2), flows AS (SELECT f.actor_bucket actor_id,f.actor_name,f.tool,f.provider,coalesce(nullif(f.model,''),nullif(xm.model,''),'unknown') model,count(*) count` + flowSensitive + `,count(*) FILTER(WHERE f.action='blocked') blocked FROM filtered f LEFT JOIN exchange xm ON xm.device_id=f.device_id AND xm.correlation_id=f.correlation_id WHERE f.kind='prompt' GROUP BY f.actor_bucket,f.actor_name,f.tool,f.provider,5 LIMIT 10001), series AS (SELECT date_trunc('hour',occurred_at) at,count(*) requests FROM filtered WHERE kind='prompt' GROUP BY 1), capture AS (SELECT provider,count(*) FILTER(WHERE kind='navigation') navigations,count(*) FILTER(WHERE kind='prompt') requests,count(DISTINCT device_id) FILTER(WHERE kind='navigation') devices_seen,count(DISTINCT device_id) FILTER(WHERE kind='prompt') devices_reporting FROM filtered WHERE source='browser' GROUP BY provider) SELECT CASE WHEN (SELECT count(*) FROM flows)>10000 THEN '{"read_overflow":true}'::jsonb ELSE jsonb_build_object('totals',(SELECT jsonb_build_object('requests',count(*) FILTER(WHERE kind='prompt'),'responses',count(*) FILTER(WHERE kind='response'),'navigations',count(*) FILTER(WHERE kind='navigation'),'conversations',count(DISTINCT (device_id,conversation_id)) FILTER(WHERE conversation_id<>''),'actors',count(DISTINCT actor_bucket) FILTER(WHERE actor_bucket<>'unknown'),'tools',count(DISTINCT tool),'providers',count(DISTINCT provider),'models',count(DISTINCT model) FILTER(WHERE model<>'')` + totalSensitive + `,'blocked',count(*) FILTER(WHERE action='blocked')) FROM filtered),'flows',coalesce((SELECT jsonb_agg(x ORDER BY x.count DESC,x.actor_id,x.tool,x.provider,x.model) FROM flows x),'[]'::jsonb),'series',coalesce((SELECT jsonb_agg(x ORDER BY x.at) FROM series x),'[]'::jsonb),'capture',coalesce((SELECT jsonb_agg(x ORDER BY x.navigations DESC,x.provider) FROM capture x WHERE x.navigations>0),'[]'::jsonb),'unattributed',(SELECT count(*) FROM filtered WHERE collaborator_id IS NULL),'criteria',` + criteriaArg + `::jsonb) END`
 	criteria, _ := json.Marshal(f.Criteria)
 	args := append(f.Args, names, criteria)
 	if e = tx.QueryRow(r.Context(), query, args...).Scan(&raw); e != nil {
 		return e
 	}
+	var guard struct {
+		Overflow bool `json:"read_overflow"`
+	}
+	if e = json.Unmarshal(raw, &guard); e != nil {
+		return e
+	}
+	if guard.Overflow || len(raw) > 16<<20 {
+		return apiError{413, "response_too_large", "Too much data was returned. Narrow the selected scope."}
+	}
+
 	if e = auditSubjectFilters(r, tx, "cartography", named); e != nil {
 		return e
 	}
@@ -506,6 +641,7 @@ func (a *App) cartography(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *
 	reply(w, 200, raw)
 	return nil
 }
+
 func csvSafe(s string) string {
 	formula := func(v string) bool {
 		return strings.HasPrefix(v, "=") || strings.HasPrefix(v, "+") || strings.HasPrefix(v, "-") || strings.HasPrefix(v, "@") || strings.HasPrefix(v, "\t") || strings.HasPrefix(v, "\r")
@@ -528,6 +664,7 @@ func writeShadowCSV(w http.ResponseWriter, items []ShadowEventView) {
 	if Edition != "commercial" {
 		header = slices.Delete(header, 9, 10)
 	}
+	header = append(header, "device_id", "dlp_fingerprint", "dlp_decisions", "dlp_delivery")
 	_ = cw.Write(header)
 	for _, v := range items {
 		characters := strconv.Itoa(v.Characters)
@@ -538,6 +675,13 @@ func writeShadowCSV(w http.ResponseWriter, items []ShadowEventView) {
 		if Edition != "commercial" {
 			row = slices.Delete(row, 9, 10)
 		}
+		fingerprint, decisions, delivery := "", "", ""
+		if v.DLP != nil {
+			fingerprint = v.DLP.Fingerprint
+			decisions = string(dlpJSON(v.DLP.Decisions))
+			delivery = v.DLP.Delivery
+		}
+		row = append(row, v.DeviceID, fingerprint, decisions, delivery)
 		for i := range row {
 			row[i] = csvSafe(row[i])
 		}
@@ -550,7 +694,7 @@ func (a *App) shadowExport(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s 
 	if e := requireIndividual(r); e != nil {
 		return e
 	}
-	f, e := parseShadowFilter(r.URL.Query())
+	f, e := a.requestShadowFilter(r, tx, s)
 	if e != nil {
 		return e
 	}

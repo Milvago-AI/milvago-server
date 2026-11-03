@@ -351,6 +351,7 @@ func (f *identityScenarioFixture) testSSOInvitations(t *testing.T, google func(m
 	p.mailsSucceed = true
 	p.mu.Unlock()
 	t.Cleanup(func() { p.mu.Lock(); p.mailsSucceed = false; p.mu.Unlock() })
+	f.testFailedDirectInvitationKeepsRecoverableLease(t)
 	invite := func(email string) (string, []string, bool) {
 		return f.inviteSSOUser(t, email)
 	}

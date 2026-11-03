@@ -76,9 +76,11 @@ export function DirectoryImportDialog({
       close={() => !(search.pending || importMutation.pending) && close()}
     >
       {imported && (
-        <Notice tone="success" role="status">
-          {t("memberImportedFromTheDirectory")}
-        </Notice>
+        <div className="dialog-body">
+          <Notice tone="success" role="status">
+            {t("memberImportedFromTheDirectory")}
+          </Notice>
+        </div>
       )}
       <form onSubmit={runSearch}>
         <label>

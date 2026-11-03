@@ -17,7 +17,7 @@ func modelSourceCatalog(rule string) []byte {
 }
 
 // A rule may read its prompt from one JSON form field and its model from a JSON request
-// header, mapped to canonical names (Gemini, measured on 2026-10-15). The server bounds
+// header, mapped to canonical names. The server bounds
 // these fields as the agent and the extension do, and omits them when empty: the agent
 // refuses unknown fields, so a catalogue that does not use them keeps its bytes.
 func TestDetectionNetworkModelSource(t *testing.T) {
@@ -26,8 +26,8 @@ func TestDetectionNetworkModelSource(t *testing.T) {
 		ok         bool
 	}{
 		{"absent", ``, true},
-		{"named", `,"form_field":"f.req","json_fields":["1"],"model_header":"x-synthetic-ext-jspb","model_map":{"0123456789abcdef":"synthetic-fast"}`, true},
-		{"form field with a space", `,"form_field":"f req"`, false},
+		{"named", `,"form_field":"msg.body","json_fields":["1"],"model_header":"x-synthetic-ext-jspb","model_map":{"0123456789abcdef":"synthetic-fast"}`, true},
+		{"form field with a space", `,"form_field":"msg body"`, false},
 		{"form field reaching the prototype", `,"form_field":"__proto__"`, false},
 		{"form field too long", `,"form_field":"` + strings.Repeat("f", 65) + `"`, false},
 		{"header in upper case", `,"model_header":"X-Synthetic"`, false},

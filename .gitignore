@@ -20,3 +20,11 @@ coverage/
 *.rpm
 
 .DS_Store
+
+# Generated from the shared DLP Rust source before Go/console builds.
+/server/internal/app/dlp_engine.wasm
+/console/public/dlp_engine.wasm
+/dlp-engine/target/
+/discovery-engine/target/
+/server/internal/app/discovery_engine.wasm
+/console/public/discovery_engine.wasm

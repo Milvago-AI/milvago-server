@@ -310,12 +310,19 @@ func TestInstallerRPMBuildArtifact(t *testing.T) {
 }
 
 func createInstallerRPMFixture(t *testing.T) (string, string) {
+	return createInstallerRPMFixtureWithPayload(t, nil)
+}
+
+func createInstallerRPMFixtureWithPayload(t *testing.T, prepare func(string)) (string, string) {
 	directory := t.TempDir()
 	staged := filepath.Join(directory, "fixture")
 	if err := os.Mkdir(staged, 0755); err != nil {
 		t.Fatal(err)
 	}
 	writeValidInstallerPayload(t, staged, Edition)
+	if prepare != nil {
+		prepare(staged)
+	}
 	source := filepath.Join(directory, "source.tar.gz")
 	file, err := os.Create(source)
 	if err != nil {

@@ -67,6 +67,7 @@ type testIdentity struct {
 	verified                                   bool
 	exchanges                                  int
 	acr                                        string
+	authTime                                   int64
 	// Fake identity-administration state (Keycloak admin REST API), guarded by mu
 	// since it is written both by the test goroutine and read by the server's
 	// request-handling goroutine.
@@ -356,7 +357,7 @@ func (p *testIdentity) serveRealmUpdate(w http.ResponseWriter, r *http.Request) 
 func (p *testIdentity) token(t *testing.T) string {
 	t.Helper()
 	header, _ := json.Marshal(map[string]string{"alg": "RS256", "kid": "test-key"})
-	claims, _ := json.Marshal(map[string]any{"iss": p.server.URL, "aud": p.audience, "sub": p.subject, "exp": p.expiry.Unix(), "iat": time.Now().Unix(), "nonce": p.nonce, "email": p.email, "email_verified": p.verified, "name": "Test account", "acr": p.acr})
+	claims, _ := json.Marshal(map[string]any{"iss": p.server.URL, "aud": p.audience, "sub": p.subject, "exp": p.expiry.Unix(), "iat": time.Now().Unix(), "nonce": p.nonce, "email": p.email, "email_verified": p.verified, "name": "Test account", "acr": p.acr, "auth_time": p.authTime})
 	data := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(claims)
 	digest := sha256.Sum256([]byte(data))
 	signature, e := rsa.SignPKCS1v15(rand.Reader, p.key, crypto.SHA256, digest[:])

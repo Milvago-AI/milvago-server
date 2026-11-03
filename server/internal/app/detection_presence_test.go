@@ -89,6 +89,33 @@ func TestKnownPlatformsSurviveEditionNarrowing(t *testing.T) {
 	}
 }
 
+// Community captures conversations on ChatGPT and Claude only. Every other assistant of
+// the built-in catalogue is named for presence alone: reached, reported, nothing read.
+func TestBuiltinCatalogCapturesOnlyChatGPTAndClaude(t *testing.T) {
+	c, e := decodeDetection(detectionFactory)
+	if e != nil {
+		t.Fatal(e)
+	}
+	ids := []string{}
+	for _, p := range c.Providers {
+		ids = append(ids, p.ID)
+	}
+	if strings.Join(ids, " ") != "chatgpt claude" {
+		t.Fatalf("the built-in catalogue captures %v", ids)
+	}
+	named := map[string]bool{}
+	for _, k := range c.KnownPlatforms {
+		for _, d := range k.Domains {
+			named[d] = true
+		}
+	}
+	for _, d := range []string{"gemini.google.com", "perplexity.ai", "notebook.google.com", "notebooklm.google.com", "chat.mistral.ai", "copilot.microsoft.com", "chat.deepseek.com", "grok.com"} {
+		if !named[d] {
+			t.Errorf("a visit to %s is no longer reported", d)
+		}
+	}
+}
+
 // A presence record says the host was reached, and the guarantee that it says nothing
 // else belongs to the server. The endpoint is meant to send nothing more, but a modified
 // extension that attached an address, a prompt or a conversation identifier must not
@@ -222,8 +249,8 @@ func TestPresenceAuthorizationAgainstTheStoredCatalogue(t *testing.T) {
 	ctx := context.Background()
 	content := factoryWithPlatforms(t,
 		DetectionKnownPlatform{ID: "aggregator", Label: "Aggregator", Domains: []string{"aggregator.example.invalid"}},
-		// Also a covered provider of the Enterprise factory catalogue: the same document
-		// serves both editions, and precedence settles it at consumption.
+		// A host a published catalogue may also name as a provider: precedence settles it
+		// at consumption.
 		DetectionKnownPlatform{ID: "gemini-presence", Label: "Gemini", Domains: []string{"gemini.google.com"}})
 	if e := validateDetection(content); e != nil {
 		t.Fatal(e)
@@ -279,14 +306,7 @@ func TestPresenceAuthorizationAgainstTheStoredCatalogue(t *testing.T) {
 
 func assertCoveredProviderPrecedence(t *testing.T, v *V2Event) {
 	t.Helper()
-	if Edition == "commercial" {
-		// Covered here: the record keeps what capture gathered, and is not reduced.
-		if v.Provider != "gemini.google.com" || v.URL == "" {
-			t.Fatalf("a covered provider was reduced to presence: %+v", v)
-		}
-		return
-	}
-	// Not covered in this edition, so the presence entry applies and reduces it.
+	// Not captured in this edition, so the presence entry applies and reduces it.
 	if v.Provider != "gemini.google.com" || v.URL != "" || v.Characters != 0 {
 		t.Fatalf("presence not applied where the provider is absent: %+v", v)
 	}
@@ -375,12 +395,12 @@ func TestKnownPlatformInventoryListsTheCatalogueNotTheVisits(t *testing.T) {
 	if len(body.Platforms) == 0 {
 		t.Fatal("the factory catalogue names no platform")
 	}
-	// The seven this catalogue names AND Enterprise captures in full. Community covers
-	// neither of them -- they are exactly what presence was asked for there.
-	capturedByEnterprise := map[string]bool{"gemini": true, "copilot": true, "lechat": true, "deepseek": true, "perplexity": true, "grok": true, "notebooklm": true}
+	// Assistants this catalogue names and Community does not capture: presence is how a
+	// visit to them is reported, so Discovery must offer them.
+	presenceOnly := map[string]bool{"gemini": true, "copilot": true, "lechat": true, "deepseek": true, "perplexity": true, "grok": true, "notebooklm": true}
 	var fireflies, aistudio, shared, offered int
 	for _, item := range body.Platforms {
-		if capturedByEnterprise[item.ID] {
+		if presenceOnly[item.ID] {
 			offered++
 		}
 		switch item.ID {
@@ -407,12 +427,8 @@ func TestKnownPlatformInventoryListsTheCatalogueNotTheVisits(t *testing.T) {
 	}
 	// A platform this edition captures in full can never reach Discovery, so the screen
 	// does not offer a switch that would decide nothing (product decision, 2026-09-16).
-	want := len(capturedByEnterprise)
-	if Edition == "commercial" {
-		want = 0
-	}
-	if offered != want {
-		t.Fatalf("edition %q offers %d of the seven Enterprise-captured platforms, expected %d", Edition, offered, want)
+	if offered != len(presenceOnly) {
+		t.Fatalf("Discovery offers %d of the %d presence-only platforms", offered, len(presenceOnly))
 	}
 }
 
@@ -421,9 +437,8 @@ func TestKnownPlatformInventoryListsTheCatalogueNotTheVisits(t *testing.T) {
 // the screen -- the candidate domains and the platforms reached. Product decision,
 // 2026-09-16.
 //
-// The assertion is edition-sensitive on purpose: chatgpt is covered by both editions,
-// gemini only by Enterprise, and Community is precisely where presence was asked for.
-// A test that only checked chatgpt would pass just as well with the narrowing removed.
+// chatgpt is captured, gemini is not and must still be reported: a test that only checked
+// chatgpt would pass just as well with the narrowing removed.
 func TestDiscoveryHidesWhatTheEditionAlreadyCaptures(t *testing.T) {
 	p := newProjectionFixture(t)
 	ctx := context.Background()
@@ -460,11 +475,10 @@ func TestDiscoveryHidesWhatTheEditionAlreadyCaptures(t *testing.T) {
 	for _, key := range []string{"candidate:chatgpt.com", "platform:chatgpt.com"} {
 		assertDiscoveryNamed(t, named, key, false)
 	}
-	// Covered only by Enterprise. Community is where the presence path applies, so it
-	// must still be reported there -- filtering it in both editions would be the same
-	// bug in the other direction.
+	// Not captured: the presence path applies, so it must still be reported -- filtering
+	// it would be the same bug in the other direction.
 	for _, key := range []string{"candidate:gemini.google.com", "platform:gemini.google.com"} {
-		assertDiscoveryNamed(t, named, key, Edition != "commercial")
+		assertDiscoveryNamed(t, named, key, true)
 	}
 	// The guard against a filter that hides everything: an uncovered platform survives.
 	for _, key := range []string{"candidate:mammouth.ai", "platform:mammouth.ai"} {

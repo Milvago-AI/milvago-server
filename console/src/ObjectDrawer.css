@@ -1,0 +1,12 @@
+.dialog.drawer[open]:has(>.object-drawer){display:flex;flex-direction:column;width:min(680px,100vw);max-width:100vw;height:100dvh;max-height:100dvh;overflow:hidden}
+.dialog.drawer[open]:has(.dlp-rule-form){width:min(1180px,100vw)}
+.dialog.drawer:has(>.object-drawer)>.dialog-heading{flex:none;z-index:2}
+.dialog.drawer>.object-drawer{padding:0}
+.object-drawer{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
+.object-drawer-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:10px;flex:none;padding:18px 24px;border-top:1px solid var(--border);background:var(--surface)}
+.object-drawer-actions>.danger{margin-inline-end:auto}
+.object-drawer-skeleton{padding:28px;display:grid;align-content:start;gap:22px}
+.object-drawer-skeleton span{display:block;height:42px;border-radius:var(--radius-m);background:linear-gradient(100deg,var(--border),var(--surface),var(--border));background-size:200% 100%;animation:object-loading var(--mv-dur-slow) var(--mv-ease-in-out) infinite}
+.object-drawer-skeleton span:last-child{height:240px}
+@keyframes object-loading{to{background-position:-200% 0}}
+@media(prefers-reduced-motion:reduce){.object-drawer-skeleton span{animation:none}}

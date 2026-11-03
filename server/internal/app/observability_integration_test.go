@@ -62,6 +62,7 @@ func newObservabilityFixture(t *testing.T) *observabilityFixture {
 	if e != nil {
 		t.Fatal(e)
 	}
+	t.Cleanup(a.CloseDiscovery)
 	f := &observabilityFixture{a: a, admin: admin, csrf: randomToken()}
 	if e = admin.QueryRow(ctx, "SELECT id FROM organizations LIMIT 1").Scan(&f.org); e != nil {
 		t.Fatal(e)

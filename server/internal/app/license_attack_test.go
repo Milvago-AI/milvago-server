@@ -27,6 +27,7 @@ func TestLicenseGateFollowsTheMux(t *testing.T) {
 		"GET /api/roles/{name}/members", "PUT /api/roles/{name}", "GET /api/shadow/events/{id}",
 		"GET /auth/login", "GET /auth/callback", "GET /auth/device", "POST /auth/device", "POST /v1/enroll",
 		"GET /v2/update/artifact/{sha256}", "POST /v2/install", "GET /v3/policy", "GET /ext/milvago.crx",
+		"GET /v4/policy", "POST /v4/dlp/enforcement",
 		"POST " + mcpPath, "GET /.well-known/oauth-protected-resource", "/api/", "/v1/", "/v2/", "/",
 	} {
 		mux.HandleFunc(p, ok)
@@ -75,6 +76,10 @@ func TestLicenseGateFollowsTheMux(t *testing.T) {
 		{"POST", "/v1/enroll", true},
 		{"POST", "/v2/install", true},
 		{"GET", "/v3/policy", true},
+		{"GET", "/v4/policy", true},
+		{"HEAD", "/v4/policy", true},
+		{"GET", "/%764/policy", true},
+		{"POST", "/v4/dlp/enforcement", true},
 		{"GET", "/ext/milvago.crx", true},
 		{"POST", mcpPath, true},
 		{"GET", "/api", true},

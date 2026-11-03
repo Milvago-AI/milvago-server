@@ -244,14 +244,14 @@ func (state *publisherSnapshotState) publisherAddHealth(ctx context.Context, tx 
 	known, counts, dayEnd := state.known, state.counts, state.dayEnd
 	var e error
 	data, e := tx.Query(ctx, `SELECT c->>'provider',(payload->>'catalog_revision')::bigint,
- count(DISTINCT device_id) FILTER(WHERE (payload->>'window_end')::timestamptz >= $3 AND coalesce((c->>'navigations')::bigint,0)>0),
- coalesce(sum((c->>'prompts_network')::bigint) FILTER(WHERE (payload->>'window_end')::timestamptz >= $3),0),
- coalesce(sum((c->>'prompts_dom')::bigint) FILTER(WHERE (payload->>'window_end')::timestamptz >= $3),0),
- coalesce(sum((c->>'navigations')::bigint) FILTER(WHERE (payload->>'window_end')::timestamptz >= $3),0),
- coalesce(sum((c->>'prompts_network')::bigint+(c->>'prompts_dom')::bigint) FILTER(WHERE (payload->>'window_end')::timestamptz < $3),0)
+ count(DISTINCT device_id) FILTER(WHERE window_end >= $3 AND coalesce((c->>'navigations')::bigint,0)>0),
+ coalesce(sum((c->>'prompts_network')::bigint) FILTER(WHERE window_end >= $3),0),
+ coalesce(sum((c->>'prompts_dom')::bigint) FILTER(WHERE window_end >= $3),0),
+ coalesce(sum((c->>'navigations')::bigint) FILTER(WHERE window_end >= $3),0),
+ coalesce(sum((c->>'prompts_network')::bigint+(c->>'prompts_dom')::bigint) FILTER(WHERE window_end < $3),0)
  FROM detector_health CROSS JOIN LATERAL jsonb_array_elements(payload->'providers') c
- WHERE (payload->>'window_end')::timestamptz < $1 AND (payload->>'window_end')::timestamptz >= $4
- AND (payload->>'window_start')::timestamptz >= $2
+ WHERE window_end < $1 AND window_end >= $4
+ AND window_start >= $2
  GROUP BY c->>'provider',(payload->>'catalog_revision')::bigint`, dayEnd, since, dayEnd.Add(-24*time.Hour), dayEnd.Add(-8*24*time.Hour))
 	if e != nil {
 		return e

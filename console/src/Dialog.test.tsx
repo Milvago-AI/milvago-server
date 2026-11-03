@@ -59,6 +59,19 @@ it('still closes from its own button', () => {
   expect(close).toHaveBeenCalledTimes(1);
 });
 
+it('keeps Escape inside the modal without suppressing native cancellation', () => {
+  const parent = vi.fn((event: React.KeyboardEvent) => event.preventDefault());
+  const close = vi.fn();
+  render(<Context.Provider value={{ session, language: 'en', refreshSession: async () => {} }}><div onKeyDown={parent}><Dialog title="Nested picker" close={close}><button type="button">Picker control</button></Dialog></div></Context.Provider>);
+  const button = screen.getByRole('button', { name: 'Picker control', hidden: true });
+  expect(fireEvent.keyDown(button, { key: 'Escape', bubbles: true, cancelable: true })).toBe(true);
+  expect(parent).not.toHaveBeenCalled();
+  fireEvent(screen.getByRole('dialog', { hidden: true }), new Event('cancel', { cancelable: true }));
+  expect(close).toHaveBeenCalledTimes(1);
+  fireEvent.keyDown(button, { key: 'ArrowDown', bubbles: true });
+  expect(parent).toHaveBeenCalledTimes(1);
+});
+
 it('stays open when the click lands in a dialog nested inside it', () => {
   // The message detail is a drawer rendered inside the conversation dialog: a click on
   // its buttons bubbles up here, outside the conversation's box, and closed it too.

@@ -1,0 +1,31 @@
+Milvago discovery engine
+Copyright (c) 2026 Milvago AI, LLC
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+The OpenClaw HTTP recognition condition in catalog/factory.json is a reviewed
+adaptation of the OpenClaw probe in Julius by Praetorian, revision eb45b89:
+https://github.com/praetorian-inc/julius/blob/eb45b89/probes/openclaw.yaml
+Julius is licensed under Apache-2.0. This adaptation retains the OpenClaw title
+and custom-element conditions, with bounded Milvago evaluation and provenance.
+The Julius scanner is not embedded. No endorsement by Praetorian is implied.
+
+The Hermes HTTP health fingerprint is adapted from the Apache-2.0 Julius
+contribution ed26a485 (pull request 151), reviewed against public Hermes API
+metadata. This contribution is distinct from the upstream revision above:
+https://github.com/praetorian-inc/julius/pull/151
+Milvago uses public health routes only, without inference or authentication.
+
+Additional reviewed HTTP conditions are adapted from Julius revision eb45b89:
+probes/openwebui.yaml, librechat.yaml, langflow.yaml, ragflow.yaml,
+sillytavern.yaml, lobehub.yaml, dify.yaml, aphrodite-engine.yaml,
+lm-studio.yaml, onyx.yaml and jan.yaml (all under probes/).
+https://github.com/praetorian-inc/julius/tree/eb45b89/probes
+Per-file SHA-256 digests and adaptations are recorded in
+tests/fixtures/julius-http.json. Multi-response require-all conditions remain
+conjunctive on one endpoint and scan. Health/error status and LM Studio greeting
+checks are strengthened where documented. LobeHub uses its manifest alternative
+only; LM Studio uses its greeting only. Model enumeration, inference, credentials,
+workflow data and Augustus configuration are not imported.
+
+Direct dependencies: regex 1.13.1, serde 1.0.229, serde_json 1.0.151
+(each MIT OR Apache-2.0). Transitive versions are pinned in Cargo.lock.

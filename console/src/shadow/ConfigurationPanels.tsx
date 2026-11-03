@@ -1,3 +1,4 @@
+import { useDeploymentPage } from './DeploymentPager';
 import { useContext } from 'react';
 import { UpdateStatus } from './UpdateStatus';
 import { Badge, Context, Empty, Icon, Notice, ResourceView, useResource, useText } from '../ui';
@@ -63,7 +64,7 @@ function EnterpriseServicesOffer() {
 }
 
 export function ServicesPanel({ config, update, capabilities, modelCatalog }: ServicesPanelProps) {
-  const t = useText(); const names: Record<string, string> = { chatgpt: 'ChatGPT', claude: 'Claude', lechat: 'Le Chat', copilot: 'Copilot', gemini: 'Gemini', notebooklm: 'NotebookLM', deepseek: 'DeepSeek', perplexity: 'Perplexity', grok: 'Grok' };
+  const t = useText(); const names: Record<string, string> = { chatgpt: 'ChatGPT', claude: 'Claude' };
   return <><ConfigBlock section="services" title={t("coveredServices")} description={t("theCatalogAndAllowedDomainsCome")}><div className="service-list">{config.services.map(service => <div className="service-card" key={service.id}><div className="service-card-heading"><Toggle label={names[service.id] ?? service.id} checked={service.enabled} change={enabled => update('services', config.services.map(item => item.id === service.id ? { ...item, enabled } : item))} /><span className="mono">{service.domains.join(', ')}</span></div><Mode label={t("behavior")} value={service.mode} redirect change={mode => update('services', config.services.map(item => item.id === service.id ? { ...item, mode: mode as typeof service.mode } : item))} />{service.mode === 'redirect' && <label>{t("redirectDestination")}<input required type="url" maxLength={2000} value={service.redirect_url} placeholder="https://ai.example.org" onChange={e => update('services', config.services.map(item => item.id === service.id ? { ...item, redirect_url: e.target.value } : item))} /></label>}</div>)}</div><EnterpriseServicesOffer /></ConfigBlock>{(capabilities.model_access_browser || capabilities.model_access_native) && <ModelAccessPanel config={config} update={update} capabilities={capabilities} modelCatalog={modelCatalog} />}</>;
 }
 
@@ -97,7 +98,7 @@ export function PrivacyPanel({ config, update, capabilities }: PrivacyPanelProps
 }
 
 export function ClassificationPanel({ config, update }: SettingsPanelProps) {
-  const t = useText(); const allowed = [...pii, 'source_code', 'medical', 'keyword']; const hints: Record<string, string> = { keyword: t("keywordsAreDefinedUnder03Protections"), medical: t("triggeredByTheTermsListedIn") };
+  const t = useText(); const allowed = [...pii, 'source_code', 'medical']; const hints: Record<string, string> = { medical: t("triggeredByTheTermsListedIn") };
   return <><ConfigBlock section="classification" title={t("browserUsageSensitivity")} description={t("decidesWhichDetectedCategoriesMarkAn")}><Categories allowed={allowed} hints={hints} values={config.classification.browser} change={browser => update('classification', { ...config.classification, browser })} /></ConfigBlock><ConfigBlock section="classification" title={t("localApplicationSensitivity")}><Categories allowed={allowed} hints={hints} values={config.classification.coding} change={coding => update('classification', { ...config.classification, coding })} /></ConfigBlock><ConfigBlock section="classification" title={t("medicalTerms")} description={t("aTextContainingOneOfThese")}><Lines label={t("triggerTerms")} values={config.classification.medical_terms ?? []} change={medical_terms => update('classification', { ...config.classification, medical_terms })} help={t("oneTermPerLineAtMost")} /></ConfigBlock></>;
 }
 
@@ -108,7 +109,8 @@ export function OperationsPanel({ config, update, capabilities }: PrivacyPanelPr
 const modelId = /^[a-zA-Z0-9][a-zA-Z0-9._:/+-]{0,199}$/;
 function ModelAccessPanel({ config, update, capabilities, modelCatalog }: ModelAccessPanelProps) {
   const t = useText(); const access = config.model_access ?? [];
-  const status = useResource<{ items: ModelAccessStatus[]; counts?: ModelAccessCount[] }>('/api/model-access/status');
+  const { after, pager } = useDeploymentPage();
+  const status = useResource<{ items: ModelAccessStatus[]; counts?: ModelAccessCount[]; next?: string }>('/api/model-access/status' + (after ? '?after=' + encodeURIComponent(after) : ''));
   const catalog = modelCatalog.filter(item => item.channel === 'browser' || capabilities.model_access_native);
   function replace(next: typeof access[number]) {
     update('model_access', [...access.filter(item => item.platform_id !== next.platform_id || item.channel !== next.channel), next]);
@@ -135,7 +137,8 @@ function ModelAccessPanel({ config, update, capabilities, modelCatalog }: ModelA
     <section className="model-status"><h3>{t("appliedDeviceStatus")}</h3><p>{t("savedRulesRemainDistinctFromRevisions")}</p>
     <ResourceView resource={status}>{data => {
       if (data.counts?.length) return <div className="table-scroll"><table><thead><tr><th>{t("platform")}</th><th>{t("status")}</th><th>{t("devices")}</th></tr></thead><tbody>{data.counts.map(item => <tr key={`${item.platform_id}:${item.channel}:${item.status}`}><td>{item.platform_id}<span className="cell-detail">{item.channel}</span></td><td><Badge tone={modelStatusTone(item.status)}>{modelStatusLabel(item.status, t)}</Badge></td><td>{item.devices}</td></tr>)}</tbody></table></div>;
-      if (data.items.length) return <div className="table-scroll"><table><thead><tr><th>{t("device")}</th><th>{t("platform")}</th><th>{t("status")}</th><th>{t("revision")}</th><th>{t("reason")}</th></tr></thead><tbody>{data.items.map(item => <tr key={`${item.device_id}:${item.platform_id}:${item.channel}`}><td><strong>{item.hostname || t("machineNameUnavailable")}</strong><span className="cell-detail mono">{item.device_id}</span><span className="cell-detail">{item.version}</span></td><td>{item.platform_id}<span className="cell-detail">{item.channel}</span></td><td><Badge tone={modelStatusTone(item.status)}>{modelStatusLabel(item.status, t)}</Badge></td><td>{item.applied_revision} / {item.expected_revision}</td><td>{item.reason || '—'}</td></tr>)}</tbody></table></div>;
+      if (!data.items.length && (data.next || after)) return <><Empty title={t('dataModelStatusPageEmpty')} />{pager(data.next)}</>;
+      if (data.items.length || data.next || after) return <><div className="table-scroll"><table><thead><tr><th>{t("device")}</th><th>{t("platform")}</th><th>{t("status")}</th><th>{t("revision")}</th><th>{t("reason")}</th></tr></thead><tbody>{data.items.map(item => <tr key={`${item.device_id}:${item.platform_id}:${item.channel}`}><td><strong>{item.hostname || t("machineNameUnavailable")}</strong><span className="cell-detail mono">{item.device_id}</span><span className="cell-detail">{item.version}</span></td><td>{item.platform_id}<span className="cell-detail">{item.channel}</span></td><td><Badge tone={modelStatusTone(item.status)}>{modelStatusLabel(item.status, t)}</Badge></td><td>{item.applied_revision} / {item.expected_revision}</td><td>{item.reason || '—'}</td></tr>)}</tbody></table></div>{pager(data.next)}</>;
       return <Empty title={t("noModelStatusReported")} />;
     }}</ResourceView>
     </section>

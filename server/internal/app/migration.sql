@@ -70,12 +70,21 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS identity_expires_at timestamptz NOT NULL DEFAULT now();
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS oidc_nonce text NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS login_trusted_until timestamptz;
+-- Like sessions, these account-bound credentials are resolved before tenant authorization.
+CREATE TABLE IF NOT EXISTS trusted_login_devices (
+ token_hash bytea PRIMARY KEY, user_id uuid NOT NULL REFERENCES users ON DELETE CASCADE,
+ realm text NOT NULL, credential_hash bytea NOT NULL, expires_at timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS trusted_login_devices_expiry ON trusted_login_devices(expires_at);
 CREATE TABLE IF NOT EXISTS login_attempts (
  state_hash bytea PRIMARY KEY, binding_hash bytea NOT NULL, verifier text NOT NULL, nonce text NOT NULL, expires_at timestamptz NOT NULL
 );
 ALTER TABLE login_attempts ADD COLUMN IF NOT EXISTS step_up boolean NOT NULL DEFAULT false;
 -- The realm the sign-in was started in, empty for the root one.
 ALTER TABLE login_attempts ADD COLUMN IF NOT EXISTS realm text NOT NULL DEFAULT '';
+ALTER TABLE login_attempts ADD COLUMN IF NOT EXISTS allow_trusted_device boolean NOT NULL DEFAULT false;
+ALTER TABLE login_attempts ADD COLUMN IF NOT EXISTS remember_device boolean NOT NULL DEFAULT false;
 -- First-run setup wizard (setup.go): short sessions opened by the setup token.
 -- Instance-level, like login_attempts: no organization owns them yet.
 CREATE TABLE IF NOT EXISTS setup_sessions (

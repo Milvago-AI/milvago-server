@@ -137,9 +137,9 @@ func (fixture detectorHealthFixture) assertVerdicts(t *testing.T, ctx context.Co
 	}
 	// A provider only captured by the DOM has no network rule in force.
 	for _, device := range fixture.devices {
-		fixture.batch(t, ctx, detectorHealthBatch{device, 8, 30 * time.Minute, "gemini", 4, 0, 6})
+		fixture.batch(t, ctx, detectorHealthBatch{device, 8, 30 * time.Minute, "synthetic-dom", 4, 0, 6})
 	}
-	if detectorHealthState(t, fixture.report(t, ctx), "gemini", 8) != "dom_only" {
+	if detectorHealthState(t, fixture.report(t, ctx), "synthetic-dom", 8) != "dom_only" {
 		t.Fatal("dom-only capture must be named")
 	}
 	// Visited, nothing captured now, captured last week: suspect.

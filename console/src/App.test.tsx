@@ -31,9 +31,7 @@ beforeEach(() => {
   Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value() { this.removeAttribute('open'); } });
 });
 describe('Console workflows', () => {
-  it('renders dark whatever the system setting says and prioritizes the shared theme cookie', async () => {
-    // Dark is the brand's default rendering: a system preference for light must
-    // not override it (charte graphique v2.0).
+  it('follows the system without persisting it and prioritizes the shared theme cookie', async () => {
     vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: false }));
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(reply({ error: 'unauthorized' }, 401));
     const first = render(<App />);
@@ -43,7 +41,7 @@ describe('Console workflows', () => {
     document.cookie = 'milvago_theme=light;Path=/;SameSite=Lax';
     render(<App />);
     expect(document.documentElement.dataset.theme).toBe('light');
-    expect(localStorage.getItem('milvago.theme')).toBe('light');
+    expect(localStorage.getItem('milvago.theme')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Activer le thème sombre' }));
     expect(document.cookie).toContain('milvago_theme=dark');
   });
@@ -272,6 +270,18 @@ describe('Console workflows', () => {
     fireEvent.submit(form);
     expect(assign).toHaveBeenLastCalledWith('/auth/login?lang=fr&login_hint=jdoe');
     vi.unstubAllGlobals();
+  });
+  it('leaves device trust to the second-factor page', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(reply({ error: 'unauthorized' }, 401));
+    const assign = vi.fn();
+    vi.stubGlobal('location', { ...window.location, assign });
+    render(<App />);
+    const user = userEvent.setup();
+    await user.type(await screen.findByRole('textbox', { name: 'E-mail ou identifiant' }), 'reader@example.test');
+    expect(screen.queryByRole('button', { name: 'Faire confiance à mon appareil pour 6 mois' })).not.toBeInTheDocument();
+    expect(document.querySelector('[name="trust_device"]')).toBeNull();
+    await user.click(screen.getByRole('button', { name: /Se connecter/ }));
+    expect(assign).toHaveBeenLastCalledWith('/auth/login?lang=fr&login_hint=reader%40example.test');
   });
   it('prefills the demo sign-in name only on a read-only demo instance', async () => {
     serve({ '/api/bootstrap': { edition: 'commercial', demo_read_only: true } }, url => url === '/api/session' ? reply({ error: 'unauthorized' }, 401) : undefined);
@@ -515,49 +525,38 @@ describe('Console workflows', () => {
     render(<App />);
     expect(await screen.findByText('Aucune extension signalée')).toBeInTheDocument();
   });
-  it('groups AI applications by organization and never presents a presence as a use', async () => {
+  it('groups Community discovery observations without presenting installation as execution', async () => {
     window.location.hash = '#applications';
-    const observed = new Date(Date.now() - 3600_000).toISOString();
-    const first = new Date(Date.now() - 30 * 86400_000).toISOString();
-    serve({ '/api/tools': {
-      items: [
-        { device_id: 'd1', hostname: 'Poste alpha', tool: 'ollama', kind: 'port', observed_at: observed, first_seen: first },
-        { device_id: 'd2', hostname: 'Poste beta', tool: 'ollama', kind: 'process', observed_at: observed, first_seen: observed },
-        { device_id: 'd1', hostname: 'Poste alpha', tool: 'cursor', kind: 'installed', observed_at: observed, first_seen: observed },
-      ],
-      catalog: [
-        { id: 'ollama', name: 'Ollama', vendor: 'Ollama', category: 'inference', hosting: 'local', risk: 'medium' },
-        { id: 'cursor', name: 'Cursor', vendor: 'Anysphere', category: 'editor', hosting: 'cloud', risk: 'high' },
-      ],
-    } }, (url) => url === '/api/session' ? reply({ ...session, edition: 'commercial' }) : undefined);
+    serve({
+      '/api/discovery/catalog': {revision:1,signatures:[{id:'ollama.process',application_id:'ollama',name:'Ollama'}]},
+      '/api/discovery/inventory?limit=50': {total:1,items:[{family:'application',observations:1,name:'Ollama',vendor:'',type:'software',status:'review',last_seen:new Date().toISOString(),id:'ollama',states:['installed','executed'],devices:2,review:'review'}],next_cursor:''},
+    }, url => url === '/api/session' ? reply({...session,permissions:[...adminPermissions,'discovery.read']}) : undefined);
     render(<App />);
-    await screen.findAllByText('Ollama');
-    // The vendor is also called Ollama, so the row is found by the identifier cell.
-    const row = screen.getByText('ollama').closest('tr')!;
-    // Two devices, two recognition surfaces, and the earliest sighting of either.
+    const application=await screen.findByRole('button',{name:'Ollama'});
+    const row=application.closest('tr')!;
     expect(within(row).getByText('2')).toBeInTheDocument();
-    expect(within(row).getByText(/Service local à l’écoute/)).toBeInTheDocument();
-    expect(within(row).getByText(/Processus en cours/)).toBeInTheDocument();
-    expect(screen.getByText(/Une présence détectée n’établit ni un usage, ni un envoi/)).toBeInTheDocument();
+    expect(within(row).getByText(/Installé, Exécution observée/)).toBeInTheDocument();
+    expect(within(row).getByText('À examiner')).toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'Environnements'})).toBeInTheDocument();
   });
-  // The cell used to show three names then "and N more", and each
-  // machine had to be reopened to find out which. The whole list is already in the payload.
-  it('lists every device an AI application was found on, from the cell itself', async () => {
-    window.location.hash = '#applications';
-    const observed = new Date(Date.now() - 3600_000).toISOString();
-    const devices = ['alpha', 'beta', 'gamma', 'delta', 'epsilon'];
-    serve({ '/api/tools': {
-      items: devices.map((name, index) => ({ device_id: `1111111${index}-1111-4111-8111-111111111111`, hostname: `Poste ${name}`, tool: 'ollama', kind: 'process', observed_at: observed, first_seen: observed })),
-      catalog: [{ id: 'ollama', name: 'Ollama', vendor: 'Ollama', category: 'inference', hosting: 'local', risk: 'medium' }],
-    } }, (url) => url === '/api/session' ? reply({ ...session, edition: 'commercial' }) : undefined);
-    render(<App />); const user = userEvent.setup();
-    await screen.findAllByText('Ollama');
-    const cell = screen.getByRole('button', { name: /et 2 autres/ });
-    await user.click(cell);
-    const dialog = await screen.findByRole('dialog');
-    // All five, not the three from the cell, and each one leads to its own page.
-    for (const name of devices) expect(within(dialog).getByRole('link', { name: `Poste ${name}` })).toBeInTheDocument();
-    expect(within(dialog).getByRole('link', { name: 'Poste alpha' })).toHaveAttribute('href', '#devices?id=11111110-1111-4111-8111-111111111111');
+  it('loads application device evidence on demand and follows bounded server pages', async () => {
+    window.location.hash='#applications';
+    const fetcher=serve({
+      '/api/discovery/catalog':{revision:1,signatures:[{id:'ollama.process',application_id:'ollama',name:'Ollama'}]},
+      '/api/discovery/inventory?limit=50':{total:1,items:[{family:'application',observations:1,name:'Ollama',vendor:'',type:'software',status:'review',last_seen:new Date().toISOString(),id:'ollama',states:['executed'],devices:2,review:'review'}],next_cursor:''},
+      '/api/discovery/applications/ollama/instances?limit=50&cursor=next-instance':{items:[{device_id:'device-2',entity_id:'process/2',scope:'endpoint',signature_id:'ollama.process',state:'executed',evidence:[]}],next_cursor:''},
+      '/api/discovery/applications/ollama/instances?limit=50':{items:[{device_id:'device-1',entity_id:'process/1',scope:'endpoint',signature_id:'ollama.process',state:'executed',evidence:[]}],next_cursor:'next-instance'},
+      '/api/discovery/applications/ollama':{id:'ollama',review:'review'},
+    },url=>url==='/api/session'?reply({...session,permissions:[...adminPermissions,'discovery.read']}):undefined);
+    render(<App/>);const user=userEvent.setup();
+    const application=await screen.findByRole('button',{name:'Ollama'});
+    expect(fetcher.mock.calls.some(([url])=>String(url).includes('/instances?'))).toBe(false);
+    await user.click(application);const dialog=await screen.findByRole('dialog');
+    await user.click(await within(dialog).findByRole('button',{name:'Preuves'}));
+    expect(await within(dialog).findByRole('link',{name:/device-1/})).toHaveAttribute('href','#devices?id=device-1');
+    await user.click(within(dialog).getByRole('button',{name:'Suivant'}));
+    expect(await within(dialog).findByRole('link',{name:/device-2/})).toBeInTheDocument();
+    expect(within(dialog).queryByRole('link',{name:/device-1/})).not.toBeInTheDocument();
   });
   it('deletes several selected devices after one confirmation', async () => {
     window.location.hash = '#devices';

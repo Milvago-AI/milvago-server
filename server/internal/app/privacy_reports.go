@@ -65,21 +65,26 @@ func (a *App) buildAggregateReports(ctx context.Context, tx pgx.Tx, org string, 
 		// breakdown complete because the other one is -- and each is raised by comparing
 		// counts, so a cell withheld only by tainting still raises it. Neither those
 		// counts nor the withheld labels leave this query.
-		e = tx.QueryRow(ctx, `WITH grouped AS (
-   SELECT coalesce(nullif(c.team,''),'unassigned') team,e.tool,e.provider,e.model,
-    count(*) FILTER(WHERE e.kind='prompt') prompts,
-    count(*) FILTER(WHERE e.kind='response') responses,count(DISTINCT e.collaborator_id) subjects
-   FROM shadow_events e JOIN collaborators c ON c.organization_id=e.organization_id AND c.id=e.collaborator_id
-   WHERE e.occurred_at >= $1 AND e.occurred_at < $2
-   GROUP BY 1,2,3,4
-  ), by_group AS (
-   SELECT coalesce(nullif(g.name,''),'unassigned') "group",e.tool,e.provider,e.model,
-    count(*) FILTER(WHERE e.kind='prompt') prompts,
-    count(*) FILTER(WHERE e.kind='response') responses,count(DISTINCT e.collaborator_id) subjects
-   FROM shadow_events e JOIN collaborators c ON c.organization_id=e.organization_id AND c.id=e.collaborator_id
-    JOIN devices d ON d.organization_id=e.organization_id AND d.id=e.device_id
+		e = tx.QueryRow(ctx, `WITH report_events AS MATERIALIZED (
+   SELECT e.tool,e.provider,e.model,e.kind,e.collaborator_id,
+    c.id IS NOT NULL AS attributed,d.id IS NOT NULL AS known_device,
+    coalesce(nullif(c.team,''),'unassigned') AS team,coalesce(nullif(g.name,''),'unassigned') AS device_group
+   FROM shadow_events e
+    LEFT JOIN collaborators c ON c.organization_id=e.organization_id AND c.id=e.collaborator_id
+    LEFT JOIN devices d ON d.organization_id=e.organization_id AND d.id=e.device_id
     LEFT JOIN device_groups g ON g.organization_id=d.organization_id AND g.id=d.group_id
    WHERE e.occurred_at >= $1 AND e.occurred_at < $2
+  ), grouped AS (
+   SELECT e.team,e.tool,e.provider,e.model,
+    count(*) FILTER(WHERE e.kind='prompt') prompts,
+    count(*) FILTER(WHERE e.kind='response') responses,count(DISTINCT e.collaborator_id) subjects
+   FROM report_events e WHERE e.attributed
+   GROUP BY 1,2,3,4
+  ), by_group AS (
+   SELECT e.device_group AS "group",e.tool,e.provider,e.model,
+    count(*) FILTER(WHERE e.kind='prompt') prompts,
+    count(*) FILTER(WHERE e.kind='response') responses,count(DISTINCT e.collaborator_id) subjects
+   FROM report_events e WHERE e.attributed AND e.known_device
    GROUP BY 1,2,3,4
   ), tainted AS (
    SELECT tool,provider,model FROM grouped WHERE subjects<$3
@@ -92,9 +97,9 @@ func (a *App) buildAggregateReports(ctx context.Context, tx pgx.Tx, org string, 
     AND NOT EXISTS(SELECT 1 FROM tainted t WHERE t.tool=g.tool AND t.provider=g.provider AND t.model=g.model)
   )
   SELECT jsonb_build_object('cells',coalesce((SELECT jsonb_agg(x ORDER BY team,tool,provider,model) FROM publishable x),'[]'),
-   'suppressed',(SELECT count(*) FROM grouped)>(SELECT count(*) FROM publishable) OR EXISTS(SELECT 1 FROM shadow_events WHERE occurred_at>=$1 AND occurred_at<$2 AND collaborator_id IS NULL),
+   'suppressed',(SELECT count(*) FROM grouped)>(SELECT count(*) FROM publishable) OR EXISTS(SELECT 1 FROM report_events WHERE collaborator_id IS NULL),
    'group_cells',coalesce((SELECT jsonb_agg(x ORDER BY x."group",x.tool,x.provider,x.model) FROM group_publishable x),'[]'),
-   'group_suppressed',(SELECT count(*) FROM by_group)>(SELECT count(*) FROM group_publishable) OR EXISTS(SELECT 1 FROM shadow_events WHERE occurred_at>=$1 AND occurred_at<$2 AND collaborator_id IS NULL))`, start, end, p.Config.K).Scan(&raw)
+   'group_suppressed',(SELECT count(*) FROM by_group)>(SELECT count(*) FROM group_publishable) OR EXISTS(SELECT 1 FROM report_events WHERE collaborator_id IS NULL))`, start, end, p.Config.K).Scan(&raw)
 		if e != nil {
 			return e
 		}
@@ -173,6 +178,14 @@ func (a *App) maintainPrivacy(ctx context.Context, tx pgx.Tx, org string, now ti
 	}{
 		{"content", "DELETE FROM shadow_content WHERE expires_at<$1", []any{now}},
 		{"associations", "DELETE FROM device_collaborators WHERE expires_at<$1", []any{now}},
+		{"dlp_decisions", "DELETE FROM dlp_decisions WHERE expires_at<$1 OR occurred_at<$2", []any{now, cutoff}},
+		{"dlp_history", "DELETE FROM dlp_device_policy_history h WHERE delivered_at<$1 AND NOT EXISTS(SELECT 1 FROM dlp_decisions d WHERE d.policy_fingerprint=h.fingerprint)", []any{now.AddDate(0, 0, -90)}},
+		{"dlp_snapshots", "DELETE FROM dlp_policy_snapshots p WHERE created_at<$1 AND NOT EXISTS(SELECT 1 FROM dlp_decisions d WHERE d.policy_fingerprint=p.fingerprint) AND NOT EXISTS(SELECT 1 FROM dlp_device_policy_history h WHERE h.fingerprint=p.fingerprint) AND NOT EXISTS(SELECT 1 FROM dlp_settings s WHERE s.policy=p.policy)", []any{now.AddDate(0, 0, -90)}},
+		{"discovery_events", "DELETE FROM discovery_events WHERE expires_at<$1 OR occurred_at<$2", []any{now, cutoff}},
+		{"discovery_entities", "DELETE FROM discovery_entities WHERE expires_at<$1 OR last_seen<$2", []any{now, cutoff}},
+		{"discovery_coverage", "DELETE FROM discovery_coverage WHERE expires_at<$1 OR checked_at<$2", []any{now, cutoff}},
+		{"discovery_runs", "DELETE FROM discovery_runs WHERE created_at<$1", []any{cutoff}},
+		{"ai_governance_exceptions", "DELETE FROM ai_governance_exceptions e WHERE approved_at<$1 AND (expires_at<$2 OR revoked_at IS NOT NULL OR policy_revision<>coalesce((SELECT revision FROM ai_governance_policies p WHERE p.organization_id=e.organization_id),0))", []any{cutoff, now}},
 		{"events", "DELETE FROM shadow_events WHERE occurred_at<$1", []any{cutoff}},
 		{"legacy_events", "DELETE FROM events WHERE occurred_at<$1", []any{cutoff}},
 		{"subjects", `DELETE FROM collaborators c WHERE last_associated_at<$1 AND NOT EXISTS(SELECT 1 FROM shadow_events e WHERE e.collaborator_id=c.id) AND NOT EXISTS(SELECT 1 FROM device_collaborators d WHERE d.collaborator_id=c.id)`, []any{now.AddDate(0, 0, -p.Config.IdentityDays)}},

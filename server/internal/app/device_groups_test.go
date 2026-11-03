@@ -85,6 +85,11 @@ type deviceGroupsFixture struct {
 
 func newDeviceGroupsFixture(t *testing.T) *deviceGroupsFixture {
 	f := newObservabilityFixture(t)
+	// This suite exercises the pre-DLP Shadow override compatibility contract.
+	// Dedicated DLP scope/activation and legacy-write refusal have separate suites.
+	if _, err := f.admin.Exec(context.Background(), "DELETE FROM dlp_settings WHERE organization_id=$1", f.org); err != nil {
+		t.Fatal(err)
+	}
 	owner := func(method, path string, body any) *httptest.ResponseRecorder {
 		return f.callAs(method, path, body, f.owner, f.csrf, "")
 	}

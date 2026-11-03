@@ -24,7 +24,7 @@
           {
             "method": "POST",
             "host": "assistant.example-corp.test",
-            "path": "/*_/rpc/Generate",
+            "path": "/*api/generate",
             "form_field": "f req",
             "json_fields": [
               "1"

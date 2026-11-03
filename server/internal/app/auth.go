@@ -143,20 +143,22 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, e)
 		return
 	}
-	if _, e := a.startOIDCLogin(w, r, language, kcAction, r.URL.Query().Get("mfa") == "1", true, target); e != nil {
+	stepUp := r.URL.Query().Get("mfa") == "1"
+	trust := loginTrustOptions{allowed: !stepUp && kcAction == "" && r.URL.Query().Get("action") == ""}
+	if _, e := a.startOIDCLogin(w, r, language, kcAction, stepUp, true, target, trust); e != nil {
 		a.fail(w, e)
 	}
 }
 
 // startOIDCLogin returns the attempt's browser binding, which ties anything carried
 // alongside the attempt to that attempt alone.
-func (a *App) startOIDCLogin(w http.ResponseWriter, r *http.Request, language, kcAction string, stepUp, fresh bool, target loginTarget) (string, error) {
+func (a *App) startOIDCLogin(w http.ResponseWriter, r *http.Request, language, kcAction string, stepUp, fresh bool, target loginTarget, trust loginTrustOptions) (string, error) {
 	identity, err := a.currentOIDCFor(r.Context(), target.realm)
 	if err != nil {
 		return "", err
 	}
 	state, binding, nonce, verifier := randomToken(), randomToken(), randomToken(), oauth2.GenerateVerifier()
-	_, e := a.db.Exec(r.Context(), `INSERT INTO login_attempts(state_hash,binding_hash,verifier,nonce,expires_at,step_up,realm) VALUES($1,$2,$3,$4,now()+interval '10 minutes',$5,$6)`, hash(state), hash(binding), verifier, nonce, stepUp, target.realm)
+	_, e := a.db.Exec(r.Context(), `INSERT INTO login_attempts(state_hash,binding_hash,verifier,nonce,expires_at,step_up,realm,allow_trusted_device,remember_device) VALUES($1,$2,$3,$4,now()+interval '10 minutes',$5,$6,$7,$8)`, hash(state), hash(binding), verifier, nonce, stepUp, target.realm, trust.allowed, trust.remember)
 	if e != nil {
 		return "", e
 	}
@@ -179,6 +181,9 @@ func (a *App) startOIDCLogin(w http.ResponseWriter, r *http.Request, language, k
 	if kcAction != "" {
 		opts = append(opts, oauth2.SetAuthURLParam("kc_action", kcAction))
 	}
+	if trust.remember && !stepUp {
+		opts = append(opts, oauth2.SetAuthURLParam("max_age", "0"), oauth2.SetAuthURLParam("prompt", "login"))
+	}
 	http.Redirect(w, r, identity.oauth.AuthCodeURL(state, opts...), http.StatusFound)
 	return binding, nil
 }
@@ -188,6 +193,7 @@ type loginAttempt struct {
 	associationOrg, associationDevice *string
 	associationHash                   []byte
 	stepUp                            bool
+	trust                             loginTrustOptions
 	// realm is the stored realm the sign-in was started in ("" for the root one).
 	realm string
 	// binding is the browser half of the attempt, already proved against the stored hash.
@@ -211,8 +217,8 @@ func (a *App) consumeLoginAttempt(w http.ResponseWriter, r *http.Request) (login
 		return attempt, bad("The login attempt has expired.")
 	}
 	a.cookie(w, a.cookieName("login"), "", -1)
-	e = a.db.QueryRow(r.Context(), "DELETE FROM login_attempts WHERE state_hash=$1 AND binding_hash=$2 AND expires_at>now() RETURNING verifier,nonce,association_org,association_device,association_hash,step_up,realm", hash(r.URL.Query().Get("state")), hash(cookie.Value)).
-		Scan(&attempt.verifier, &attempt.nonce, &attempt.associationOrg, &attempt.associationDevice, &attempt.associationHash, &attempt.stepUp, &attempt.realm)
+	e = a.db.QueryRow(r.Context(), "DELETE FROM login_attempts WHERE state_hash=$1 AND binding_hash=$2 AND expires_at>now() RETURNING verifier,nonce,association_org,association_device,association_hash,step_up,realm,allow_trusted_device,remember_device", hash(r.URL.Query().Get("state")), hash(cookie.Value)).
+		Scan(&attempt.verifier, &attempt.nonce, &attempt.associationOrg, &attempt.associationDevice, &attempt.associationHash, &attempt.stepUp, &attempt.realm, &attempt.trust.allowed, &attempt.trust.remember)
 	if e != nil || r.URL.Query().Get("code") == "" {
 		return attempt, bad("Invalid or reused login attempt.")
 	}
@@ -382,11 +388,12 @@ func loginVerifiedAt(mfa bool, authTime int64) *time.Time {
 }
 
 type verifiedLogin struct {
-	attempt loginAttempt
-	token   *oauth2.Token
-	id      *oidc.IDToken
-	raw     string
-	claims  loginClaims
+	attempt      loginAttempt
+	token        *oauth2.Token
+	id           *oidc.IDToken
+	raw          string
+	claims       loginClaims
+	trustedUntil *time.Time
 }
 
 func (a *App) createLoginSession(ctx context.Context, tx pgx.Tx, org, user string, flow verifiedLogin, mfa bool) (string, time.Time, error) {
@@ -402,8 +409,11 @@ func (a *App) createLoginSession(ctx context.Context, tx pgx.Tx, org, user strin
 	}
 	encrypted := a.config.SessionCipher.Seal(nonceBytes, nonceBytes, tokens, digest)
 	expiry := time.Now().Add(8 * time.Hour)
+	if flow.trustedUntil != nil && flow.trustedUntil.Before(expiry) {
+		expiry = *flow.trustedUntil
+	}
 	verifiedAt := loginVerifiedAt(mfa, flow.claims.AuthTime)
-	if _, e = tx.Exec(ctx, "INSERT INTO sessions(token_hash,user_id,organization_id,csrf_token,encrypted_tokens,mfa,expires_at,identity_expires_at,oidc_nonce,mfa_verified_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)", digest, user, org, csrf, encrypted, mfa, expiry, flow.id.Expiry, flow.attempt.nonce, verifiedAt); e != nil {
+	if _, e = tx.Exec(ctx, "INSERT INTO sessions(token_hash,user_id,organization_id,csrf_token,encrypted_tokens,mfa,expires_at,identity_expires_at,oidc_nonce,mfa_verified_at,login_trusted_until) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)", digest, user, org, csrf, encrypted, mfa, expiry, flow.id.Expiry, flow.attempt.nonce, verifiedAt, flow.trustedUntil); e != nil {
 		return "", time.Time{}, e
 	}
 	if e = audit(ctx, tx, org, user, "session.login", user); e != nil {
@@ -453,17 +463,34 @@ func (a *App) completeLogin(w http.ResponseWriter, r *http.Request, ctx context.
 		return e
 	}
 	action, status := r.URL.Query().Get("kc_action"), r.URL.Query().Get("kc_action_status")
-	if requireMFA && !mfa {
+	if !mfa && flow.attempt.trust.allowed && action == "" && status == "" {
+		flow.trustedUntil, e = a.trustedDeviceForLogin(ctx, tx, r, user, realm, flow.id.Subject)
+		if e != nil {
+			return e
+		}
+	}
+	if requireMFA && !mfa && flow.trustedUntil == nil {
 		return a.continueWithMFA(w, r, ctx, tx, flow, action, status)
 	}
 	if e = a.endPendingInvitation(ctx, tx, realm, user, flow.id.Subject); e != nil {
 		return e
+	}
+	var trustedToken string
+	var trustedExpiry time.Time
+	if mfa && flow.attempt.trust.allowed && flow.attempt.trust.remember && action == "" && status == "" {
+		trustedToken, trustedExpiry, e = a.rememberLoginDevice(ctx, tx, r, org, user, flow)
+		if e != nil {
+			return e
+		}
 	}
 	session, expiry, e := a.createLoginSession(ctx, tx, org, user, flow, mfa)
 	if e != nil {
 		return e
 	}
 	a.cookie(w, a.cookieName("session"), session, int(time.Until(expiry).Seconds()))
+	if trustedToken != "" {
+		a.setTrustedDeviceCookie(w, trustedToken, trustedExpiry)
+	}
 	action, status = a.restoreKeptAction(w, r, flow, action, status)
 	http.Redirect(w, r, profileReturn(action, status), http.StatusFound)
 	return nil
@@ -486,7 +513,11 @@ func (a *App) continueWithMFA(w http.ResponseWriter, r *http.Request, ctx contex
 	// set up, for one) is followed by that proof: its outcome waits in a cookie and is
 	// re-checked on the way back. The cookie names the continuation it belongs to, so an
 	// abandoned or refused continuation leaves nothing a later sign-in would display.
-	binding, e := a.startOIDCLogin(w, r, language, "", true, false, loginTarget{realm: flow.attempt.realm})
+	trust := flow.attempt.trust
+	if action != "" || status != "" {
+		trust = loginTrustOptions{}
+	}
+	binding, e := a.startOIDCLogin(w, r, language, "", true, false, loginTarget{realm: flow.attempt.realm}, trust)
 	if e == nil && status != "" {
 		a.cookie(w, a.cookieName("return"), keptActionOutcome(binding, action, status), 600)
 	}

@@ -7,7 +7,7 @@ import type { IconName, Translate } from './ui';
 // `report` is the printable synthesis. It has no navigation entry on purpose: it is
 // reached from the export control of the map and of the conversations, always with a
 // scope in the hash, and it renders outside this shell so it prints clean.
-export type Page = 'overview' | 'map' | 'events' | 'devices' | 'groups' | 'applications' | 'settings' | 'members' | 'roles' | 'audit' | 'shadow' | 'organizations' | 'observability' | 'profile' | 'privacy' | 'reports' | 'discovery' | 'detection' | 'report';
+export type Page = 'overview' | 'map' | 'events' | 'devices' | 'groups' | 'applications' | 'settings' | 'members' | 'roles' | 'audit' | 'shadow' | 'dlp' | 'organizations' | 'observability' | 'profile' | 'privacy' | 'reports' | 'discovery' | 'detection' | 'report';
 
 /** Product name of an edition. The API keeps the internal id "commercial". */
 export function editionName(edition: Session['edition']): string {
@@ -93,7 +93,7 @@ function administrationItems(session: Session): NavItem[] {
   // A restricted Community instance has no rights management: the server itself
   // refuses role writes with license_restricted, so the entry would only lead to a refusal.
   if (can(session, 'roles.manage') && !session.license?.restricted) administration.push({ page: 'roles', icon: 'lock', href: '#roles' });
-  if (can(session, 'policy.manage')) administration.push({ page: 'shadow', icon: 'eye', href: '#shadow' });
+  if (can(session, 'policy.manage')) { administration.push({ page: 'shadow', icon: 'eye', href: '#shadow' }); administration.push({ page: 'dlp', icon: 'scan', href: '#dlp' }); }
   // The catalogue editor publishes for the whole instance, so only the root owner can
   // use it and only an operator ever needs it. It appears when the instance runs with
   // MILVAGO_DEBUG; the server closes the routes that write a catalogue on the same
@@ -129,18 +129,8 @@ export function Shell({ session, page, pageNames, theme, toggleTheme, logout, sw
   }, [open]);
   const administration = administrationItems(session);
   const groups: { label: string; items: { page: Page; icon: IconName; href: string }[] }[] = [
-    // AI Applications moved from Fleet to Monitoring (product decision,
-    // 2026-09-17): the screen answers "which AIs are running for me", not "what is
-    // this device's state". It stays Enterprise only -- `/api/tools` does not exist
-    // elsewhere -- and under the same analysis guard as before.
-    //
-    // Icon `apps` (application window) rather than `list`: the screen sat next to Conversations
-    // with the same one, and two entries in the same section carrying the same icon
-    // become indistinguishable. Not a grid either -- `layout-grid` is indistinguishable from
-    // the `layout-dashboard` of Overview at 16px, which would only move the
-    // collision from one neighbor to the other. Measured, not assumed: `scratchpad/icon-strip.mjs`
-    // renders the rail's icons and the candidates at actual size.
-    { label: t("monitoring"), items: [{ page: 'overview', icon: 'dashboard', href: '#overview' }, { page: 'map', icon: 'map', href: '#map' }, { page: 'events', icon: 'list', href: '#events' }, ...(session.edition === 'commercial' && canAnalyze(session) ? [{ page: 'applications' as Page, icon: 'apps' as IconName, href: '#applications' }] : []), ...(can(session, 'policy.manage') ? [{ page: 'discovery' as Page, icon: 'search' as IconName, href: '#discovery' }] : []), ...(can(session, 'reports.aggregate') ? [{ page: 'reports' as Page, icon: 'scroll' as IconName, href: '#reports' }] : [])] },
+    // Discovery visibility is authorized by permissions in both editions.
+    { label: t("monitoring"), items: [{ page: 'overview', icon: 'dashboard', href: '#overview' }, { page: 'map', icon: 'map', href: '#map' }, { page: 'events', icon: 'list', href: '#events' }, ...((can(session, 'discovery.read') || can(session, 'policy.manage')) ? [{ page: 'applications' as Page, icon: 'apps' as IconName, href: '#applications' }] : []), ...(can(session, 'reports.aggregate') ? [{ page: 'reports' as Page, icon: 'scroll' as IconName, href: '#reports' }] : [])] },
     { label: t("fleet"), items: [{ page: 'devices', icon: 'device', href: '#devices' }, { page: 'groups', icon: 'users', href: '#groups' }] },
     { label: t("administration"), items: administration },
   ];
@@ -151,12 +141,11 @@ export function Shell({ session, page, pageNames, theme, toggleTheme, logout, sw
   const brand = (
     <a className="brand" href="#overview" aria-label="Milvago">
       <img
-        src={theme === 'light' ? '/milvago-symbol-mono-black.svg' : '/milvago-symbol-mono-white.svg'}
+        src={theme === 'light' ? '/milvago-logo-horizontal-mono-black.svg' : '/milvago-logo-horizontal-inverse.svg'}
         alt=""
-        width="28"
+        width="95"
         height="28"
       />
-      <span className="brand-name">Milvago</span>
     </a>
   );
   return (

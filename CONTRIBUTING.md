@@ -23,6 +23,14 @@ the merge. GitHub Free cannot enforce branch protections for private repositorie
 review procedure. Contributors without write access cannot push branches to these repositories.
 
 
+Generate the shared DLP WASM before testing Go or the console (Rust 1.96.1 and
+the wasm32-unknown-unknown target are required):
+
+```bash
+sh scripts/build-dlp.sh
+cargo +1.96.1 test --locked --manifest-path dlp-engine/Cargo.toml
+```
+
 Run what your change touches:
 
 ```

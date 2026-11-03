@@ -68,10 +68,22 @@ func TestPublisherEditionLimitsCommunityImport(t *testing.T) {
 	if err := json.Unmarshal(detectionFactory, &full); err != nil {
 		t.Fatal(err)
 	}
-	if err := validatePublisherEdition("commercial", detectionFactory); err != nil {
+	// A published catalogue that captures one more provider than Community does.
+	wide := full
+	extra := full.Providers[len(full.Providers)-1]
+	extra.ID, extra.Label, extra.Domains, extra.Aliases, extra.Network, extra.AssetHosts = "synthetic", "Synthetic", []string{"assistant.example.invalid"}, []string{}, []DetectionNetwork{}, nil
+	wide.Providers = append(append([]DetectionProvider{}, full.Providers...), extra)
+	wideContent, err := json.Marshal(wide)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeDetection(wideContent); err != nil {
+		t.Fatalf("the wider catalogue must be valid, or the refusal below proves nothing: %v", err)
+	}
+	if err := validatePublisherEdition("commercial", wideContent); err != nil {
 		t.Fatalf("commercial catalog rejected: %v", err)
 	}
-	if err := validatePublisherEdition("community", detectionFactory); err == nil {
+	if err := validatePublisherEdition("community", wideContent); err == nil {
 		t.Fatal("full catalog accepted for Community")
 	}
 	narrow := full

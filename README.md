@@ -154,9 +154,19 @@ Enterprise is available from Milvago AI, LLC — [www.milvago.ai](https://www.mi
 |---|---|
 | `server/` | Go backend, migrations, signed detection catalogue |
 | `console/` | React console (Vite, TypeScript), four languages |
+| `dlp-engine/` | Shared Apache-2.0 Rust engine, built as WASM for the server and local laboratory |
 | `deploy/` | Container build, PostgreSQL initialization, identity theme |
 
-Run the suites with `cd console && npm ci && npm test` and `cd server && go test ./...`.
+Before Go or console tests, build the shared DLP artifact from source:
+
+```bash
+rustup toolchain install 1.96.1 --profile minimal --target wasm32-unknown-unknown
+sh scripts/build-dlp.sh
+```
+
+The generated WASM files are ignored. Native endpoint and server evaluations use
+the same Rust source; regenerate after changing it. Then run the suites with
+`cd console && npm ci --ignore-scripts && npm test` and `cd server && go test ./...`.
 `docker compose build` runs both inside the build: an image is never produced from a red tree.
 
 ## Community

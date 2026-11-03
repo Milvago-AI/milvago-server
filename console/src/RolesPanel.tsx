@@ -31,6 +31,7 @@ const permissionLabels: Record<string, TranslationKey> = {
   "observability.manage": "permObservabilityManage",
   "settings.manage": "permSettingsManage",
   "policy.manage": "permPolicyManage",
+  "ai.governance.approve": "permAIGovernanceApprove",
   "installers.manage": "permInstallersManage",
   "content.read": "permContentRead",
   "content.purge": "permContentPurge",
@@ -270,111 +271,115 @@ function RoleInUseDialog({
 
   return (
     <Dialog title={t("roleHeldByMembers")} close={close}>
-      <Notice tone="warning">
-        {t("theRole0CannotBeDeleted", [role.name])}
-      </Notice>
-      {!manageMembers && (
+      <div className="dialog-body">
         <Notice tone="warning">
-          {t("youCannotManageMembersAskA")}
+          {t("theRole0CannotBeDeleted", [role.name])}
         </Notice>
-      )}
-      <ErrorNotice error={mutation.error} />
-      <ResourceView resource={holders}>
-        {(data) =>
-          data.items.length === 0 ? (
-            <p className="muted">{t("noMemberHoldsThisRoleAny")}</p>
-          ) : (
-            <>
-              <table>
-                <thead>
-                  <tr>
-                    <th>{t("member")}</th>
-                    <th>{t("emailAddress")}</th>
-                    <th>{t("actions")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.items.map((member) => (
-                    <tr key={member.id}>
-                      <td>
-                        <strong>{member.display_name || "—"}</strong>
-                      </td>
-                      <td>{member.email}</td>
-                      <td>
-                        {manageMembers && member.id !== session.user.id ? (
-                          <div className="row-actions">
-                            <select
-                              aria-label={t("newRoleFor0", [member.email])}
-                              value={target[member.id] ?? replacements[0] ?? ""}
-                              onChange={(e) => setTarget((current) => ({ ...current, [member.id]: e.target.value }))}
-                            >
-                              {replacements.map((name) => (
-                                <option key={name} value={name}>
-                                  {name}
-                                </option>
-                              ))}
-                            </select>
-                            <button
-                              className="button secondary small"
-                              disabled={mutation.pending || replacements.length === 0}
-                              onClick={() => reassign(member)}
-                            >
-                              <Icon name="shield" />
-                              {t("reassign")}
-                            </button>
-                            <button
-                              className="button danger small"
-                              disabled={mutation.pending}
-                              onClick={() => detach(member)}
-                            >
-                              <Icon name="trash" />
-                              {t("removeAccess")}
-                            </button>
-                          </div>
-                        ) : (
-                          <span
-                            className="muted readonly-cell"
-                            title={
-                              member.id === session.user.id
-                                ? t("thisIsYouYouCannotChange")
-                                : t("readOnly")
-                            }
-                          >
-                            <Icon name="lock" />
-                          </span>
-                        )}
-                      </td>
+        {!manageMembers && (
+          <Notice tone="warning">
+            {t("youCannotManageMembersAskA")}
+          </Notice>
+        )}
+        <ErrorNotice error={mutation.error} />
+        <ResourceView resource={holders}>
+          {(data) =>
+            data.items.length === 0 ? (
+              <p className="muted">{t("noMemberHoldsThisRoleAny")}</p>
+            ) : (
+              <>
+                <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{t("member")}</th>
+                      <th>{t("emailAddress")}</th>
+                      <th>{t("actions")}</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-              {data.total > data.items.length && (
-                <p className="muted">
-                  {t("n0MembersHoldThisRoleThe", [data.total, data.items.length])}
-                </p>
-              )}
-            </>
-          )
-        }
-      </ResourceView>
-      <div className="dialog-actions">
-        <button type="button" className="button secondary" onClick={close}>
-          {t("close")}
-        </button>
-        <button
-          type="button"
-          className="button danger"
-          disabled={mutation.pending || holders.data === undefined || holders.data.total > 0}
-          title={
-            holders.data && holders.data.total > 0
-              ? t("membersStillHoldThisRole")
-              : undefined
+                  </thead>
+                  <tbody>
+                    {data.items.map((member) => (
+                      <tr key={member.id}>
+                        <td>
+                          <strong>{member.display_name || "—"}</strong>
+                        </td>
+                        <td>{member.email}</td>
+                        <td>
+                          {manageMembers && member.id !== session.user.id ? (
+                            <div className="row-actions">
+                              <select
+                                aria-label={t("newRoleFor0", [member.email])}
+                                value={target[member.id] ?? replacements[0] ?? ""}
+                                onChange={(e) => setTarget((current) => ({ ...current, [member.id]: e.target.value }))}
+                              >
+                                {replacements.map((name) => (
+                                  <option key={name} value={name}>
+                                    {name}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                className="button secondary small"
+                                disabled={mutation.pending || replacements.length === 0}
+                                onClick={() => reassign(member)}
+                              >
+                                <Icon name="shield" />
+                                {t("reassign")}
+                              </button>
+                              <button
+                                className="button danger small"
+                                disabled={mutation.pending}
+                                onClick={() => detach(member)}
+                              >
+                                <Icon name="trash" />
+                                {t("removeAccess")}
+                              </button>
+                            </div>
+                          ) : (
+                            <span
+                              className="muted readonly-cell"
+                              title={
+                                member.id === session.user.id
+                                  ? t("thisIsYouYouCannotChange")
+                                  : t("readOnly")
+                              }
+                            >
+                              <Icon name="lock" />
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                </div>
+                {data.total > data.items.length && (
+                  <p className="muted">
+                    {t("n0MembersHoldThisRoleThe", [data.total, data.items.length])}
+                  </p>
+                )}
+              </>
+            )
           }
-          onClick={retryDelete}
-        >
-          <Icon name="trash" />
-          {t("deleteRole")}
-        </button>
+        </ResourceView>
+        <div className="dialog-actions">
+          <button type="button" className="button secondary" onClick={close}>
+            {t("close")}
+          </button>
+          <button
+            type="button"
+            className="button danger"
+            disabled={mutation.pending || holders.data === undefined || holders.data.total > 0}
+            title={
+              holders.data && holders.data.total > 0
+                ? t("membersStillHoldThisRole")
+                : undefined
+            }
+            onClick={retryDelete}
+          >
+            <Icon name="trash" />
+            {t("deleteRole")}
+          </button>
+        </div>
       </div>
     </Dialog>
   );

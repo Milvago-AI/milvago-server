@@ -222,9 +222,8 @@ func validateInviteMembership(r *http.Request, tx pgx.Tx, s *Session, subject st
 	return nil
 }
 
-func (a *App) sendInviteIdentityEmail(ctx context.Context, tx pgx.Tx, s *Session, admin *identityAdmin, body inviteRequest, subject string, created bool) (*time.Time, error) {
+func (a *App) sendInviteIdentityEmail(ctx context.Context, tx pgx.Tx, s *Session, admin *identityAdmin, body inviteRequest, realm, subject string, created bool) (*time.Time, error) {
 	actions := []string{"VERIFY_EMAIL", "UPDATE_PASSWORD"}
-	var pendingUntil *time.Time
 	if created {
 		// A proven domain signs in with its provider; the link only confirms
 		// the mailbox and lasts as long as the invitation itself.
@@ -236,15 +235,13 @@ func (a *App) sendInviteIdentityEmail(ctx context.Context, tx pgx.Tx, s *Session
 			}
 		}
 		if e == nil && direct {
-			e = markPendingInvitation(ctx, admin, subject)
+			direct, e = a.preparePendingInvitation(ctx, admin, body, realm, subject)
 		}
 		if e != nil {
 			return nil, e
 		}
 		if direct {
 			actions = []string{"VERIFY_EMAIL"}
-			until := time.Now().Add(invitationLifespan)
-			pendingUntil = &until
 		}
 	}
 	// The client base URL takes the account to the console after activation.
@@ -253,7 +250,9 @@ func (a *App) sendInviteIdentityEmail(ctx context.Context, tx pgx.Tx, s *Session
 	if e != nil || status != 204 {
 		return nil, apiError{502, "invitation_email_failed", "The identity provider could not send the invitation. Check its SMTP configuration."}
 	}
-	return pendingUntil, nil
+	// The separately committed user row owns the lease; never restore a stale
+	// deadline after expiration or a concurrent successful first sign-in.
+	return nil, nil
 }
 
 type resolvedInvite struct {
@@ -332,7 +331,7 @@ func (a *App) invite(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Sessi
 	}
 	var pendingUntil *time.Time
 	if kind == "local" {
-		pendingUntil, e = a.sendInviteIdentityEmail(r.Context(), tx, s, admin, body, subject, created)
+		pendingUntil, e = a.sendInviteIdentityEmail(r.Context(), tx, s, admin, body, realm, subject, created)
 		if e != nil {
 			return e
 		}

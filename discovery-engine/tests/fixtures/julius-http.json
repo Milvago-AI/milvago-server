@@ -1,0 +1,234 @@
+[
+  {
+    "signature_id": "open-webui.http",
+    "upstream_path": "probes/openwebui.yaml",
+    "upstream_sha256": "94a9f00abc19ee6a24eea99f6ef70b0b1697ea8bff42300c21dd9c1908166169",
+    "adaptation": "reviewed metadata-only adaptation",
+    "responses": [
+      {
+        "path": "/api/config",
+        "status": "200",
+        "body": "{\"name\":\"Open WebUI\",\"features\":{}}",
+        "content_type": "application/json"
+      },
+      {
+        "path": "/api/version",
+        "status": "200",
+        "body": "{\"version\":\"0.0.0\",\"deployment_id\":\"fixture\"}",
+        "content_type": "application/json"
+      },
+      {
+        "path": "/",
+        "status": "200",
+        "body": "<html>open-webui</html>",
+        "content_type": "text/html"
+      }
+    ]
+  },
+  {
+    "signature_id": "librechat.http",
+    "upstream_path": "probes/librechat.yaml",
+    "upstream_sha256": "1a322db809da72ff45bfde963fb16a4af7e747f4674245dce61be359bad74110",
+    "adaptation": "reviewed metadata-only adaptation",
+    "responses": [
+      {
+        "path": "/",
+        "status": "200",
+        "body": "<title>LibreChat</title>",
+        "content_type": "text/html"
+      },
+      {
+        "path": "/api/config",
+        "status": "200",
+        "body": "{\"helpAndFaqURL\":\"https://librechat.ai\"}",
+        "content_type": "application/json"
+      }
+    ]
+  },
+  {
+    "signature_id": "langflow.http",
+    "upstream_path": "probes/langflow.yaml",
+    "upstream_sha256": "86e1dd4a13e06c8d84a2d25be964982bb43eb025d64152063b49a8d14149439f",
+    "adaptation": "reviewed metadata-only adaptation",
+    "responses": [
+      {
+        "path": "/api/v1/version",
+        "status": "200",
+        "body": "{\"package\":\"Langflow\"}",
+        "content_type": "application/json"
+      },
+      {
+        "path": "/health_check",
+        "status": "200",
+        "body": "{\"chat\":\"ok\",\"db\":\"ok\"}",
+        "content_type": "application/json"
+      }
+    ]
+  },
+  {
+    "signature_id": "ragflow.http",
+    "upstream_path": "probes/ragflow.yaml",
+    "upstream_sha256": "ecaaac2b7e83e1bd72c40a07a89931219a07f0b6fe7823ff3a0bf70588dcc999",
+    "adaptation": "require-all preserved; health status strengthened to 200",
+    "responses": [
+      {
+        "path": "/v1/system/healthz",
+        "status": "200",
+        "body": "{\"doc_engine\":\"ok\"}",
+        "content_type": "application/json"
+      },
+      {
+        "path": "/",
+        "status": "200",
+        "body": "<title>RAGFlow</title>",
+        "content_type": "text/html"
+      }
+    ]
+  },
+  {
+    "signature_id": "sillytavern.http",
+    "upstream_path": "probes/sillytavern.yaml",
+    "upstream_sha256": "edc48730c54a4415ecb28de26d13787a1287c5c5c16ffac5cb9b4c94c6210961",
+    "adaptation": "reviewed metadata-only adaptation",
+    "responses": [
+      {
+        "path": "/manifest.json",
+        "status": "200",
+        "body": "{\"name\": \"SillyTavern\"}",
+        "content_type": "text/html"
+      },
+      {
+        "path": "/version",
+        "status": "200",
+        "body": "{\"agent\":\"SillyTavern:0.0.0\",\"pkgVersion\":\"0.0.0\"}",
+        "content_type": "text/html"
+      }
+    ]
+  },
+  {
+    "signature_id": "lobehub.http_manifest",
+    "upstream_path": "probes/lobehub.yaml",
+    "upstream_sha256": "7d7dfd4f95b18fb952de814f4ca57f046282c0f2e12e918278465a7801302805",
+    "adaptation": "manifest alternative only; signin alternative omitted",
+    "responses": [
+      {
+        "path": "/manifest.webmanifest",
+        "status": "200",
+        "body": "{\"id\":\"lobe-hub\",\"name\":\"LobeHub\",\"short_name\":\"LobeHub\"}",
+        "content_type": "application/manifest+json"
+      }
+    ]
+  },
+  {
+    "signature_id": "dify.http_apps",
+    "upstream_path": "probes/dify.yaml",
+    "upstream_sha256": "ce9217c667cc34762054b086ccdd90ec0127af6053ffccd4435a51c1a3637864",
+    "adaptation": "independent alternative; status strengthened to 200",
+    "responses": [
+      {
+        "path": "/apps",
+        "status": "200",
+        "body": "<title>Dify</title> data-public-edition",
+        "content_type": "text/html"
+      }
+    ]
+  },
+  {
+    "signature_id": "dify.http_root",
+    "upstream_path": "probes/dify.yaml",
+    "upstream_sha256": "ce9217c667cc34762054b086ccdd90ec0127af6053ffccd4435a51c1a3637864",
+    "adaptation": "independent alternative; status strengthened to 200",
+    "responses": [
+      {
+        "path": "/",
+        "status": "200",
+        "body": "<title>Dify</title> data-public-edition",
+        "content_type": "text/html"
+      }
+    ]
+  },
+  {
+    "signature_id": "dify.http_mobile",
+    "upstream_path": "probes/dify.yaml",
+    "upstream_sha256": "ce9217c667cc34762054b086ccdd90ec0127af6053ffccd4435a51c1a3637864",
+    "adaptation": "independent alternative; status strengthened to 200",
+    "responses": [
+      {
+        "path": "/",
+        "status": "200",
+        "body": "apple-mobile-web-app-title\" content=\"Dify\" data-public-edition",
+        "content_type": "text/html"
+      }
+    ]
+  },
+  {
+    "signature_id": "aphrodite-engine.http",
+    "upstream_path": "probes/aphrodite-engine.yaml",
+    "upstream_sha256": "f3a41215b52493ef8da5663f897a93bac2060a87a19f7bfcf4026728948a9d02",
+    "adaptation": "reviewed metadata-only adaptation",
+    "responses": [
+      {
+        "path": "/.well-known/serviceinfo",
+        "status": "200",
+        "body": "{\"software\":{\"name\":\"Aphrodite Engine\"}}",
+        "content_type": "application/json"
+      }
+    ]
+  },
+  {
+    "signature_id": "lm-studio.http_greeting",
+    "upstream_path": "probes/lm-studio.yaml",
+    "upstream_sha256": "0e657ed33456e2feb884a469fdf1f14fea5b1f57797de011c3ca0f6bb2ea67b8",
+    "adaptation": "greeting only; JSON MIME and true value strengthened; models route omitted",
+    "responses": [
+      {
+        "path": "/lmstudio-greeting",
+        "status": "200",
+        "body": "{\"lmstudio\":true}",
+        "content_type": "application/json"
+      }
+    ]
+  },
+  {
+    "signature_id": "onyx.http_openapi",
+    "upstream_path": "probes/onyx.yaml",
+    "upstream_sha256": "43c6ab235f26dcdfd350f3b29ab165771563b165bac0d152ffb4f3b9b5b3f702",
+    "adaptation": "reviewed metadata-only adaptation",
+    "responses": [
+      {
+        "path": "/openapi.json",
+        "status": "200",
+        "body": "{\"info\":{\"title\":\"Onyx Backend\"}}",
+        "content_type": "application/json"
+      }
+    ]
+  },
+  {
+    "signature_id": "onyx.http_docs",
+    "upstream_path": "probes/onyx.yaml",
+    "upstream_sha256": "43c6ab235f26dcdfd350f3b29ab165771563b165bac0d152ffb4f3b9b5b3f702",
+    "adaptation": "reviewed metadata-only adaptation",
+    "responses": [
+      {
+        "path": "/api/docs",
+        "status": "200",
+        "body": "<title>Onyx Backend - Swagger UI</title>",
+        "content_type": "text/html"
+      }
+    ]
+  },
+  {
+    "signature_id": "jan.http_openapi",
+    "upstream_path": "probes/jan.yaml",
+    "upstream_sha256": "6433dcca3798f35a1d86c2a6b4076d66518210f028e27a8c9691b6188931410c",
+    "adaptation": "reviewed metadata-only adaptation",
+    "responses": [
+      {
+        "path": "/openapi.json",
+        "status": "200",
+        "body": "{\"info\":{\"title\": \"Jan API Server Endpoints\"}}",
+        "content_type": "application/json"
+      }
+    ]
+  }
+]

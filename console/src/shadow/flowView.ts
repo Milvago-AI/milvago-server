@@ -35,18 +35,18 @@ function options(flows: Flow[], base: Flow[], dimension: Dimension, excluded: Se
   return [...map.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
 }
 
-export function applyView(flows: Flow[], view: View): ViewResult {
+export function applyView(flows: Flow[], view: View, peopleLimit = PEOPLE_WINDOW): ViewResult {
   const excluded = Object.fromEntries(ALL_DIMENSIONS.map(dimension => [dimension, new Set(view.excluded[dimension] ?? [])])) as Record<Dimension, Set<string>>;
   const passes = (flow: Flow, skip?: Dimension) => ALL_DIMENSIONS.every(dimension => dimension === skip || !excluded[dimension].has(valueOf(flow, dimension)));
   // People are counted against the other panels, so unchecking a browser lowers the
   // people who only used it — and can push them out of the window.
   const people = options(flows, flows.filter(flow => passes(flow, 'actor_id')), 'actor_id', excluded.actor_id) as RankedPerson[];
   let shown = 0;
-  people.forEach((person, index) => { person.rank = index + 1; person.displayed = person.checked && person.count > 0 && (view.peopleHidden || shown++ < PEOPLE_WINDOW); });
+  people.forEach((person, index) => { person.rank = index + 1; person.displayed = person.checked && person.count > 0 && (view.peopleHidden || shown++ < peopleLimit); });
   const displayedPeople = people.filter(person => person.displayed).map(person => person.value);
   const shownSet = new Set(displayedPeople);
   const eligible = people.filter(person => person.checked && person.count > 0).length;
-  const truncated = !view.peopleHidden && eligible > PEOPLE_WINDOW;
+  const truncated = !view.peopleHidden && eligible > peopleLimit;
   const visible = flows.filter(flow => passes(flow) && shownSet.has(valueOf(flow, 'actor_id')));
   // Each panel is counted against the others and the people actually drawn: the
   // number next to a value is what checking or unchecking it would change.
