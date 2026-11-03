@@ -42,15 +42,11 @@ func readDiscoveryApplications(ctx context.Context, tx pgx.Tx, key discoveryRead
  bool_or(state='executed') executed,bool_or(state='indication') indication,bool_or(state='installed') installed,bool_or(state='interface_recognized') interface
  FROM discovery_identifications WHERE organization_id=$1 AND expires_at>now() AND application_id IN (SELECT application_id FROM page_keys)
  GROUP BY application_id,device_id,scope),
- base_devices AS (
- SELECT application_id,device_id,sum(instances) instances,min(first_seen) first_seen,max(last_seen) last_seen,
- bool_or(executed) executed,bool_or(indication) indication,bool_or(installed) installed,bool_or(interface) interface
- FROM scopes GROUP BY application_id,device_id),
  additional_devices AS (SELECT * FROM (`+additional+`) selected WHERE application_id IN (SELECT application_id FROM page_keys)),
  devices AS (
  SELECT application_id,device_id,sum(instances) instances,min(first_seen) first_seen,max(last_seen) last_seen,
  bool_or(executed) executed,bool_or(indication) indication,bool_or(installed) installed,bool_or(interface) interface
- FROM (SELECT * FROM base_devices UNION ALL SELECT * FROM additional_devices) merged GROUP BY application_id,device_id),
+ FROM (SELECT application_id,device_id,instances,first_seen,last_seen,executed,indication,installed,interface FROM scopes UNION ALL SELECT * FROM additional_devices) merged GROUP BY application_id,device_id),
  applications AS (
  SELECT application_id,count(*) devices,sum(instances) instances,min(first_seen) first_seen,max(last_seen) last_seen,
  array_remove(ARRAY[CASE WHEN bool_or(executed) THEN 'executed' END,CASE WHEN bool_or(indication) THEN 'indication' END,CASE WHEN bool_or(installed) THEN 'installed' END,CASE WHEN bool_or(interface) THEN 'interface_recognized' END],NULL) states
