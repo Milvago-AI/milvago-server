@@ -22,6 +22,13 @@ func (tx *discoveryStorageWrites) Exec(ctx context.Context, sql string, args ...
 	return tx.Tx.Exec(ctx, sql, args...)
 }
 
+func (tx *discoveryStorageWrites) SendBatch(ctx context.Context, batch *pgx.Batch) pgx.BatchResults {
+	for _, query := range batch.QueuedQueries {
+		tx.queries = append(tx.queries, query.SQL)
+	}
+	return tx.Tx.SendBatch(ctx, batch)
+}
+
 func TestDiscoveryEmptyStorageFamiliesDoNotWriteOrEraseExistingRows(t *testing.T) {
 	f := newObservabilityFixture(t)
 	ctx := context.Background()
@@ -97,5 +104,26 @@ func TestDiscoveryEmptyStorageFamiliesDoNotWriteOrEraseExistingRows(t *testing.T
 		if err = tx.QueryRow(ctx, "SELECT count(*),min(row_to_json(x)::text) FROM "+table+" x WHERE organization_id=$1 AND device_id=$2", f.org, device).Scan(&rows, &row); err != nil || rows != 1 || row != before[table] {
 			t.Fatalf("empty family changed existing rows in %s: count=%d err=%v", table, rows, err)
 		}
+	}
+	if err = tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// A later FK failure must be reported before the caller can commit any write.
+	failing, err := tenantTx(ctx, f.a.db, f.org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer failing.Rollback(ctx)
+	report.Relations = report.Relations[:1]
+	report.Relations[0].To = "process/missing"
+	if err = f.a.storeDiscoveryReport(r, failing, f.org, device, &report); err == nil {
+		t.Fatal("later write failure was hidden")
+	}
+	if err = failing.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var retained int
+	if err = f.admin.QueryRow(ctx, `SELECT count(*) FROM discovery_entities WHERE organization_id=$1 AND device_id=$2`, f.org, device).Scan(&retained); err != nil || retained != 0 {
+		t.Fatalf("partial batch escaped rollback: rows=%d err=%v", retained, err)
 	}
 }
