@@ -156,8 +156,8 @@ jobs:
       fail-fast: false
       matrix:
         profile: [Smoke, FleetSmoke, FleetDenseSmoke, DNSHintsSmoke]
-        # Compare the shipped budget with two extra slots after reducing pure work.
-        pool: [4, 6]
+        # Compare the shipped budget with a larger bounded pool after tracing admission waits.
+        pool: [4, 8]
     services:
       database:
         image: postgres:18.4@sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636
