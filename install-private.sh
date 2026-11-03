@@ -377,9 +377,25 @@ reuse_stored_public_origin() {
     select_host_binding
   fi
 }
+resolve_database_container() {
+  local database_container
+  database_container=$(run_docker compose -f compose.yaml ps -a -q database) || fail 'The database container could not be inspected.'
+  if [[ -z "$database_container" ]]; then
+    # Recreate a removed container against the configured, preserved volume.
+    # Never publish the base Compose database port while inspecting its data.
+    run_docker compose -f compose.yaml -f - create --no-recreate --no-build database <<'DATABASE_CHECK' >/dev/null || fail 'The database container could not be prepared.'
+services:
+  database:
+    ports: !reset []
+DATABASE_CHECK
+    database_container=$(run_docker compose -f compose.yaml ps -a -q database) || fail 'The prepared database container could not be inspected.'
+  fi
+  [[ -n "$database_container" ]] || fail 'The database container could not be identified.'
+  printf '%s' "$database_container"
+}
 read_stored_public_origin() {
   local existing_database=$1 ready=0 schema_state origin_row attempt
-  [[ -n "$existing_database" ]] || return 0
+  [[ -n "$existing_database" ]] || fail 'The database container must be identified before reading its configuration.'
   run_docker start "$existing_database" >/dev/null || fail 'The existing database could not start.'
   for attempt in {1..30}; do
     if run_docker exec "$existing_database" pg_isready -U postgres >/dev/null 2>&1; then ready=1; break; fi
@@ -717,7 +733,7 @@ fs.chmodSync(path, 0o600);
 ' || fail 'Cannot ensure MILVAGO_SETUP_TOKEN in .env.'
 
 cd "$root"
-database_id=$(run_docker compose -f compose.yaml ps -a -q database) || fail 'The existing database container could not be inspected.'
+database_id=$(resolve_database_container) || fail 'The database could not be prepared for configuration inspection.'
 stored_origin=$(read_stored_public_origin "$database_id") || fail 'The existing configuration could not be read; update stopped.'
 reuse_stored_public_origin "$stored_origin"
 printf 'Milvago URL: %s\n' "$public_origin"

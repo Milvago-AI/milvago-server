@@ -142,6 +142,9 @@ func assertPublishedRule(t *testing.T, content DetectionContent) {
 }
 
 func (fixture *detectionPublishFixture) assertDeviceCatalog(t *testing.T, ctx context.Context, revision int64) {
+	unauthorized := httptest.NewRecorder()
+	fixture.p.a.mux.ServeHTTP(unauthorized, httptest.NewRequest("GET", "/v3/detection-catalog", nil))
+	requireHTTP(t, unauthorized, 401)
 	credential := randomToken()
 	if tag, err := fixture.p.admin.Exec(ctx, "UPDATE devices SET credential_hash=$1 WHERE id=$2", hash(credential), fixture.p.device); err != nil || tag.RowsAffected() != 1 {
 		t.Fatal("device credential fixture missing", err)
@@ -166,6 +169,9 @@ func (fixture *detectionPublishFixture) assertDeviceCatalog(t *testing.T, ctx co
 	var header publisherHeader
 	if err = json.Unmarshal(payload, &header); err != nil || header.Revision != revision {
 		t.Fatal("the device was served another revision", err, header.Revision, revision)
+	}
+	if header.MinEngine.Extension != "0.7.0" || header.MinEngine.Bridge != "0.7.0" {
+		t.Fatal("the signed catalogue understates its required engine", header.MinEngine)
 	}
 	bodyBytes, err := base64.StdEncoding.DecodeString(header.Content)
 	if err != nil {

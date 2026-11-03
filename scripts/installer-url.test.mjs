@@ -1,6 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {readFileSync,mkdtempSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {spawnSync} from 'node:child_process';
 const source=readFileSync('install-private.sh','utf8');
 const start=source.indexOf('valid_public_origin() {');
@@ -50,7 +52,7 @@ test('rerun helpers and final URL resolution remain before generated runtime wri
  const lookup=source.indexOf('stored_origin=$(read_stored_public_origin "$database_id")');
  const resolve=source.indexOf('reuse_stored_public_origin "$stored_origin"',lookup);
  assert.ok(lookup>helpersEnd && resolve>lookup && resolve<source.indexOf('caddyfile="$root/.local/generated/Caddyfile.private"'));
- assert.ok(source.includes('database_id=$(run_docker compose -f compose.yaml ps -a -q database) || fail'));
+ assert.ok(source.includes('database_id=$(resolve_database_container) || fail'));
  assert.ok(!source.includes('SELECT public_url FROM app_config WHERE singleton AND public_url_confirmed'));
 });
 function rerun({value,terminal=false,answer='',database='fixture-db',schema='configured',row='confirmed:https://milvago.example.test',ready=0,schemaStatus=0,rowStatus=0,startStatus=0}={}){
@@ -107,7 +109,7 @@ for(const value of ['milvago.example.test','https://host:0','https://host:65536'
   assert.ok(!r.stdout.includes('RESULT='));
  });
 }
-for(const options of [{database:''},{schema:'empty'},{row:'unconfirmed'}]){
+for(const options of [{schema:'empty'},{row:'unconfirmed'}]){
  test('known bootstrap retains local default '+JSON.stringify(options),()=>{
   const r=rerun(options);assert.equal(r.status,0,r.stderr);
   assert.ok(r.stdout.includes('RESULT=http://localhost:4020|127.0.0.1|explicit=0|prerequisites=1'));
@@ -129,9 +131,48 @@ test('confirmed mixed-case HTTP loopback stays private',()=>{
  assert.ok(r.stdout.includes('RESULT=HTTP://LOCALHOST:4020|127.0.0.1'));
  assert.ok(!r.stderr.includes('HOST_DETECTION'));
 });
-for(const options of [{ready:1},{startStatus:1},{schemaStatus:1},{rowStatus:1},{schema:'incomplete'},{schema:''},{schema:'unexpected'},{row:''},{row:'unconfirmed\nunconfirmed'},{row:'confirmed:'},{row:'confirmed:https://host/path'},{row:'confirmed:https://host\ncommand'}]){
+for(const options of [{database:''},{ready:1},{startStatus:1},{schemaStatus:1},{rowStatus:1},{schema:'incomplete'},{schema:''},{schema:'unexpected'},{row:''},{row:'unconfirmed\nunconfirmed'},{row:'confirmed:'},{row:'confirmed:https://host/path'},{row:'confirmed:https://host\ncommand'}]){
  test('unreadable or malformed existing state cannot fall back to localhost '+JSON.stringify(options),()=>{
   const r=rerun(options);assert.notEqual(r.status,0);assert.ok(!r.stdout.includes('RESULT='));
   assert.ok(!r.stderr.includes('HOST_DETECTION'));
+ });
+}
+function resolveDatabase({initial='fixture-db',after='restored-db',inspectStatus=0,createStatus=0,afterStatus=0}={}){
+ const directory=mkdtempSync(join(tmpdir(),'milvago-database-lookup-'));
+ const env={...process.env,LOOKUP_DIR:directory,LOOKUP_INITIAL:initial,LOOKUP_AFTER:after,LOOKUP_INSPECT_STATUS:String(inspectStatus),LOOKUP_CREATE_STATUS:String(createStatus),LOOKUP_AFTER_STATUS:String(afterStatus)};
+ const result=spawnSync(bash,['-c',`set -euo pipefail
+fail(){ printf '%s\\n' "$*" >&2; exit 1; }
+run_docker(){
+ case "$*" in
+  'compose -f compose.yaml ps -a -q database')
+   if [[ -f "$LOOKUP_DIR/inspected" ]]; then printf '%s' "$LOOKUP_AFTER"; return "$LOOKUP_AFTER_STATUS"; fi
+   : > "$LOOKUP_DIR/inspected"
+   printf '%s' "$LOOKUP_INITIAL"; return "$LOOKUP_INSPECT_STATUS"
+   ;;
+  'compose -f compose.yaml -f - create --no-recreate --no-build database')
+   cat > "$LOOKUP_DIR/create-input"
+   printf 'Docker progress must not enter the container ID\\n'
+   return "$LOOKUP_CREATE_STATUS"
+   ;;
+  *) fail 'Unexpected database lookup call' ;;
+ esac
+}
+${source.slice(start,helpersEnd)}
+database=$(resolve_database_container) || fail 'Database lookup failed.'
+printf 'RESULT=%s' "$database"
+`],{env,encoding:'utf8'});
+ let creation='';try{creation=readFileSync(join(directory,'create-input'),'utf8');}catch{}
+ return {...result,creation};
+}
+test('existing database container is inspected without creation',()=>{
+ const r=resolveDatabase();assert.equal(r.status,0,r.stderr);assert.equal(r.stdout,'RESULT=fixture-db');assert.equal(r.creation,'');
+});
+test('removed container is recreated against its configured volume before origin lookup',()=>{
+ const r=resolveDatabase({initial:''});assert.equal(r.status,0,r.stderr);assert.equal(r.stdout,'RESULT=restored-db');
+ assert.equal(r.creation,'services:\n  database:\n    ports: !reset []\n');
+});
+for(const options of [{inspectStatus:1},{initial:'',createStatus:1},{initial:'',afterStatus:1},{initial:'',after:''}]){
+ test('failed or empty database container lookup stops rerun '+JSON.stringify(options),()=>{
+  const r=resolveDatabase(options);assert.notEqual(r.status,0);assert.ok(!r.stdout.includes('RESULT='));
  });
 }

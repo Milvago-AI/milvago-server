@@ -80,7 +80,7 @@ try{
  assert.ok(!docker([...compose,'config','--services']).split('\n').includes('mail'));
  docker([...compose,'up','-d','database','identity']);
  // Exercise the actual read-only installer helper against this owned PG fixture.
- const database=docker([...compose,'ps','-q','database']).trim();assert.ok(database);
+ let database=docker([...compose,'ps','-q','database']).trim();assert.ok(database);
  const helpersStart=template.indexOf('valid_public_origin() {');
  const helpersEnd=template.indexOf('\nselect_public_origin\n',helpersStart);
  assert.ok(helpersStart>0&&helpersEnd>helpersStart);
@@ -90,6 +90,15 @@ run_docker(){ /usr/bin/docker "$@"; }
 ${template.slice(helpersStart,helpersEnd)}
 read_stored_public_origin "$TEST_EXISTING_DATABASE"
 `],{cwd:root,env:{...process.env,TEST_EXISTING_DATABASE:database},encoding:'utf8',stdio:['ignore','pipe','pipe']});
+ const resolveExistingDatabase=()=>execFileSync('/usr/bin/bash',['-c',`set -euo pipefail
+fail(){ printf '%s\\n' "$*" >&2; exit 1; }
+run_docker(){
+ if [[ "$1" == compose ]]; then shift; /usr/bin/docker compose -p "$TEST_INSTALLER_PROJECT" "$@";
+ else /usr/bin/docker "$@"; fi
+}
+${template.slice(helpersStart,helpersEnd)}
+resolve_database_container
+`],{cwd:root,env:{...process.env,TEST_INSTALLER_PROJECT:project},encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
  const fixtureSQL=sql=>docker(['exec',database,'psql','-X','-v','ON_ERROR_STOP=1','-U','postgres','-d','milvago','-At','-c',sql]);
  assert.equal(readExistingOrigin(),'');
  fixtureSQL('CREATE TABLE public.installer_partial(id integer)');
@@ -100,6 +109,18 @@ read_stored_public_origin "$TEST_EXISTING_DATABASE"
  assert.equal(readExistingOrigin(),'');
  fixtureSQL("UPDATE public.app_config SET public_url='"+origin+"',public_url_confirmed=true");
  assert.equal(readExistingOrigin(),origin);
+ // `compose down` removes containers but keeps named data volumes. Reuse those
+ // bytes and inspect the confirmed origin before generating a runtime override.
+ const volumeName=id=>JSON.parse(docker(['inspect','--format','{{json .Mounts}}',id])).find(mount=>mount.Destination==='/var/lib/postgresql').Name;
+ const preservedVolume=volumeName(database);assert.ok(preservedVolume);
+ const previousDatabase=database;
+ docker([...compose,'stop','database']);docker(['rm',database]);
+ database=resolveExistingDatabase();assert.ok(database && database!==previousDatabase);
+ assert.equal(volumeName(database),preservedVolume);
+ const bindings=JSON.parse(docker(['inspect','--format','{{json .HostConfig.PortBindings}}',database]));
+ assert.ok(bindings===null || Object.keys(bindings).length===0,'Inspection must not publish database ports');
+ assert.equal(readExistingOrigin(),origin);
+ for(const [name,content] of preserved)assert.ok(readFileSync(join(root,name)).equals(content),'Database container recovery changed configuration: '+name);
  fixtureSQL("UPDATE public.app_config SET public_url='https://console.example.test/path'");
  assert.throws(()=>readExistingOrigin());
  fixtureSQL('ALTER TABLE public.app_config RENAME COLUMN public_url TO broken_public_url');

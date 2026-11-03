@@ -120,7 +120,7 @@ func decodePublisherEnvelope(raw []byte, key ed25519.PublicKey, minimum int64, o
 		return h, nil, errors.New("publisher authority invalid")
 	}
 	for _, v := range []string{h.MinEngine.Extension, h.MinEngine.Bridge} {
-		if !versionPattern.MatchString(v) || versionNewer(v, "0.5.0") {
+		if !versionPattern.MatchString(v) || versionNewer(v, detectionEngineVersion) {
 			return h, nil, errors.New("publisher engine incompatible")
 		}
 	}
@@ -350,7 +350,7 @@ func (state *publisherSnapshotState) finishHealth() {
 // Consent rows remain locked through delivery: a completed opt-out cannot race
 // a send assembled from an older consent. Organization IDs stay local.
 func (a *App) publisherSnapshot(ctx context.Context, tx pgx.Tx) (publisherBatch, []publisherConsent, string, bool, error) {
-	batch := publisherBatch{SentAt: time.Now().UTC(), EngineVersion: "0.5.0", ProviderHealth: []publisherHealth{}}
+	batch := publisherBatch{SentAt: time.Now().UTC(), EngineVersion: detectionEngineVersion, ProviderHealth: []publisherHealth{}}
 	var root string
 	if e := tx.QueryRow(ctx, "SELECT organization_id FROM app_config").Scan(&root); e != nil {
 		return batch, nil, "", false, e

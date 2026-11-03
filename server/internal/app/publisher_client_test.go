@@ -20,15 +20,49 @@ import (
 
 func publisherSigned(t *testing.T, content []byte, revision int64, now time.Time) ([]byte, ed25519.PublicKey) {
 	t.Helper()
+	return publisherSignedWithEngines(t, content, revision, now, detectionEngineVersion, detectionEngineVersion)
+}
+
+func publisherSignedWithEngines(t *testing.T, content []byte, revision int64, now time.Time, extension, bridge string) ([]byte, ed25519.PublicKey) {
+	t.Helper()
 	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{61}, 32))
 	sum := sha256.Sum256(content)
-	raw, e := json.Marshal(map[string]any{"kind": "detection_catalog", "schema": 1, "revision": revision, "issued_at": now, "expires_at": now.Add(time.Hour), "min_engine": map[string]string{"extension": "0.5.0", "bridge": "0.5.0"}, "content_hash": hex.EncodeToString(sum[:]), "content": base64.StdEncoding.EncodeToString(content)})
+	raw, e := json.Marshal(map[string]any{"kind": "detection_catalog", "schema": 1, "revision": revision, "issued_at": now, "expires_at": now.Add(time.Hour), "min_engine": map[string]string{"extension": extension, "bridge": bridge}, "content_hash": hex.EncodeToString(sum[:]), "content": base64.StdEncoding.EncodeToString(content)})
 	if e != nil {
 		t.Fatal(e)
 	}
 	envelope, _ := json.Marshal(publisherEnvelope{base64.StdEncoding.EncodeToString(raw), base64.StdEncoding.EncodeToString(ed25519.Sign(key, raw))})
 	return envelope, key.Public().(ed25519.PublicKey)
 }
+func TestPublisherSignedEngineFloors(t *testing.T) {
+	now := time.Now().UTC()
+	for _, test := range []struct {
+		name, extension, bridge string
+		accepted                bool
+	}{
+		{"historical", "0.5.0", "0.5.0", true},
+		{"current", "0.7.0", "0.7.0", true},
+		{"future_extension", "9.9.9", "0.7.0", false},
+		{"future_bridge", "0.7.0", "9.9.9", false},
+		{"malformed_extension", "0.7", "0.7.0", false},
+		{"malformed_bridge", "0.7.0", "0.7", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw, key := publisherSignedWithEngines(t, detectionFactory, 3, now, test.extension, test.bridge)
+			header, content, err := decodePublisherEnvelope(raw, key, 3, "", now)
+			if !test.accepted {
+				if err == nil || err.Error() != "publisher engine incompatible" {
+					t.Fatalf("incompatible signed floor was not refused: %v", err)
+				}
+				return
+			}
+			if err != nil || header.MinEngine.Extension != test.extension || header.MinEngine.Bridge != test.bridge || !bytes.Equal(content, detectionFactory) {
+				t.Fatalf("compatible signed floor or content changed: %v", err)
+			}
+		})
+	}
+}
+
 func TestPublisherSignatureAndNativeBoundary(t *testing.T) {
 	now := time.Now().UTC()
 	raw, key := publisherSigned(t, detectionFactory, 3, now)
@@ -252,6 +286,9 @@ func testPublisherFleetDaily(t *testing.T, f *observabilityFixture, ctx context.
 	var b publisherBatch
 	if e := json.Unmarshal((*bodies)[0], &b); e != nil {
 		t.Fatal(e)
+	}
+	if b.EngineVersion != "0.7.0" {
+		t.Fatal("publisher advertised another catalogue engine", b.EngineVersion)
 	}
 	if b.Fleet == nil || b.Fleet.Enrolled != 1 || b.Fleet.Active30d != 1 || len(b.ProviderHealth) != 0 {
 		t.Fatalf("incorrect fleet batch %+v", b)

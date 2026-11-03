@@ -22,6 +22,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// detectionEngineVersion is the catalog capability level, independent of the server release.
+// This generation requires the coordinated agent and extension upgrade.
+const detectionEngineVersion = "0.7.0"
+
 //go:embed detection_migration.sql
 var detectionMigration string
 
@@ -778,7 +782,7 @@ func (a *App) deviceDetectionCatalog(w http.ResponseWriter, r *http.Request) {
 	}
 	digest := sha256.Sum256(raw)
 	now := time.Now().UTC()
-	header, _ := json.Marshal(map[string]any{"kind": "detection_catalog", "schema": 1, "revision": rev, "issued_at": now, "expires_at": now.Add(24 * time.Hour), "min_engine": map[string]string{"extension": "0.5.0", "bridge": "0.5.0"}, "content_hash": hex.EncodeToString(digest[:]), "content": base64.StdEncoding.EncodeToString(raw)})
+	header, _ := json.Marshal(map[string]any{"kind": "detection_catalog", "schema": 1, "revision": rev, "issued_at": now, "expires_at": now.Add(24 * time.Hour), "min_engine": map[string]string{"extension": detectionEngineVersion, "bridge": detectionEngineVersion}, "content_hash": hex.EncodeToString(digest[:]), "content": base64.StdEncoding.EncodeToString(raw)})
 	signature := ed25519.Sign(a.policyKey(org), header)
 	if e = tx.Commit(r.Context()); e != nil {
 		a.fail(w, e)

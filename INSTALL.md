@@ -134,7 +134,9 @@ enabling it.
 On a later run, leaving `MILVAGO_PUBLIC_URL` unset and pressing Enter (or running without a
 terminal) reuses the URL already confirmed in the database. The new release's verified application
 image replaces the previous application image; the existing checkout, base Compose file, secrets
-and database volume are preserved. Generated installer Compose and gateway files are regenerated.
+and database volume are preserved. A database container removed by `docker compose down` is
+recreated against the configured volume before the stored URL is read. Generated installer Compose
+and gateway files are regenerated.
 An explicit `MILVAGO_PUBLIC_URL=''` still requests localhost. If a supplied or entered URL,
 including a switch between local and public mode, conflicts with the confirmed URL, the installer
 stops rather than silently changing it. An unreadable or incomplete existing database stops the
@@ -221,6 +223,16 @@ proxy or gateway for broader access; session cookies carry `Secure` when the ext
 application URL uses HTTPS.
 
 ## Endpoint agent and browser extension
+
+The new detection catalogue requires catalog engine `0.7.0` in both the agent and browser
+extension. Upgrade both together before activating this server's catalogue, including when
+the instance retains an older edited catalogue: this server conservatively signs every
+catalogue with that minimum. Agent `0.6.4` cannot apply the new catalogue. Its previous cached
+catalogue expires; an explicit upgrade-required refusal does not preserve detection forever.
+The agent and extension `0.7.0` are prepared in source and still await compatible signed
+packages and release qualification. This server image does not prove that they are installed.
+Do not promote the new public installer until its pinned agent bundle has been replaced with
+the qualified release and its exact verified hashes, signatures and versions.
 
 They live in their own repository. An image built from this source alone serves no extension (`/ext/*` answers `503 extension_unconfigured`) and no installer. The prepared installation script fetches and mounts the signed Community agent bundle separately.
 
