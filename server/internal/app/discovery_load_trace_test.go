@@ -209,6 +209,9 @@ func (trace *discoveryLoadTrace) TraceBatchStart(ctx context.Context, _ *pgx.Con
 	class := "batch:other"
 	if len(data.Batch.QueuedQueries) > 0 {
 		first := data.Batch.QueuedQueries[0].SQL
+		if first == `SELECT pg_advisory_xact_lock(hashtextextended($1,713905))` {
+			class = "batch:report_authority"
+		}
 		if strings.HasPrefix(first, "DELETE FROM discovery_entities ") {
 			class = "batch:expiry"
 		}

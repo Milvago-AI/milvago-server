@@ -30,24 +30,7 @@ func (a *App) lockDiscoveryReportAuthority(r *http.Request, report discoveryRepo
 			}
 		}
 	}()
-	// One device cannot race several scopes to bypass per-device storage admission.
-	if _, err = tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock(hashtextextended($1,713905))`, org+"/"+device); err != nil {
-		return nil, err
-	}
-	var settingsRaw []byte
-	var settingsRevision int64
-	err = tx.QueryRow(r.Context(), `SELECT revision,configuration FROM discovery_settings WHERE organization_id=$1 FOR SHARE`, org).Scan(&settingsRevision, &settingsRaw)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, apiError{409, "discovery_disabled", "Discovery is disabled."}
-	}
-	if err != nil {
-		return nil, err
-	}
-	var configuration DiscoverySettings
-	if json.Unmarshal(settingsRaw, &configuration) != nil {
-		return nil, errors.New("invalid stored discovery settings")
-	}
-	catalog, err := currentDiscoveryCatalog(r.Context(), tx, org)
+	settingsRevision, configuration, catalog, err := readDiscoveryReportInputs(r.Context(), tx, org, device)
 	if err != nil {
 		return nil, err
 	}
