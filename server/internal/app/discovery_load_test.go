@@ -380,6 +380,7 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 	readPathFailures := map[string]map[int]int{}
 	var readers sync.WaitGroup
 	people := discoveryLoadReaders(t, f, 100)
+	walEpoch := failureSnapshot.beginWAL(t, f.a.db)
 	// Each real synthetic person reads once every ten seconds; quotas stay active.
 	for n := 0; n < 10; n++ {
 		readers.Add(1)
@@ -522,6 +523,7 @@ phases:
 	// All diagnostic producers have stopped; join its one owned worker before
 	// fixture cleanup. Its capture never holds the workload statistics mutex.
 	failureSnapshot.wait()
+	failureSnapshot.endWAL(t, walEpoch, ingest, reads, ingestCodes)
 	// A break out of phases skips its per-phase log. Always report completed
 	// requests after draining, including an aborted peak, without changing SLOs.
 	sort.Slice(serviceTimes, func(i, j int) bool { return serviceTimes[i] < serviceTimes[j] })

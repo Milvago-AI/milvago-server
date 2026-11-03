@@ -274,6 +274,7 @@ func discoveryLoadWaitEvent(value string) string {
 	switch value {
 	case "relation", "extend", "frozenid", "page", "tuple", "transactionid", "virtualxid", "object", "userlock", "advisory", "spectoken", "applytransaction",
 		"ClientRead", "ClientWrite", "DataFileRead", "DataFileWrite", "DataFileExtend", "DataFileSync", "WALWrite", "WALSync", "BufFileRead", "BufFileWrite",
+		"WalSync", "WalWrite", "WalInitSync", "WalInitWrite", "WalCopySync", "WalCopyRead", "WalCopyWrite", "WalRead",
 		"BufferContent", "BufferMapping", "LockFastPath", "LockManager", "WALInsert", "XactSLRU", "ProcArray", "ProcArrayGroupUpdate", "XactGroupUpdate", "SyncRep", "MessageQueueReceive", "MessageQueueSend", "ParallelFinish", "PgSleep":
 		return value
 	case "":
@@ -377,5 +378,16 @@ func TestDiscoveryLoadActivitySummaryAggregatesWithoutPIDs(t *testing.T) {
 	}
 	if strings.Contains(actual, "12345") || strings.Contains(actual, "123499") || discoveryLoadActivityState("synthetic-secret") != "other" || discoveryLoadWaitType("synthetic-secret") != "other" || discoveryLoadWaitEvent("synthetic-secret") != "other" {
 		t.Fatal("database summary retained identity or dynamic labels")
+	}
+}
+
+func TestDiscoveryLoadWALWaitEventsKeepStaticNames(t *testing.T) {
+	for _, event := range []string{"WalSync", "WalWrite", "WalInitSync", "WalInitWrite", "WalCopySync", "WalCopyRead", "WalCopyWrite", "WalRead", "WALSync", "WALWrite"} {
+		if discoveryLoadWaitEvent(event) != event {
+			t.Fatal("known WAL wait lost its static name")
+		}
+	}
+	if discoveryLoadWaitEvent("WalSyntheticSecret") != "other" {
+		t.Fatal("unknown WAL wait escaped the static allowlist")
 	}
 }
