@@ -10,6 +10,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/tetratelabs/wazero"
+	"github.com/tetratelabs/wazero/api"
 )
 
 type discoveryLoadTrace struct {
@@ -186,9 +188,100 @@ func (trace *discoveryLoadTrace) logFailure(t *testing.T) {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	t.Log("SQL wall timings overlap across concurrent requests; they are not CPU time or additive components of workload wall time. Event-slot waiting before pool acquisition is not traced.")
+	t.Log("Stage wall timings overlap across concurrent requests; they are not CPU time or additive components of workload wall time. Event-slot waiting before pool acquisition is not traced.")
 	for _, key := range keys {
 		value := snapshot[key]
-		t.Logf("load DB stage=%s count=%d total=%s max=%s errors=%d", key, value.count, value.total, value.maximum, value.failures)
+		t.Logf("load stage=%s count=%d total=%s max=%s errors=%d", key, value.count, value.total, value.maximum, value.failures)
 	}
 }
+
+// Install only for an isolated, non-parallel load profile. Do not initialize the
+// lazy runtime here: its first real caller must still own the compilation cost.
+func instrumentDiscoveryLoadWASM(t *testing.T, trace *discoveryLoadTrace) {
+	t.Helper()
+	original := sharedDiscoveryRuntime
+	sharedDiscoveryRuntime = func() (*dlpRuntime, error) {
+		span := trace.span("wasm:runtime")
+		base, err := original()
+		trace.finish(span, time.Since(span.start), err != nil)
+		if err != nil {
+			return base, err
+		}
+		copy := *base
+		copy.runtime = &discoveryLoadWASMRuntime{Runtime: base.runtime, trace: trace}
+		return &copy, nil
+	}
+	// Register before constructing the App: LIFO cleanup restores the factory
+	// only after the App, its workers and its runtime DB pool have closed.
+	t.Cleanup(func() { sharedDiscoveryRuntime = original })
+}
+
+type discoveryLoadWASMRuntime struct {
+	wazero.Runtime
+	trace *discoveryLoadTrace
+}
+
+func (runtime *discoveryLoadWASMRuntime) InstantiateModule(ctx context.Context, compiled wazero.CompiledModule, config wazero.ModuleConfig) (api.Module, error) {
+	span := runtime.trace.span("wasm:instantiate")
+	module, err := runtime.Runtime.InstantiateModule(ctx, compiled, config)
+	runtime.trace.finish(span, time.Since(span.start), err != nil)
+	if module == nil {
+		return module, err
+	}
+	return &discoveryLoadWASMModule{Module: module, trace: runtime.trace}, err
+}
+
+type discoveryLoadWASMModule struct {
+	api.Module
+	trace *discoveryLoadTrace
+}
+
+func (module *discoveryLoadWASMModule) ExportedFunction(name string) api.Function {
+	function := module.Module.ExportedFunction(name)
+	if function == nil {
+		return nil
+	}
+	class := ""
+	switch name {
+	case "discovery_alloc":
+		class = "wasm:alloc"
+	case "discovery_call":
+		class = "wasm:ordinary_call"
+	case "discovery_call_prevalidated_report":
+		class = "wasm:prevalidated_report"
+	default:
+		return function
+	}
+	return &discoveryLoadWASMFunction{Function: function, trace: module.trace, class: class}
+}
+
+func (module *discoveryLoadWASMModule) Close(ctx context.Context) error {
+	span := module.trace.span("wasm:close")
+	err := module.Module.Close(ctx)
+	module.trace.finish(span, time.Since(span.start), err != nil)
+	return err
+}
+
+type discoveryLoadWASMFunction struct {
+	api.Function
+	trace *discoveryLoadTrace
+	class string
+}
+
+func (function *discoveryLoadWASMFunction) Call(ctx context.Context, args ...uint64) ([]uint64, error) {
+	span := function.trace.span(function.class)
+	values, err := function.Function.Call(ctx, args...)
+	function.trace.finish(span, time.Since(span.start), err != nil)
+	return values, err
+}
+
+func (function *discoveryLoadWASMFunction) CallWithStack(ctx context.Context, stack []uint64) error {
+	span := function.trace.span(function.class)
+	err := function.Function.CallWithStack(ctx, stack)
+	function.trace.finish(span, time.Since(span.start), err != nil)
+	return err
+}
+
+var _ wazero.Runtime = (*discoveryLoadWASMRuntime)(nil)
+var _ api.Module = (*discoveryLoadWASMModule)(nil)
+var _ api.Function = (*discoveryLoadWASMFunction)(nil)

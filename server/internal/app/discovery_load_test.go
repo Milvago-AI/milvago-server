@@ -165,6 +165,7 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 		t.Skip("separate required load smoke: MILVAGO_DISCOVERY_LOAD_SMOKE=1 with an isolated test database")
 	}
 	dbTiming := &discoveryLoadTrace{}
+	instrumentDiscoveryLoadWASM(t, dbTiming)
 	f := newObservabilityFixtureWithTracer(t, dbTiming)
 	t.Cleanup(func() { dbTiming.logFailure(t) })
 	t.Logf("RESOURCE PROFILE: CPUs=%d GOMAXPROCS=%d runtime_pool=%d ingest_slots=%d WASM_slots=4", runtime.NumCPU(), runtime.GOMAXPROCS(0), f.a.db.Config().MaxConns, max(1, int(f.a.db.Config().MaxConns)-2))
