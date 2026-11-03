@@ -64,7 +64,7 @@ func TestPaginatedMetadataFollowsPageSelection(t *testing.T) {
 		name, path, marker        string
 		page, total, maxAggregate int
 	}{
-		{"applications", "/api/discovery/applications?limit=5&q=fixture-page", "WITH page_keys", 5, -1, 6},
+		{"applications", "/api/discovery/applications?limit=5&q=fixture-page", "WITH RECURSIVE identification_keys AS", 5, -1, 6},
 		{"inventory", "/api/discovery/inventory?limit=5&app=fixture-page&regex=app", "matching_keys AS MATERIALIZED", 5, 120, 5},
 		{"encrypted device search", "/api/devices?platform=pagination-fixture&query=Synthetic+pagination&limit=1&offset=1", "SELECT jsonb_build_object('id',d.id", 1, 40, 0},
 	} {
