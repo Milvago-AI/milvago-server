@@ -29,7 +29,7 @@ func (a *App) startDeviceAssociation(w http.ResponseWriter, r *http.Request) {
 		e = tx.Commit(r.Context())
 	}
 	if e != nil {
-		a.fail(w, e)
+		a.failTransaction(w, r, tx, e)
 		return
 	}
 	reply(w, 200, map[string]any{"verification_url": a.browserOrigin() + "/auth/device?token=" + token, "expires_at": expiry})
@@ -94,6 +94,10 @@ func (a *App) deviceAssociationRequest(w http.ResponseWriter, r *http.Request) e
 		hostname = machine
 	}
 	if r.Method == "GET" {
+		// Rendering uses only owned strings; no transaction is needed during I/O.
+		if e = tx.Rollback(r.Context()); e != nil {
+			return e
+		}
 		// A no-referrer navigation gives browser form POSTs an opaque Origin.
 		// Send only the origin, never the one-use association token in the URL.
 		w.Header().Set("Referrer-Policy", "strict-origin")
@@ -196,7 +200,7 @@ func (a *App) unbindDeviceAssociation(w http.ResponseWriter, r *http.Request) {
 		e = tx.Commit(r.Context())
 	}
 	if e != nil {
-		a.fail(w, e)
+		a.failTransaction(w, r, tx, e)
 		return
 	}
 	reply(w, 200, map[string]bool{"ok": true})

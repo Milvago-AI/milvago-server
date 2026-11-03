@@ -735,6 +735,11 @@ func (a *App) v2IngestRequest(w http.ResponseWriter, r *http.Request) error {
 		return e
 	}
 	if len(rejected) > 0 {
+		// A permanent reject writes no batch state. Release device/privacy
+		// locks, the pool connection and the event slot before client I/O.
+		if e = tx.Rollback(r.Context()); e != nil {
+			return e
+		}
 		reply(w, http.StatusBadRequest, map[string]any{"error": "invalid_event", "message": "Remove only the identified invalid events before retrying.", "rejected_ids": rejected})
 		return nil
 	}

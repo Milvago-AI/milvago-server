@@ -267,6 +267,9 @@ func (a *App) ingestDiscoveryReportRequest(w http.ResponseWriter, r *http.Reques
 		if previous != hash {
 			return apiError{409, "snapshot_conflict", "Discovery page changed during retry."}
 		}
+		if err = tx.Rollback(r.Context()); err != nil {
+			return err
+		}
 		reply(w, 200, map[string]bool{"ok": true, "duplicate": true})
 		return nil
 	}

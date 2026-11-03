@@ -773,7 +773,7 @@ func (a *App) deviceDetectionCatalog(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	rev, raw, e := currentDetectionRaw(r.Context(), tx)
 	if e != nil {
-		a.fail(w, e)
+		a.failTransaction(w, r, tx, e)
 		return
 	}
 	digest := sha256.Sum256(raw)

@@ -81,13 +81,13 @@ func (a *App) deviceHeartbeat(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	accepted, e := a.acceptDetectorHealth(r, tx, org, device, body.DetectorHealth)
 	if e != nil {
-		a.fail(w, e)
+		a.failTransaction(w, r, tx, e)
 		return
 	}
 	if body.OSUser != nil {
 		user, e = a.sealIdentity(org, "device-user:"+device, user)
 		if e != nil {
-			a.fail(w, e)
+			a.failTransaction(w, r, tx, e)
 			return
 		}
 	}
@@ -99,7 +99,7 @@ func (a *App) deviceHeartbeat(w http.ResponseWriter, r *http.Request) {
 	var collector []byte
 	if body.CollectorHealth != nil {
 		if !validCollectorHealth(body.CollectorHealth) {
-			a.fail(w, bad("Invalid collector health."))
+			a.failTransaction(w, r, tx, bad("Invalid collector health."))
 			return
 		}
 		collector, _ = json.Marshal(body.CollectorHealth)
@@ -117,7 +117,7 @@ func (a *App) deviceHeartbeat(w http.ResponseWriter, r *http.Request) {
 		e = tx.Commit(r.Context())
 	}
 	if e != nil {
-		a.fail(w, e)
+		a.failTransaction(w, r, tx, e)
 		return
 	}
 	reply(w, 200, map[string]any{"ok": true, "accepted_health_ids": accepted})
