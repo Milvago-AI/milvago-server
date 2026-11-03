@@ -74,7 +74,7 @@ services:
       MILVAGO_SHADOW_METRICS: ${MILVAGO_SHADOW_METRICS:-}
       APP_URL: http://localhost:${MILVAGO_APP_PORT:-4020}
       PUBLIC_URL: ${MILVAGO_PUBLIC_URL:-}
-      DATABASE_URL: postgresql://milvago_runtime:${DB_RUNTIME_PASSWORD}@database:5432/milvago
+      DATABASE_URL: postgresql://milvago_runtime:${DB_RUNTIME_PASSWORD}@database:5432/milvago?pool_max_conns=12
       MIGRATION_DATABASE_URL: postgresql://milvago_migration:${DB_MIGRATION_PASSWORD}@database:5432/milvago
       DB_RUNTIME_ROLE: milvago_runtime
       OIDC_ISSUER: http://localhost:${MILVAGO_IDENTITY_PORT:-4080}/realms/milvago

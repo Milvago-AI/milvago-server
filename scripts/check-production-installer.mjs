@@ -49,6 +49,10 @@ try{
  assert.equal(String(published.services.gateway.ports[0].published),'4020');
  const config=JSON.parse(docker([...compose,'--profile','development-mail','config','--format','json']));
  assert.equal(config.services.application.environment.APP_URL,origin);
+ let runtimePool;
+ try{runtimePool=new URL(config.services.application.environment.DATABASE_URL).searchParams.getAll('pool_max_conns');}
+ catch{assert.fail('Managed runtime database URL is invalid.');}
+ assert.deepEqual(runtimePool,['12']);
  assert.equal(config.services.identity.environment.KC_HOSTNAME,origin);
  assert.deepEqual(config.services.identity.command,['start','--import-realm']);assert.equal(config.services.identity.environment.KC_HTTP_ENABLED,'true');
  assert.deepEqual(config.services.mail.profiles,['development-mail']);assert.equal(config.services.mail.user,'65532:65532');assert.ok(config.services.mail.cap_drop.includes('ALL'));

@@ -139,6 +139,24 @@ retain their prior URL and must be re-enrolled to move.
 
 If the final setup-wizard step returns `502` after an installation made with an earlier installer, rerun the current installer with the same public URL. It repairs the four required Keycloak service-account roles: `manage-clients`, `view-clients`, `manage-identity-providers`, and `view-identity-providers`; it does not grant `realm-admin`. The rerun preserves the database and existing accounts. A `502` can have other causes, so inspect the application and gateway logs when it persists after the rerun.
 
+## Database connection budget
+
+The supplied Compose application URL sets `pool_max_conns=12`, allowing up to 12 runtime
+database connections per application instance. Migration and identity connections are separate.
+Budget the total across all replicas and services against PostgreSQL's `max_connections`.
+
+Running the server with your own `DATABASE_URL`, or replacing the application's environment
+value in a Compose override, retains that URL's parameters. Change its existing `pool_max_conns`
+value when you need a different runtime budget. If the parameter is absent, add `?pool_max_conns=8`,
+or `&pool_max_conns=8` if the URL already has a query string. Smaller limits reduce the number of
+concurrent database requests. A custom URL without this parameter uses PGX's CPU-derived default
+and does not inherit the Compose limit.
+
+The installer preserves an existing checkout and its base `compose.yaml`; it regenerates
+`.local/generated/compose.private.yaml`. An image-only upgrade therefore keeps the base file's
+previous connection budget. Adopt the new value explicitly in the application's database URL
+or a separately applied operator-owned Compose override when upgrading.
+
 ## Build from source
 
 ## Requirements
