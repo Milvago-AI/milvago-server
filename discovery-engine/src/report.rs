@@ -3,6 +3,22 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub fn validate(report: &Report, catalog: &Catalog) -> Result<(), String> {
     let engine = Engine::compile(catalog)?;
+    validate_with_provider(report, catalog, |id| engine.has_provider(id))
+}
+
+/// The trusted host must first compile the exact same catalog bytes successfully.
+/// This only reuses that syntax result; every report-dependent check still runs.
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) fn validate_prevalidated(report: &Report, catalog: &Catalog) -> Result<(), String> {
+    let providers: BTreeSet<_> = catalog.providers.iter().map(|provider| provider.id.as_str()).collect();
+    validate_with_provider(report, catalog, |id| providers.contains(id))
+}
+
+fn validate_with_provider(
+    report: &Report,
+    catalog: &Catalog,
+    has_provider: impl Fn(&str) -> bool,
+) -> Result<(), String> {
     if report.version != VERSION
         || report.catalog_revision != catalog.revision
         || report.page >= report.pages
@@ -112,7 +128,7 @@ pub fn validate(report: &Report, catalog: &Catalog) -> Result<(), String> {
     }
     let mut communications = BTreeSet::new();
     for communication in &report.result.communications {
-        if !engine.has_provider(&communication.provider)
+        if !has_provider(&communication.provider)
             || !matches!(
                 communication.evidence.source,
                 Source::HostFlow | Source::VmFlow | Source::RuntimeFlow | Source::ContainerFlow
@@ -126,7 +142,7 @@ pub fn validate(report: &Report, catalog: &Catalog) -> Result<(), String> {
     }
     let mut queries = BTreeSet::new();
     for query in &report.result.queries {
-        if !engine.has_provider(&query.provider)
+        if !has_provider(&query.provider)
             || query.evidence.source != Source::HostDnsQuery
             || query.evidence.fields != vec![Field::RemoteHost]
             || !queries.insert((&query.entity_id, &query.provider))

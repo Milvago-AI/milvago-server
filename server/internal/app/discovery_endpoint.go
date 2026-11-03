@@ -287,7 +287,7 @@ func (a *App) ingestDiscoveryReportRequest(w http.ResponseWriter, r *http.Reques
 			return err
 		}
 	}
-	if err = discoveryEngine(r.Context(), map[string]any{"op": "validate_report", "catalog": catalog, "report": json.RawMessage(raw)}, nil); err != nil {
+	if err = a.validateDiscoveryReport(r.Context(), org, catalog, json.RawMessage(raw)); err != nil {
 		return err
 	}
 	now := time.Now().Unix()

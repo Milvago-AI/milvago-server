@@ -49,16 +49,17 @@ type App struct {
 	publicOIDCMu sync.Mutex
 	// realmOIDC holds the browser OIDC runtime of each organization realm other than the
 	// root one, which stays in publicOIDC (Enterprise: one Keycloak realm per organization).
-	realmOIDC      sync.Map
-	metrics        *appMetrics
-	metricsOnce    sync.Once
-	exportMetrics  exportMetricSnapshot
-	exportHTTP     exportHTTPClient
-	ingestRate     ingestLimiter
-	deviceRouting  deviceRoutingCache
-	discoveryReads discoveryReadCache
-	publicRate     ingestLimiter
-	publicTotals   ingestLimiter
+	realmOIDC         sync.Map
+	metrics           *appMetrics
+	metricsOnce       sync.Once
+	exportMetrics     exportMetricSnapshot
+	exportHTTP        exportHTTPClient
+	ingestRate        ingestLimiter
+	deviceRouting     deviceRoutingCache
+	discoveryReads    discoveryReadCache
+	discoveryCompiles discoveryCompileCache
+	publicRate        ingestLimiter
+	publicTotals      ingestLimiter
 	// root caches the root organization once setup has named it (Enterprise exports).
 	root atomic.Pointer[string]
 	// mcpClients caches, per OAuth client, whether its tokens may open /mcp

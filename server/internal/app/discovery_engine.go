@@ -26,6 +26,10 @@ var sharedDiscoveryRuntime = sync.OnceValues(func() (*dlpRuntime, error) {
 })
 
 func discoveryEngine(ctx context.Context, request any, destination any) error {
+	return callDiscoveryEngine(ctx, request, destination, "discovery_call")
+}
+
+func callDiscoveryEngine(ctx context.Context, request any, destination any, callName string) error {
 	input, err := json.Marshal(request)
 	if err != nil || len(input) > 2<<20 {
 		return bad("Discovery input exceeds its limits.")
@@ -47,7 +51,7 @@ func discoveryEngine(ctx context.Context, request any, destination any) error {
 		return apiError{503, "discovery_unavailable", "Discovery evaluation is unavailable."}
 	}
 	defer module.Close(context.Background())
-	alloc, call := module.ExportedFunction("discovery_alloc"), module.ExportedFunction("discovery_call")
+	alloc, call := module.ExportedFunction("discovery_alloc"), module.ExportedFunction(callName)
 	if alloc == nil || call == nil || module.Memory() == nil {
 		return errors.New("invalid discovery engine exports")
 	}
