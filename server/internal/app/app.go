@@ -700,6 +700,8 @@ func (a *App) handler(permission string, h apiHandler, mode credentialMode) http
 		defer tx.Rollback(r.Context())
 		r, e = a.authorizeConsoleRequest(r, tx, s, permission)
 		if e != nil {
+			// End authority locks before an error can block on client I/O.
+			tx.Rollback(r.Context())
 			a.fail(w, dataReadFailure(r, e))
 			return
 		}

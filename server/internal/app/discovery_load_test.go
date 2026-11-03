@@ -165,6 +165,10 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 	if os.Getenv("MILVAGO_DISCOVERY_LOAD_SMOKE") != "1" {
 		t.Skip("separate required load smoke: MILVAGO_DISCOVERY_LOAD_SMOKE=1 with an isolated test database")
 	}
+	// Sampling is global: this profile runs alone, never in parallel. Keep
+	// bootstrap and cleanup outside the measured blocking epoch.
+	runtime.SetBlockProfileRate(0)
+	defer runtime.SetBlockProfileRate(0)
 	dbTiming := &discoveryLoadTrace{}
 	instrumentDiscoveryLoadWASM(t, dbTiming)
 	f := newObservabilityFixtureWithTracer(t, dbTiming)
@@ -328,7 +332,6 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 	// Keep both the client concurrency and queue bounded; WASM remains capped at 4.
 	// At 99 arrivals/s a 200 ms handler needs at least 20 concurrent clients.
 	// Bound the generator at 32 so it does not impose its own lower throughput.
-	dbTiming.begin()
 	for n := 0; n < 32; n++ {
 		workers.Add(1)
 		go func() {
@@ -433,6 +436,8 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 	}
 	minimumOffered := 0
 	cpuBefore := discoveryLoadCPUStats()
+	dbTiming.begin()
+	runtime.SetBlockProfileRate(1_000_000)
 	measurementStarted := time.Now()
 phases:
 	for phase, rate := range rates {
@@ -489,6 +494,7 @@ phases:
 	workers.Wait()
 	close(stop)
 	readers.Wait()
+	runtime.SetBlockProfileRate(0)
 	cpuAfter := discoveryLoadCPUStats()
 	quota, _ := os.ReadFile("/sys/fs/cgroup/cpu.max")
 	t.Logf("application CPU: quota=%q wall=%s usage=%s throttled=%s throttled periods=%d/%d", strings.TrimSpace(string(quota)), time.Since(measurementStarted), time.Duration(cpuAfter["usage_usec"]-cpuBefore["usage_usec"])*time.Microsecond, time.Duration(cpuAfter["throttled_usec"]-cpuBefore["throttled_usec"])*time.Microsecond, cpuAfter["nr_throttled"]-cpuBefore["nr_throttled"], cpuAfter["nr_periods"]-cpuBefore["nr_periods"])
