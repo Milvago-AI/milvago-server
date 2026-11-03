@@ -1,10 +1,7 @@
 package app
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 
@@ -19,22 +16,9 @@ func (a *App) effectiveDiscovery(ctx context.Context, tx pgx.Tx, org, device str
 	if !shadow.Config.Collection.Enabled {
 		configuration = DiscoverySettings{IntervalSeconds: configuration.IntervalSeconds}
 	}
-	var canonical any
-	decoder := json.NewDecoder(bytes.NewReader(catalog))
-	decoder.UseNumber()
-	if err = decoder.Decode(&canonical); err != nil {
-		return configuration, "", err
-	}
-	raw, err := json.Marshal(struct {
-		SourceRevision int64             `json:"source_revision"`
-		Configuration  DiscoverySettings `json:"configuration"`
-		Catalog        any               `json:"catalog"`
-	}{sourceRevision, configuration, canonical})
-	if err != nil {
-		return configuration, "", err
-	}
-	digest := sha256.Sum256(raw)
-	return configuration, hex.EncodeToString(digest[:]), nil
+	// Consent is freshly resolved above, even when the pure digest is reusable.
+	fingerprint, err := a.discoveryFingerprints.fingerprint(org, sourceRevision, configuration, catalog)
+	return configuration, fingerprint, err
 }
 
 func discoveryDeliveryRevision(ctx context.Context, tx pgx.Tx, org, device, fingerprint string) (int64, error) {
