@@ -480,6 +480,11 @@ func OpenRuntimeDatabase(ctx context.Context, c Config) (*pgxpool.Pool, error) {
 }
 
 func tenantTx(ctx context.Context, p *pgxpool.Pool, org string) (pgx.Tx, error) {
+	// Acquisition is explicit after credential/body work, never here: API key
+	// usage touches also call tenantTx. Only reject reopening a finished read.
+	if e := checkDiscoverySummaryAdmissionOpen(ctx); e != nil {
+		return nil, e
+	}
 	tx, e := p.Begin(ctx)
 	if e != nil {
 		return nil, e

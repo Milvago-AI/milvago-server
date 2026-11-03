@@ -137,6 +137,8 @@ func (trace *discoveryLoadTrace) TraceRelease(_ *pgxpool.Pool, data pgxpool.Trac
 // parameters, error details, identities or connection strings are retained.
 func discoveryLoadQueryClass(sql string) string {
 	switch {
+	case strings.HasPrefix(sql, "SELECT s.mfa,coalesce(s.login_trusted_until>clock_timestamp(),false)"):
+		return "summary_session"
 	case strings.HasPrefix(sql, "SELECT consume_rate_budget("):
 		return "rate"
 	case strings.HasPrefix(sql, "SELECT granted,valid_for_ms FROM reserve_rate_budget("):

@@ -193,7 +193,7 @@ jobs:
       # Each unchanged load profile owns a fresh fixture and its own bounded budget.
       - run: |
           result=0
-          go test ./internal/app -run "^TestDiscoveryLoad${DISCOVERY_LOAD_PROFILE}$" -count=1 -timeout=8m -cpuprofile="$RUNNER_TEMP/discovery.cpu" -blockprofile="$RUNNER_TEMP/discovery.block" -blockprofilerate=0 || result=$?
+          go test ./internal/app -run "^TestDiscoveryLoad${DISCOVERY_LOAD_PROFILE}$" -v -count=1 -timeout=8m -cpuprofile="$RUNNER_TEMP/discovery.cpu" -blockprofile="$RUNNER_TEMP/discovery.block" -blockprofilerate=0 || result=$?
           if [ "$result" -ne 0 ]; then
             go tool pprof -top -nodecount=100 "$RUNNER_TEMP/discovery.cpu" || :
             go tool pprof -top -cum -nodecount=100 "$RUNNER_TEMP/discovery.cpu" || :

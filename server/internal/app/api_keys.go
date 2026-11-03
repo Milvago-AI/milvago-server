@@ -116,6 +116,12 @@ func (a *App) apiKeyTx(r *http.Request) (pgx.Tx, *Session, error) {
 			return nil, nil, e
 		}
 	}
+	// The usage touch and body handling have already ended their short work.
+	// Admission applies only to the main request transaction. The key is still
+	// re-read below under its existing current-state FOR SHARE lock.
+	if e := acquireDiscoverySummaryAdmission(ctx, org); e != nil {
+		return nil, nil, e
+	}
 	tx, e := tenantTx(ctx, a.db, org)
 	if e != nil {
 		return nil, nil, e

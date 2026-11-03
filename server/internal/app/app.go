@@ -59,6 +59,7 @@ type App struct {
 	discoveryReads        discoveryReadCache
 	discoveryCompiles     discoveryCompileCache
 	discoveryFingerprints discoveryFingerprintCache
+	discoverySummaries    discoverySummaryRegistry
 	publicRate            ingestLimiter
 	publicTotals          ingestLimiter
 	// root caches the root organization once setup has named it (Enterprise exports).
@@ -593,7 +594,11 @@ func (a *App) sessionOnly(pattern, permission string, h apiHandler) {
 
 func (a *App) register(pattern, permission string, h apiHandler, mode credentialMode) {
 	a.routes = append(a.routes, registeredRoute{pattern, permission, mode})
-	a.mux.HandleFunc(pattern, a.handler(permission, h, mode))
+	handler := a.handler(permission, h, mode)
+	if pattern == "GET /api/discovery/applications" {
+		handler = discoverySummaryAdmissionHandler(&a.discoverySummaries, handler)
+	}
+	a.mux.HandleFunc(pattern, handler)
 }
 
 // handler builds the authentication and authorization chain for one route. It is
@@ -655,7 +660,20 @@ func (a *App) cookieRouteTx(r *http.Request, opaque string) (pgx.Tx, *Session, e
 	if e = a.readBody(r, budget); e != nil {
 		return nil, nil, e
 	}
+	// The credential, durable request budget and body are resolved before the
+	// summary can wait. Queued readers must not hold a tenant connection.
+	if e = acquireDiscoverySummaryAdmission(r.Context(), s.OrganizationID); e != nil {
+		return nil, nil, e
+	}
 	tx, e := tenantTx(r.Context(), a.db, s.OrganizationID)
+	if e == nil && summaryAdmissionFor(r.Context()) != nil {
+		// Waiting can outlive the browser credential or its sign-in evidence.
+		// Recheck locally; repeating loadSession could refresh OIDC tokens again.
+		if e = revalidateDiscoverySummarySession(r.Context(), tx, s); e != nil {
+			tx.Rollback(r.Context())
+			return nil, nil, e
+		}
+	}
 	return tx, s, e
 }
 
@@ -694,6 +712,7 @@ func (a *App) handler(permission string, h apiHandler, mode credentialMode) http
 		r = r.WithContext(context.WithValue(context.WithValue(r.Context(), routePermissionKey{}, permission), bodyHoldKey{}, hold))
 		tx, s, e := a.routeCredential(w, r, mode)
 		if e != nil {
+			endDiscoverySummaryAdmission(r.Context())
 			a.fail(w, dataReadFailure(r, e))
 			return
 		}
@@ -702,6 +721,7 @@ func (a *App) handler(permission string, h apiHandler, mode credentialMode) http
 		if e != nil {
 			// End authority locks before an error can block on client I/O.
 			tx.Rollback(r.Context())
+			endDiscoverySummaryAdmission(r.Context())
 			a.fail(w, dataReadFailure(r, e))
 			return
 		}
@@ -722,12 +742,16 @@ func (a *App) handler(permission string, h apiHandler, mode credentialMode) http
 		// Reads: GET and HEAD, and MCP, which serves read tools only and commits their
 		// audit inside the handler.
 		if r.Method == "GET" || r.Method == "HEAD" || r.URL.Path == mcpPath {
-			held.end = func() { tx.Rollback(r.Context()) }
+			held.end = func() {
+				tx.Rollback(r.Context())
+				endDiscoverySummaryAdmission(r.Context())
+			}
 		}
 		if e := h(held, r, tx, s); e != nil {
 			a.fail(held, dataReadFailure(r, e))
 		}
 		tx.Rollback(r.Context())
+		endDiscoverySummaryAdmission(r.Context())
 		held.finish()
 	}
 }
