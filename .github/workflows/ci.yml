@@ -149,7 +149,7 @@ jobs:
         working-directory: server
 
   discovery-load:
-    name: discovery-load (${{ matrix.profile }}, ${{ matrix.pool.name }})
+    name: discovery-load (${{ matrix.profile }}, ${{ matrix.database.name }})
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     needs: discovery-integration
@@ -157,11 +157,11 @@ jobs:
       fail-fast: false
       matrix:
         profile: [Smoke, FleetSmoke, FleetDenseSmoke, DNSHintsSmoke]
-        # Keep the shipped Compose path as a control for this bounded experiment.
-        # A passing experimental job does not change or qualify a production default.
-        pool:
-          - {name: managed-12, url_suffix: '&pool_max_conns=12'}
-          - {name: experimental-16, url_suffix: '&pool_max_conns=16'}
+        # Match the observed CI database buffer setting, then change only that setting.
+        # Both cases keep the shipped Compose pool; no production setting changes.
+        database:
+          - {name: managed-128MiB, shared_buffers: 128MB}
+          - {name: experimental-512MiB, shared_buffers: 512MB}
     services:
       database:
         image: postgres:18.4@sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636
@@ -169,15 +169,15 @@ jobs:
           POSTGRES_USER: fixture_admin
           POSTGRES_PASSWORD: fixture-only
           POSTGRES_DB: milvago_test
-          POSTGRES_INITDB_ARGS: '--set=wal_compression=off'
+          POSTGRES_INITDB_ARGS: '--set=wal_compression=off --set=shared_buffers=${{ matrix.database.shared_buffers }}'
         options: >-
           --publish 127.0.0.1:5432:5432
           --health-cmd "pg_isready -U fixture_admin -d milvago_test"
           --health-interval 5s --health-timeout 5s --health-retries 12
     env:
       DISCOVERY_FIXTURE_ADMIN_URL: postgres://fixture_admin:fixture-only@127.0.0.1/milvago_test?sslmode=disable
-      # managed-12 matches shipped Compose; experimental-16 is CI-only.
-      TEST_DATABASE_URL: postgres://milvago_runtime:fixture-runtime@127.0.0.1/milvago_test?sslmode=disable${{ matrix.pool.url_suffix }}
+      # Keep the shipped Compose application pool fixed in both database cases.
+      TEST_DATABASE_URL: postgres://milvago_runtime:fixture-runtime@127.0.0.1/milvago_test?sslmode=disable&pool_max_conns=12
       TEST_MIGRATION_DATABASE_URL: postgres://milvago_migration:fixture-migration@127.0.0.1/milvago_test?sslmode=disable
       MILVAGO_REQUIRE_INTEGRATION: '1'
       MILVAGO_DISCOVERY_LOAD_SMOKE: '1'
