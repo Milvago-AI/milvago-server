@@ -170,10 +170,11 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 		ID         string `json:"id"`
 		Credential string `json:"credential"`
 		Revision   int64  `json:"-"`
+		Peer       string `json:"-"`
 	}
 	devices := make([]device, fleet)
 	for n := range devices {
-		devices[n] = device{ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", n+1), Credential: randomToken()}
+		devices[n] = device{ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", n+1), Credential: randomToken(), Peer: fmt.Sprintf("10.%d.%d.%d:40000", (n+1)>>16, ((n+1)>>8)&255, (n+1)&255)}
 	}
 	records := []map[string]string{}
 	for _, d := range devices {
@@ -198,6 +199,10 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 			method = "GET"
 		}
 		request := httptest.NewRequest(method, path, bytes.NewReader(raw))
+		// Model distinct socket peers. Sharing httptest's default address would
+		// measure the 6,000/minute single-peer abuse guard during preparation.
+		// The actual handler and its peer/global/device limits remain enabled.
+		request.RemoteAddr = d.Peer
 		request.Header.Set("Authorization", "Bearer "+d.Credential)
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
@@ -207,9 +212,9 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 	if seed != nil {
 		seed(f)
 	}
-	bootstrap := time.NewTicker(20 * time.Millisecond)
+	// Preparation is sequential and bounded by the fleet. Artificial pacing here
+	// would add ten minutes to the five profiles before the measured arrivals.
 	for n := range devices {
-		<-bootstrap.C
 		response := call(devices[n], "/v1/discovery/policy", nil)
 		requireHTTP(t, response, 200)
 		var signed struct {
@@ -230,7 +235,6 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 			t.Logf("Prepared %d/%d synthetic device identities; no agents installed", n+1, fleet)
 		}
 	}
-	bootstrap.Stop()
 	for _, query := range []string{
 		`INSERT INTO discovery_entities(organization_id,device_id,scope,id,kind,sequence) SELECT $1,d.id,'endpoint','process/'||n,'process',1 FROM devices d CROSS JOIN generate_series(0,$2::integer)n WHERE d.organization_id=$1 AND d.id::text LIKE '00000000-0000-4000-8000-%'`,
 		`INSERT INTO discovery_identifications(organization_id,device_id,scope,entity_id,application_id,signature_id,signature_revision,state,evidence,sequence) SELECT $1,d.id,'endpoint','process/'||n,'openclaw','openclaw.process',1,'executed','[]',1 FROM devices d CROSS JOIN generate_series(0,$2::integer)n WHERE d.organization_id=$1 AND d.id::text LIKE '00000000-0000-4000-8000-%'`,
@@ -240,6 +244,7 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 			t.Fatal(err)
 		}
 	}
+	// Bulk fixture inserts need planner statistics before the first aggregate.
 	for _, table := range []string{"devices", "discovery_entities", "discovery_identifications", "discovery_events"} {
 		if _, err := f.admin.Exec(ctx, "ANALYZE "+table); err != nil {
 			t.Fatal(err)
@@ -277,7 +282,6 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 	runtime.ReadMemStats(&memoryBefore)
 	goroutinesBefore := runtime.NumGoroutine()
 	fdBefore, _ := os.ReadDir("/proc/self/fd")
-
 	entities := []any{}
 	matches := []any{}
 	observed := time.Now().Unix()
@@ -315,7 +319,9 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 	// Independent agents are concurrent clients. Four serial clients would cap
 	// the generator at 4 / handler latency before the server's own admission.
 	// Keep both the client concurrency and queue bounded; WASM remains capped at 4.
-	for n := 0; n < 16; n++ {
+	// At 99 arrivals/s a 200 ms handler needs at least 20 concurrent clients.
+	// Bound the generator at 32 so it does not impose its own lower throughput.
+	for n := 0; n < 32; n++ {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
