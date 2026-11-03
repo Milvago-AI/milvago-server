@@ -173,7 +173,7 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 	instrumentDiscoveryLoadWASM(t, dbTiming)
 	f := newObservabilityFixtureWithTracer(t, dbTiming)
 	failureSnapshot := newDiscoveryLoadFailureSnapshot(t)
-	t.Cleanup(func() { dbTiming.logFailure(t) })
+	t.Cleanup(func() { dbTiming.logEpoch(t) })
 	t.Logf("RESOURCE PROFILE: CPUs=%d GOMAXPROCS=%d runtime_pool=%d ingest_slots=%d WASM_slots=4", runtime.NumCPU(), runtime.GOMAXPROCS(0), f.a.db.Config().MaxConns, max(1, int(f.a.db.Config().MaxConns)-2))
 	ctx := context.Background()
 	type device struct {
@@ -202,12 +202,7 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 			t.Fatal(err)
 		}
 	}
-	call := func(d device, path string, body any) *httptest.ResponseRecorder {
-		raw, _ := json.Marshal(body)
-		method := "POST"
-		if body == nil {
-			method = "GET"
-		}
+	callRaw := func(d device, path, method string, raw []byte) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(method, path, bytes.NewReader(raw))
 		// Model distinct socket peers. Sharing httptest's default address would
 		// measure the 6,000/minute single-peer abuse guard during preparation.
@@ -218,6 +213,14 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 		response := httptest.NewRecorder()
 		f.a.Handler().ServeHTTP(response, request)
 		return response
+	}
+	call := func(d device, path string, body any) *httptest.ResponseRecorder {
+		raw, _ := json.Marshal(body)
+		method := "POST"
+		if body == nil {
+			method = "GET"
+		}
+		return callRaw(d, path, method, raw)
 	}
 	if seed != nil {
 		seed(f)
@@ -307,6 +310,10 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 			queries = append(queries, map[string]any{"entity_id": "host/dns", "provider": provider, "evidence": map[string]any{"fact_id": "fact/dns-" + provider, "source": "host_dns_query", "observed_at": observed, "fields": []string{"remote_host"}}})
 		}
 	}
+	reportTemplate, templateError := newDiscoveryLoadReportTemplate(entities, matches, queries)
+	if templateError != nil {
+		t.Fatal("invalid synthetic report template")
+	}
 	type job struct {
 		index     int
 		sequence  int64
@@ -340,10 +347,10 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 			for job := range work {
 				received := time.Now()
 				d := devices[job.index]
-				report := map[string]any{"version": 1, "catalog_revision": discoveryFixtureCatalogRevision, "settings_revision": d.Revision, "run_id": nil, "scope": "endpoint", "sequence": job.sequence, "page": 0, "pages": 1, "observed_at": time.Now().Unix(), "complete": false, "entities": entities, "relations": []any{}, "coverage": []any{}, "result": map[string]any{"identifications": matches, "communications": []any{}, "queries": queries, "evaluated_facts": 100, "unknown_conditions": 0}}
+				reportObserved := time.Now().Unix()
 				start := time.Now()
 				activeIngest.Add(1)
-				response := call(d, "/v1/discovery/reports", report)
+				response := callRaw(d, "/v1/discovery/reports", "POST", reportTemplate.encode(d.Revision, job.sequence, reportObserved))
 				elapsed := time.Since(start)
 				activeIngest.Add(-1)
 				firstFailure, slowResponse := false, false
@@ -516,6 +523,7 @@ phases:
 	workers.Wait()
 	close(stop)
 	readers.Wait()
+	dbTiming.end()
 	runtime.SetBlockProfileRate(0)
 	cpuAfter := discoveryLoadCPUStats()
 	quota, _ := os.ReadFile("/sys/fs/cgroup/cpu.max")

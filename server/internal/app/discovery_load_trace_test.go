@@ -18,6 +18,7 @@ type discoveryLoadTrace struct {
 	sync.Mutex
 	epoch        uint64
 	active       bool
+	openAtEnd    int
 	stats        map[string]discoveryLoadTiming
 	transactions map[*pgx.Conn]discoveryLoadSpan
 }
@@ -42,8 +43,23 @@ func (trace *discoveryLoadTrace) begin() {
 	defer trace.Unlock()
 	trace.epoch++
 	trace.active = true
+	trace.openAtEnd = 0
 	trace.stats = make(map[string]discoveryLoadTiming)
 	trace.transactions = make(map[*pgx.Conn]discoveryLoadSpan)
+}
+
+// Freeze the measured epoch before verification/cleanup can add SQL or waiting.
+// A tracked transaction crossing this boundary is counted without retaining
+// its connection pointer or inventing a completed transaction duration.
+func (trace *discoveryLoadTrace) end() {
+	trace.Lock()
+	defer trace.Unlock()
+	if !trace.active {
+		return
+	}
+	trace.active = false
+	trace.openAtEnd = len(trace.transactions)
+	trace.transactions = nil
 }
 
 func (trace *discoveryLoadTrace) span(class string) discoveryLoadSpan {
@@ -243,12 +259,17 @@ func (trace *discoveryLoadTrace) TraceBatchEnd(ctx context.Context, _ *pgx.Conn,
 	}
 }
 
-func (trace *discoveryLoadTrace) logFailure(t *testing.T) {
+func (trace *discoveryLoadTrace) logEpoch(t *testing.T) {
 	t.Helper()
-	if !t.Failed() {
+	// Normal completion freezes immediately after draining foreground workers.
+	// Cleanup also freezes an interrupted measured epoch; setup has no epoch.
+	trace.end()
+	trace.Lock()
+	if trace.epoch == 0 {
+		trace.Unlock()
 		return
 	}
-	trace.Lock()
+	epoch, openAtEnd := trace.epoch, trace.openAtEnd
 	snapshot := make(map[string]discoveryLoadTiming, len(trace.stats))
 	for key, value := range trace.stats {
 		snapshot[key] = value
@@ -259,6 +280,8 @@ func (trace *discoveryLoadTrace) logFailure(t *testing.T) {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
+	t.Logf("load stage summary: epoch=%d classes=%d tracked_transactions_open_at_epoch_end=%d", epoch, len(keys), openAtEnd)
+	t.Log("Only completed spans inside the measured epoch are retained. Background refresh transactions may normally outlive foreground drain; open-at-end is not a leak assertion. Late completions and verification SQL are excluded.")
 	t.Log("Stage wall timings overlap across concurrent requests; they are not CPU time or additive components of workload wall time. Event-slot waiting before pool acquisition is not traced. transaction_hold spans successful BEGIN response through terminal COMMIT/ROLLBACK response and includes application/WASM gaps; release_without_terminal and tracking_dropped are separate diagnostics.")
 	for _, key := range keys {
 		value := snapshot[key]
@@ -397,4 +420,29 @@ func TestDiscoveryLoadTransactionTraceBoundsAndEpochs(t *testing.T) {
 	if len(trace.transactions) != 0 || len(trace.stats) != 0 {
 		t.Fatal("a new measurement retained prior transaction keys or timings")
 	}
+}
+
+func TestDiscoveryLoadTraceEndFreezesMeasuredEpoch(t *testing.T) {
+	trace := &discoveryLoadTrace{}
+	trace.begin()
+	conn := new(pgx.Conn)
+	trace.transactionBoundary(conn, trace.span("query:begin"), "BEGIN", false)
+	trace.finish(trace.span("query:other"), 7*time.Millisecond, false)
+	late := trace.span("query:commit")
+	trace.end()
+	if trace.active || trace.openAtEnd != 1 || len(trace.transactions) != 0 || trace.stats["query:other"].count != 1 {
+		t.Fatal("ending the epoch lost completed work or retained connection pointers")
+	}
+	trace.finish(late, time.Second, true)
+	trace.transactionBoundary(conn, late, "COMMIT", false)
+	trace.TraceRelease(nil, pgxpool.TraceReleaseData{Conn: conn})
+	trace.end()
+	if trace.span("query:other").epoch != 0 || len(trace.stats) != 1 || trace.openAtEnd != 1 || len(trace.transactions) != 0 {
+		t.Fatal("post-epoch work changed the frozen diagnostic")
+	}
+	trace.begin()
+	if !trace.active || trace.openAtEnd != 0 || len(trace.stats) != 0 || len(trace.transactions) != 0 {
+		t.Fatal("a new epoch retained the prior measurement")
+	}
+	trace.end()
 }
