@@ -165,6 +165,7 @@ func runDiscoveryLoadProfile(t *testing.T, fleet, objectsPerDevice int, dnsHints
 		t.Skip("separate required load smoke: MILVAGO_DISCOVERY_LOAD_SMOKE=1 with an isolated test database")
 	}
 	f := newObservabilityFixture(t)
+	t.Logf("RESOURCE PROFILE: CPUs=%d GOMAXPROCS=%d runtime_pool=%d ingest_slots=%d WASM_slots=4", runtime.NumCPU(), runtime.GOMAXPROCS(0), f.a.db.Config().MaxConns, max(1, int(f.a.db.Config().MaxConns)-2))
 	ctx := context.Background()
 	type device struct {
 		ID         string `json:"id"`
