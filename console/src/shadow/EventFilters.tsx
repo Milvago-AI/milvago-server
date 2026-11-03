@@ -86,7 +86,7 @@ export function EventFilters({ criteria, change, views, children, extraCount = 0
       if (items.length > 20) return invalid({ kind: 'limit', value: field?.label });
       for (const entry of items) {
         if (criterionValues(criteria, key).includes(entry)) continue;
-        if (new TextEncoder().encode(entry).length > (key === 'query' || key.startsWith('dlp_') ? 100 : 200) || /[\r\n\u0000]/u.test(entry)) return invalid({ kind: 'limit', value: field?.label });
+        if (new TextEncoder().encode(entry).length > (key === 'query' || key.startsWith('dlp_') ? 100 : 200) || entry.includes('\r') || entry.includes('\n') || entry.includes('\0')) return invalid({ kind: 'limit', value: field?.label });
         const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
         if ((!usesRegex(next, key) && ((key === 'device_id' && !uuid.test(entry)) || (key === 'actor_id' && entry !== 'unknown' && !uuid.test(entry) && !/^os:[0-9a-f]{64}$/.test(entry)))) || (!usesRegex(next, key) && field?.options && !field.options.some(([value]) => value === entry))) return invalid({ kind: 'invalid', value: field?.label });
       }

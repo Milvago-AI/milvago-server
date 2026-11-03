@@ -336,32 +336,83 @@ inspect_docker_cli
 
 valid_public_origin() {
   local origin=$1
-  [[ "$origin" =~ ^https?://[A-Za-z0-9][A-Za-z0-9.-]*(:([0-9]{1,5}))?$ ]] || return 1
+  [[ "$origin" =~ ^[hH][tT][tT][pP][sS]?://[A-Za-z0-9][A-Za-z0-9.-]*(:([0-9]{1,5}))?$ ]] || return 1
   local port=${BASH_REMATCH[2]:-}
   [[ -z "$port" ]] || (( 10#$port >= 1 && 10#$port <= 65535 ))
 }
 select_public_origin() {
+  public_origin_explicit=0
+  [[ ! -v MILVAGO_PUBLIC_URL ]] || public_origin_explicit=1
   public_origin=${MILVAGO_PUBLIC_URL:-}
   if [[ -z "$public_origin" && ! -v MILVAGO_PUBLIC_URL ]]; then
     # Read only from the controlling terminal, never from the piped script.
     if { : </dev/tty; } 2>/dev/null; then
-      printf 'Enter the public browser URL, or press Enter for local access at http://localhost:4020.\n' >&2
-      read -r -p 'Milvago public URL [http://localhost:4020]: ' public_origin </dev/tty ||
+      printf 'Enter the public browser URL, or press Enter to keep an existing confirmed URL (localhost on first install).\n' >&2
+      read -r -p 'Milvago public URL [existing URL or http://localhost:4020]: ' public_origin </dev/tty ||
         fail 'Cannot read the URL. Set MILVAGO_PUBLIC_URL explicitly (empty for localhost).'
+      [[ -z "$public_origin" ]] || public_origin_explicit=1
     fi
   fi
   public_origin=${public_origin:-http://localhost:4020}
   public_origin=${public_origin%/}
   valid_public_origin "$public_origin" || fail 'Enter an HTTP or HTTPS URL with a host and optional port, without a path, query or fragment.'
-  printf 'Milvago URL: %s\n' "$public_origin"
+}
+select_host_binding() {
+  host_ip=''
+  case "${public_origin,,}" in
+    http://localhost:4020|http://127.0.0.1:4020) host_ip=127.0.0.1 ;;
+  esac
+  ensure_prerequisites
+  [[ -n "$host_ip" ]] || host_ip=$(detect_host_ip)
+}
+reuse_stored_public_origin() {
+  local confirmed_origin=$1
+  [[ -n "$confirmed_origin" ]] || return 0
+  valid_public_origin "$confirmed_origin" || fail 'The stored public URL is invalid.'
+  if (( public_origin_explicit )); then
+    [[ "$public_origin" == "$confirmed_origin" ]] ||
+      fail "The instance already uses $confirmed_origin. Rerun with that URL; change a configured instance URL in Administration > Settings."
+  elif [[ "$public_origin" != "$confirmed_origin" ]]; then
+    public_origin=$confirmed_origin
+    select_host_binding
+  fi
+}
+read_stored_public_origin() {
+  local existing_database=$1 ready=0 schema_state origin_row attempt
+  [[ -n "$existing_database" ]] || return 0
+  run_docker start "$existing_database" >/dev/null || fail 'The existing database could not start.'
+  for attempt in {1..30}; do
+    if run_docker exec "$existing_database" pg_isready -U postgres >/dev/null 2>&1; then ready=1; break; fi
+    sleep 1
+  done
+  (( ready )) || fail 'The existing database did not become ready; its configuration was not read.'
+  schema_state=$(run_docker exec -e PGCONNECT_TIMEOUT=5 -e 'PGOPTIONS=-c statement_timeout=5000' "$existing_database" \
+    psql -X -v ON_ERROR_STOP=1 -U postgres -d milvago -At -c \
+    "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_catalog.pg_class WHERE oid=to_regclass('public.app_config') AND relkind='r') THEN 'configured'
+     WHEN NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+                      WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname !~ '^pg_(toast|temp)') THEN 'empty'
+     ELSE 'incomplete' END" 2>/dev/null) || fail 'The existing database schema could not be inspected.'
+  case "$schema_state" in
+    empty) return 0 ;; # A successfully inspected database with no user relations is first-run bootstrap.
+    configured) ;;
+    *) fail 'The existing database schema is incomplete; restore it before updating.' ;;
+  esac
+  origin_row=$(run_docker exec -e PGCONNECT_TIMEOUT=5 -e 'PGOPTIONS=-c statement_timeout=5000' "$existing_database" \
+    psql -X -v ON_ERROR_STOP=1 -U postgres -d milvago -At -c \
+    "SELECT CASE WHEN public_url_confirmed THEN 'confirmed:'||public_url ELSE 'unconfirmed' END FROM public.app_config WHERE singleton" \
+    2>/dev/null) || fail 'The existing public URL could not be read.'
+  case "$origin_row" in
+    unconfirmed) return 0 ;;
+    confirmed:*)
+      origin_row=${origin_row#confirmed:}
+      valid_public_origin "$origin_row" || fail 'The stored public URL is invalid.'
+      printf '%s' "$origin_row"
+      ;;
+    *) fail 'The existing application configuration is missing or invalid.' ;;
+  esac
 }
 select_public_origin
-host_ip=''
-case "$public_origin" in
-  http://localhost:4020|http://127.0.0.1:4020) host_ip=127.0.0.1 ;;
-esac
-ensure_prerequisites
-[[ -n "$host_ip" ]] || host_ip=$(detect_host_ip)
+select_host_binding
 
 umask 077
 stage=''
@@ -666,23 +717,10 @@ fs.chmodSync(path, 0o600);
 ' || fail 'Cannot ensure MILVAGO_SETUP_TOKEN in .env.'
 
 cd "$root"
-database_id=$(run_docker compose -f compose.yaml ps -a -q database || true)
-stored_origin=""
-if [[ -n "$database_id" ]]; then
-  run_docker start "$database_id" >/dev/null
-  for attempt in {1..30}; do
-    if run_docker exec "$database_id" pg_isready -U postgres >/dev/null 2>&1; then break; fi
-    sleep 1
-  done
-  stored_origin=$(run_docker exec "$database_id" \
-    psql -U postgres -d milvago -At -c \
-    "SELECT public_url FROM app_config WHERE singleton AND public_url_confirmed" 2>/dev/null || true)
-fi
-if [[ -n "$stored_origin" ]]; then
-  valid_public_origin "$stored_origin" || fail "The stored public URL is invalid."
-  [[ "$public_origin" == "$stored_origin" ]] ||
-    fail "The instance already uses $stored_origin. Rerun with that URL; change a configured instance URL in Administration > Settings."
-fi
+database_id=$(run_docker compose -f compose.yaml ps -a -q database) || fail 'The existing database container could not be inspected.'
+stored_origin=$(read_stored_public_origin "$database_id") || fail 'The existing configuration could not be read; update stopped.'
+reuse_stored_public_origin "$stored_origin"
+printf 'Milvago URL: %s\n' "$public_origin"
 caddyfile="$root/.local/generated/Caddyfile.private"
 cat > "$caddyfile" <<EOF
 {

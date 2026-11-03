@@ -95,7 +95,7 @@ export function parseEventQuery(input: string, base: Criteria, allowedKeys?: Rea
       const start = index; while (index < input.length && !/\s/u.test(input[index])) index++;
       value = input.slice(start, index); if (value.includes('"')) return fail('quote');
     }
-    if (!value.trim() || /[\r\n\u0000]/u.test(value)) return fail('value', operator);
+    if (!value.trim() || value.includes('\r') || value.includes('\n') || value.includes('\0')) return fail('value', operator);
     if (!operator) {
       if (!quoted && (/^(AND|OR|NOT)$/.test(value))) return fail('boolean');
       text.push(value); continue;

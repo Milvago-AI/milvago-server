@@ -12,7 +12,9 @@ const planEnd=source.indexOf('if (( install_engine || install_compose )); then',
 // Checked inside a test case so a missing marker fails this file by name.
 test('installer markers exist and the Docker check precedes prerequisites',()=>{
  assert.ok(begin>0 && end>begin);
- assert.ok(source.indexOf('\ninspect_docker_cli\n')<source.indexOf('\nensure_prerequisites\n'));
+ const inspect=source.indexOf('\ninspect_docker_cli\n');
+ const prerequisites=source.indexOf('\n  ensure_prerequisites\n');
+ assert.ok(inspect>0 && prerequisites>inspect);
  assert.ok(planEnd>planStart);
 });
 const bash=process.platform==='win32'?'C:/Program Files/Git/bin/bash.exe':'/usr/bin/bash';

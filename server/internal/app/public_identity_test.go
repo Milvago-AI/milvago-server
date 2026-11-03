@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/oauth2"
 )
@@ -14,15 +16,32 @@ func TestCookieSecurityFollowsPublicOrigin(t *testing.T) {
 		secure bool
 	}{
 		{"https://console.example.test", true},
+		{"HTTPS://console.example.test", true},
+		{"HtTpS://console.example.test", true},
 		{"http://192.0.2.10:4020", false},
 	} {
 		t.Run(tc.origin, func(t *testing.T) {
-			a := &App{config: Config{AppURL: tc.origin}}
-			w := httptest.NewRecorder()
-			a.cookie(w, cookieName("session"), "opaque", 60)
-			cookies := w.Result().Cookies()
-			if len(cookies) != 1 || cookies[0].Secure != tc.secure {
-				t.Fatalf("cookie Secure for %s = %v", tc.origin, cookies)
+			if !validOrigin(tc.origin) {
+				t.Fatal("test origin must be accepted by configuration validation")
+			}
+			for _, confirmed := range []bool{false, true} {
+				a := &App{config: Config{AppURL: tc.origin}}
+				if confirmed {
+					a.config.AppURL = "http://localhost:4020"
+					a.publicOIDC.Store(&identityRuntime{origin: tc.origin})
+				}
+				w := httptest.NewRecorder()
+				a.cookie(w, a.cookieName("session"), "opaque", 60)
+				a.setTrustedDeviceCookie(w, "opaque-trusted", time.Now().Add(time.Hour))
+				cookies := w.Result().Cookies()
+				if len(cookies) != 2 {
+					t.Fatalf("expected session and trusted-device cookies, got %v", cookies)
+				}
+				for _, cookie := range cookies {
+					if cookie.Secure != tc.secure || strings.HasPrefix(cookie.Name, "__Host-") != tc.secure || !cookie.HttpOnly {
+						t.Fatalf("cookie security for %s (confirmed=%v) = %v", tc.origin, confirmed, cookie)
+					}
+				}
 			}
 		})
 	}

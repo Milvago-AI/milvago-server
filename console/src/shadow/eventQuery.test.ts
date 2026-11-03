@@ -29,7 +29,7 @@ it.each([
   ['service:x OR service:y', 'boolean'], ['unknown:value', 'operator'],
   ['constructor:value', 'operator'], ['__proto__:value', 'operator'],
   ['attachment:yes attachment:no', 'single'], ['text:a text:b', 'single'],
-  ['service:"a\\nb"', 'value'], ['service:"a\\u0000b"', 'value'],
+  ['service:"a\\nb"', 'value'], ['service:"a\\rb"', 'value'], ['service:"a\\u0000b"', 'value'],
   ['service:'+'a'.repeat(201), 'limit'], ['text:'+'é'.repeat(51), 'limit'],
   [Array.from({ length: 21 }, (_, i) => 'service:s'+i).join(' '), 'limit'],
   ['x'.repeat(2049), 'limit'],

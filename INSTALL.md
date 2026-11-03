@@ -131,9 +131,14 @@ sudo-capable installation account that is not in the `docker` group, and keep vo
 specific to its service. This installation does not promise rootless Docker. Docker `userns-remap`
 is not enabled or qualified: test host-network readiness probing and volume ownership before
 enabling it.
-On a later run, a URL already confirmed in the database is preserved. If the supplied or entered
-URL, including a switch between local and public mode, conflicts with it, the installer stops rather
-than silently changing the instance URL. Change the URL in **Administration > Settings**;
+On a later run, leaving `MILVAGO_PUBLIC_URL` unset and pressing Enter (or running without a
+terminal) reuses the URL already confirmed in the database. The new release's verified application
+image replaces the previous application image; the existing checkout, base Compose file, secrets
+and database volume are preserved. Generated installer Compose and gateway files are regenerated.
+An explicit `MILVAGO_PUBLIC_URL=''` still requests localhost. If a supplied or entered URL,
+including a switch between local and public mode, conflicts with the confirmed URL, the installer
+stops rather than silently changing it. An unreadable or incomplete existing database stops the
+update; restore it rather than substituting a new URL. Change the URL in **Administration > Settings**;
 this updates the console redirect and Keycloak through its private API. Already enrolled agents
 retain their prior URL and must be re-enrolled to move.
 
