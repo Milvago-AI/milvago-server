@@ -145,10 +145,11 @@ jobs:
       - run: sh scripts/build-dlp.sh && sh scripts/build-discovery.sh
       - run: go run ../scripts/discovery-fixture.go
         working-directory: server
-      - run: MILVAGO_INVENTORY_LOAD=1 go test ./internal/app -run 'TestDiscovery|TestInventorySearch|TestLegacyConversationPage|TestPaginatedMetadata|TestSharedRate|TestSharedPublicQuota|TestRejectedIngest|TestUpdateReadOnlyResponses|TestAssociationGETEndsTransaction|TestHeartbeatValidationErrors|TestUpdateArtifactErrors|TestIngestionBatchPipeline|TestEventTransactionsPreserveAdmissionCapacity' -count=1 -timeout=8m
+      - run: MILVAGO_INVENTORY_LOAD=1 go test ./internal/app -run 'TestDiscovery|TestPrivacyReadLevel|TestInventorySearch|TestLegacyConversationPage|TestPaginatedMetadata|TestSharedRate|TestSharedPublicQuota|TestRejectedIngest|TestUpdateReadOnlyResponses|TestAssociationGETEndsTransaction|TestHeartbeatValidationErrors|TestUpdateArtifactErrors|TestIngestionBatchPipeline|TestEventTransactionsPreserveAdmissionCapacity' -count=1 -timeout=8m
         working-directory: server
 
   discovery-load:
+    name: discovery-load (${{ matrix.profile }}, pool=${{ matrix.pool.name }})
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     needs: discovery-integration
@@ -156,8 +157,12 @@ jobs:
       fail-fast: false
       matrix:
         profile: [Smoke, FleetSmoke, FleetDenseSmoke, DNSHintsSmoke]
-        # Compare WAL compression on fresh fixtures with a fixed experimental pool.
-        wal: ['off', 'pglz']
+        # Compare the unmodified runtime default with bounded experimental pools.
+        # Empty suffix deliberately omits pool_max_conns; no production default changes.
+        pool:
+          - {name: default, url_suffix: ''}
+          - {name: '8', url_suffix: '&pool_max_conns=8'}
+          - {name: '12', url_suffix: '&pool_max_conns=12'}
     services:
       database:
         image: postgres:18.4@sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636
@@ -165,18 +170,18 @@ jobs:
           POSTGRES_USER: fixture_admin
           POSTGRES_PASSWORD: fixture-only
           POSTGRES_DB: milvago_test
-          POSTGRES_INITDB_ARGS: '--set=wal_compression=${{ matrix.wal }}'
+          POSTGRES_INITDB_ARGS: '--set=wal_compression=off'
         options: >-
           --publish 127.0.0.1:5432:5432
           --health-cmd "pg_isready -U fixture_admin -d milvago_test"
           --health-interval 5s --health-timeout 5s --health-retries 12
     env:
       DISCOVERY_FIXTURE_ADMIN_URL: postgres://fixture_admin:fixture-only@127.0.0.1/milvago_test?sslmode=disable
-      TEST_DATABASE_URL: postgres://milvago_runtime:fixture-runtime@127.0.0.1/milvago_test?sslmode=disable&pool_max_conns=8
+      TEST_DATABASE_URL: postgres://milvago_runtime:fixture-runtime@127.0.0.1/milvago_test?sslmode=disable${{ matrix.pool.url_suffix }}
       TEST_MIGRATION_DATABASE_URL: postgres://milvago_migration:fixture-migration@127.0.0.1/milvago_test?sslmode=disable
       MILVAGO_REQUIRE_INTEGRATION: '1'
       MILVAGO_DISCOVERY_LOAD_SMOKE: '1'
-      MILVAGO_DISCOVERY_EXPECT_WAL_COMPRESSION: ${{ matrix.wal }}
+      MILVAGO_DISCOVERY_EXPECT_WAL_COMPRESSION: 'off'
       DISCOVERY_LOAD_PROFILE: ${{ matrix.profile }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
