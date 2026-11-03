@@ -13,8 +13,6 @@ import (
 	"net/http"
 	"strconv"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 )
 
 type discoveryEvidence struct {
