@@ -9,9 +9,9 @@ WORKDIR /build/discovery-engine
 COPY discovery-engine/ ./
 RUN cargo test --locked && cargo build --release --locked --target wasm32-unknown-unknown
 
-FROM node:26.12.1-trixie-slim@sha256:36793bcbb160a6a16cede1e62b93f84e26b78a972a8a4c0b879c1c12f22761ec AS ui
+FROM node:26.13.0-trixie-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS ui
 WORKDIR /build/console
-RUN node -e 'if (process.versions.node !== "26.12.1") process.exit(1)'
+RUN node -e 'if (process.versions.node !== "26.13.0") process.exit(1)'
 COPY console/package*.json ./
 RUN npm ci --ignore-scripts
 COPY console/ ./
@@ -19,7 +19,7 @@ COPY --from=dlp /build/dlp-engine/target/wasm32-unknown-unknown/release/milvago_
 COPY --from=discovery /build/discovery-engine/target/wasm32-unknown-unknown/release/milvago_discovery_engine.wasm public/discovery_engine.wasm
 COPY deploy/theme/milvago/login/resources/js/milvago.js /build/deploy/theme/milvago/login/resources/js/milvago.js
 RUN npm test && npm run build
-FROM golang:1.27.2-trixie@sha256:47667934874913a449b96faa7ef4777fa285d9ec29126ee80ed61c45b7cccf0e AS api
+FROM golang:1.27.3-trixie@sha256:c65ecfe613b539ac74c62a4c3b2c27e8f8a6076384c8f27e8a3c0f3be17cc385 AS api
 WORKDIR /build/server
 COPY server/go.mod server/go.sum ./
 RUN go mod download
