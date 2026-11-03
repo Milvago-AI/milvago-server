@@ -84,17 +84,9 @@ func (a *App) readPrivacy(ctx context.Context, tx pgx.Tx, org string) (out Priva
 		}
 	}()
 	for depth := 0; current != "" && depth < 20; depth++ {
-		if _, err = tx.Exec(ctx, sqlSetOrganizationContext, current); err != nil {
-			return
-		}
 		var raw []byte
 		var rev int64
-		err = tx.QueryRow(ctx, "SELECT configuration,revision FROM privacy_settings WHERE organization_id=$1", current).Scan(&raw, &rev)
-		if errors.Is(err, pgx.ErrNoRows) {
-			err = nil
-			raw = []byte("{}")
-			rev = 1
-		}
+		raw, rev, err = readPrivacyLevel(ctx, tx, current)
 		if err != nil {
 			return
 		}

@@ -211,6 +211,9 @@ func (trace *discoveryLoadTrace) TraceBatchStart(ctx context.Context, _ *pgx.Con
 	class := "batch:other"
 	if len(data.Batch.QueuedQueries) > 0 {
 		first := data.Batch.QueuedQueries[0].SQL
+		if len(data.Batch.QueuedQueries) == 2 && first == sqlSetOrganizationContext && data.Batch.QueuedQueries[1].SQL == "SELECT configuration,revision FROM privacy_settings WHERE organization_id=$1" {
+			class = "batch:privacy_level"
+		}
 		if first == `SELECT pg_advisory_xact_lock(hashtextextended($1,713905))` {
 			class = "batch:report_authority"
 		}
