@@ -60,33 +60,10 @@ fn validate_with_provider(
         {
             return Err("Invalid discovery evidence".into());
         }
-        let fields = evidence.fields.iter().map(|f| (*f, vec![])).collect();
-        let fact = Fact {
-            id: evidence.fact_id.clone(),
-            entity_id: entity.into(),
-            source: evidence.source,
-            observed_at: evidence.observed_at,
-            fields,
-        };
         let kind = *kinds
             .get(entity)
             .ok_or("Unknown discovery evidence entity")?;
-        let check = Snapshot {
-            version: snapshot.version,
-            scope: snapshot.scope.clone(),
-            sequence: snapshot.sequence,
-            observed_at: snapshot.observed_at,
-            complete: false,
-            entities: vec![Entity {
-                display: None,
-                id: entity.into(),
-                kind,
-            }],
-            facts: vec![fact],
-            relations: vec![],
-            coverage: vec![],
-        };
-        validate_snapshot(&check)
+        crate::engine::validate_evidence_fact(evidence, kind, snapshot.observed_at)
     };
     let mut ids = BTreeSet::new();
     for matched in &report.result.identifications {

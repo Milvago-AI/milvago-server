@@ -808,6 +808,52 @@ pub fn provider(host: &str) -> Option<&'static str> {
     }
 }
 
+// Shared by full snapshots and borrowed report evidence. Identity-set uniqueness
+// belongs to the surrounding snapshot/report, not to this scalar contract.
+fn valid_fact_metadata(
+    kind: EntityKind,
+    source: Source,
+    id: &str,
+    observed_at: i64,
+    snapshot_observed_at: i64,
+    fields: usize,
+) -> bool {
+    let valid_kind = match source {
+        Source::HostProcess | Source::GuestProcess | Source::ContainerProcess => kind == EntityKind::Process,
+        Source::ContainerMetadata => kind == EntityKind::Container,
+        Source::Http => kind == EntityKind::Endpoint,
+        Source::VmFlow => matches!(kind, EntityKind::Vm | EntityKind::Wsl),
+        Source::RuntimeFlow => kind == EntityKind::Runtime,
+        Source::ContainerFlow => kind == EntityKind::Container,
+        Source::HostFlow => matches!(kind, EntityKind::Host | EntityKind::Process),
+        Source::Installation | Source::HostDnsQuery => kind == EntityKind::Host,
+    };
+    valid_kind
+        && identifier(id)
+        && observed_at >= 0
+        && observed_at <= snapshot_observed_at
+        && (source != Source::HostDnsQuery || snapshot_observed_at.saturating_sub(observed_at) <= 3600)
+        && fields <= 8
+}
+
+// The report has already validated its complete entity/relationship/coverage
+// snapshot, and its caller has checked the evidence's nonempty bounded fields.
+// Evidence carries field names only: there are no raw values to size or copy.
+pub(crate) fn validate_evidence_fact(
+    evidence: &Evidence,
+    kind: EntityKind,
+    snapshot_observed_at: i64,
+) -> Result<(), String> {
+    if !valid_fact_metadata(kind, evidence.source, &evidence.fact_id,
+        evidence.observed_at, snapshot_observed_at, evidence.fields.len()) {
+        return Err("Invalid discovery fact".into());
+    }
+    if evidence.fields.iter().any(|field| !source_field(evidence.source, *field)) {
+        return Err("Unsupported discovery field".into());
+    }
+    Ok(())
+}
+
 pub fn validate_snapshot(snapshot: &Snapshot) -> Result<(), String> {
     if snapshot.version != VERSION
         || !identifier(&snapshot.scope)
@@ -851,26 +897,8 @@ pub fn validate_snapshot(snapshot: &Snapshot) -> Result<(), String> {
         let kind = entities
             .get(fact.entity_id.as_str())
             .ok_or("Unknown discovery entity")?;
-        let valid_kind = match fact.source {
-            Source::HostProcess | Source::GuestProcess | Source::ContainerProcess => {
-                *kind == EntityKind::Process
-            }
-            Source::ContainerMetadata => *kind == EntityKind::Container,
-            Source::Http => *kind == EntityKind::Endpoint,
-            Source::VmFlow => matches!(kind, EntityKind::Vm | EntityKind::Wsl),
-            Source::RuntimeFlow => *kind == EntityKind::Runtime,
-            Source::ContainerFlow => *kind == EntityKind::Container,
-            Source::HostFlow => matches!(kind, EntityKind::Host | EntityKind::Process),
-            Source::Installation | Source::HostDnsQuery => *kind == EntityKind::Host,
-        };
-        if !valid_kind
-            || !identifier(&fact.id)
-            || !ids.insert(fact.id.as_str())
-            || fact.observed_at < 0
-            || fact.observed_at > snapshot.observed_at
-            || fact.source == Source::HostDnsQuery
-                && snapshot.observed_at.saturating_sub(fact.observed_at) > 3600
-            || fact.fields.len() > 8
+        if !valid_fact_metadata(*kind, fact.source, &fact.id, fact.observed_at,
+            snapshot.observed_at, fact.fields.len()) || !ids.insert(fact.id.as_str())
         {
             return Err("Invalid discovery fact".into());
         }
@@ -982,3 +1010,7 @@ pub fn validate_snapshot(snapshot: &Snapshot) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "evidence_fact_tests.rs"]
+mod evidence_fact_tests;
