@@ -67,14 +67,18 @@ jobs:
             --label "org.opencontainers.image.version=$VERSION" \
             -t "$IMAGE" .
           test "$(docker image inspect --format '{{.Config.User}}' "$IMAGE")" = 65532:65532
+      - name: Install pinned vulnerability scanner
+        run: |
+          # The upstream installer uses a separate download service; use the immutable release asset.
+          curl --fail --show-error --location --proto '=https' --proto-redir '=https' --retry 3 --connect-timeout 20 --max-time 180 \
+            --output "$RUNNER_TEMP/trivy.tar.gz" \
+            https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-64bit.tar.gz
+          printf '%s  %s\n' 2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a "$RUNNER_TEMP/trivy.tar.gz" | sha256sum --check --strict -
+          tar --extract --gzip --no-same-owner --file "$RUNNER_TEMP/trivy.tar.gz" --directory "$RUNNER_TEMP" trivy
       - name: Scan image before publishing
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          version: v0.74.0
-          image-ref: ${{ steps.release.outputs.image }}
-          scanners: vuln
-          severity: CRITICAL,HIGH,MEDIUM,LOW
-          exit-code: '1'
+        env:
+          IMAGE: ${{ steps.release.outputs.image }}
+        run: '"$RUNNER_TEMP/trivy" image --scanners vuln --severity CRITICAL,HIGH,MEDIUM,LOW --exit-code 1 "$IMAGE"'
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:

@@ -25,6 +25,12 @@ export function newerVersion(next, previous) {
   return false;
 }
 
+export function unpublishedWorkflowRecovery(next, previous, tagged, paths) {
+  // Repair publication tooling before the first immutable release, without changing its runtime.
+  const allowed = new Set(['.github/workflows/ghcr.yml', 'scripts/server-release.mjs', 'scripts/server-release.test.mjs']);
+  return next === previous && !tagged && paths.length > 0 && paths.every(path => allowed.has(path));
+}
+
 export function renderInstaller(template, version, revision, digest) {
   const image = releaseImage('main', version, revision);
   if (!/^sha256:[a-f0-9]{64}$/.test(digest)) throw new Error('Expected an immutable image digest.');
@@ -48,7 +54,9 @@ function check() {
     // The first versioned release has no VERSION in its parent.
     if (git('ls-tree','--name-only',base).split('\n').includes('VERSION')) {
       const previous = releaseVersion(git('show',`${base}:VERSION`));
-      if (!newerVersion(version, previous)) throw new Error('A merge to main requires a new server version.');
+      const tagged = Boolean(git('tag','--list',`v${version}`));
+      const paths = git('diff','--name-only',base,'HEAD').split('\n').filter(Boolean);
+      if (!newerVersion(version, previous) && !unpublishedWorkflowRecovery(version, previous, tagged, paths)) throw new Error('A merge to main requires a new server version.');
     }
     if (git('tag','--list',`v${version}`) && git('rev-list','-n','1',`v${version}`) !== git('rev-parse','HEAD')) throw new Error('This release version already belongs to another commit.');
   }

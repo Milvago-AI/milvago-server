@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { releaseVersion, releaseImage, newerVersion, renderInstaller } from './server-release.mjs';
+import { releaseVersion, releaseImage, newerVersion, renderInstaller, unpublishedWorkflowRecovery } from './server-release.mjs';
 
 test('release versions exclude floating tags and ambiguous versions', () => {
   assert.equal(releaseVersion('1.0.0\n'),'1.0.0');
@@ -16,6 +16,17 @@ test('production and development use separate packages', () => {
   assert.equal(releaseImage('dev','1.0.0',sha),'ghcr.io/milvago-ai/milvago-server-dev:sha-'+sha);
   assert.throws(()=>releaseImage('feature','1.0.0',sha));
   assert.throws(()=>releaseImage('main','1.0.0','main'));
+});
+
+test('publication recovery cannot reuse a published version or alter runtime assets', () => {
+  const paths=['.github/workflows/ghcr.yml','scripts/server-release.mjs','scripts/server-release.test.mjs'];
+  assert.equal(unpublishedWorkflowRecovery('1.1.0','1.1.0',false,paths),true);
+  assert.equal(unpublishedWorkflowRecovery('1.1.0','1.1.0',true,paths),false);
+  assert.equal(unpublishedWorkflowRecovery('1.0.9','1.1.0',false,paths),false);
+  assert.equal(unpublishedWorkflowRecovery('1.1.0','1.1.0',false,[]),false);
+  for(const path of ['install-private.sh','VERSION','deploy/Dockerfile','server/internal/app/auth.go','console/src/main.tsx']) {
+    assert.equal(unpublishedWorkflowRecovery('1.1.0','1.1.0',false,[...paths,path]),false);
+  }
 });
 
 test('generated installers bind a version to a source commit and digest', () => {
