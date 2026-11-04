@@ -134,10 +134,9 @@ func TestUpdateReadOnlyResponsesEndTransactionBeforeIO(t *testing.T) {
 	artifact := []byte("synthetic read-only signed artifact")
 	digest := sha256.Sum256(artifact)
 	sha := hex.EncodeToString(digest[:])
-	if err = os.WriteFile(filepath.Join(directory, "synthetic.tar.gz"), artifact, 0600); err != nil {
+	if err = os.WriteFile(filepath.Join(directory, "milvago-community-0.2.1-linux"), artifact, 0600); err != nil {
 		t.Fatal(err)
 	}
-	writeReadOnlyResponseFixture(t, directory, Edition+"-linux.json", InstallerBundle{Version: "0.2.1", Artifact: "synthetic.tar.gz", SHA256: sha, Size: int64(len(artifact))})
 	manifest := UpdateManifest{Version: "0.2.1", Edition: "community", Platform: "linux", Protocol: 2, SHA256: sha, Size: int64(len(artifact)), ExpiresAt: time.Now().Add(time.Hour), Artifact: "/v2/update/artifact/" + sha, RollbackFrom: []string{}}
 	payload, err := json.Marshal(manifest)
 	if err != nil {

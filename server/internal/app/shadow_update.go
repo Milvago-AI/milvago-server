@@ -47,9 +47,9 @@ const (
 	msgReleaseArtifactUnverified = "The release artifact could not be verified."
 )
 
-// Updates are served from the very installers the console hands out: one artifact,
-// one directory. A signed manifest sits next to each installer and is what actually
-// authorizes an update; the trust anchor is the separate release key.
+// Updates and initial installers share one directory. Linux executable updates
+// are separate from the installation archive; signed manifests authorize update
+// bytes, using the separate release trust key.
 func (a *App) updatesAvailable() bool {
 	directory := os.Getenv("MILVAGO_INSTALLER_DIRECTORY")
 	if len(a.config.UpdatePublicKey) != 32 || directory == "" {
@@ -145,13 +145,13 @@ func (a *App) readUpdateManifest(edition, platform string) (signedEnvelope, Upda
 	return env, m, nil
 }
 
-// releaseArtifactReady reports whether the signed manifest actually corresponds to an
-// installer this server can deliver. A manifest is only half the release: without
+// releaseArtifactReady reports whether the signed manifest actually corresponds to
+// update bytes this server can deliver. A manifest is only half the release: without
 // this, a correctly signed manifest whose artifact is missing or has been replaced
 // would still be announced, and every device would keep asking for bytes that can
 // never be served.
 func (a *App) releaseArtifactReady(m UpdateManifest) bool {
-	bundle, _, e := a.releaseBundle(m.Platform)
+	bundle, _, e := a.releaseUpdateBundle(m)
 	return e == nil && bundle.SHA256 == m.SHA256 && bundle.Size == m.Size
 }
 
@@ -317,10 +317,10 @@ func (a *App) updateArtifactRequest(w http.ResponseWriter, r *http.Request) erro
 	default:
 		return apiError{503, "download_busy", "Try the release download again shortly."}
 	}
-	// The signed manifest authorizes; the install manifest only locates the file the
-	// console already serves. Its name is therefore untrusted: the bytes are hashed
-	// against the signed digest before anything leaves the server.
-	bundle, path, e := a.releaseBundle(m.Platform)
+	// The signed manifest authorizes the exact bytes. Linux resolves its separate
+	// executable; Windows retains the installer manifest locator. In both cases the
+	// bytes are hashed against the signed digest before anything leaves the server.
+	bundle, path, e := a.releaseUpdateBundle(m)
 	if e != nil || bundle.SHA256 != m.SHA256 || bundle.Size != m.Size {
 		return apiError{503, "artifact_invalid", msgReleaseArtifactUnverified}
 	}

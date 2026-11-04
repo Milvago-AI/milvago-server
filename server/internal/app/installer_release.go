@@ -44,6 +44,47 @@ func (a *App) releaseBundle(platform string) (InstallerBundle, string, error) {
 	return installerBundleDigest(platform, a)
 }
 
+// releaseUpdateBundle resolves the bytes authorized by an already verified signed
+// update manifest. Linux installation archives remain separate: the updater replaces
+// the executable directly and cannot install a tar archive.
+func (a *App) releaseUpdateBundle(m UpdateManifest) (InstallerBundle, string, error) {
+	var bundle InstallerBundle
+	unavailable := func() (InstallerBundle, string, error) {
+		return bundle, "", errors.New("verified update artifact unavailable")
+	}
+	if !validUpdateTarget(m.Edition, m.Platform) || !versionPattern.MatchString(m.Version) ||
+		!digestPattern.MatchString(m.SHA256) || m.Size < 1 || m.Size > 128*1024*1024 ||
+		(m.Format != "binary" && m.Format != "msi") || (m.Format == "msi" && m.Platform != "windows") {
+		return unavailable()
+	}
+	if m.Platform != "linux" {
+		return a.releaseBundle(m.Platform)
+	}
+	bundle = InstallerBundle{Version: m.Version, Artifact: "milvago-" + m.Edition + "-" + m.Version + "-linux", SHA256: m.SHA256, Size: m.Size}
+	directory := os.Getenv("MILVAGO_INSTALLER_DIRECTORY")
+	if directory == "" {
+		return unavailable()
+	}
+	directory, err := filepath.Abs(directory)
+	if err != nil {
+		return unavailable()
+	}
+	info, err := os.Lstat(directory)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return unavailable()
+	}
+	root, err := os.OpenRoot(directory)
+	if err != nil {
+		return unavailable()
+	}
+	defer root.Close()
+	path, valid := verifiedInstallerArtifact(root, directory, "update:"+m.Platform, bundle, a)
+	if !valid {
+		return unavailable()
+	}
+	return bundle, path, nil
+}
+
 // artifactDigest returns the SHA-256 of an already-opened release artifact,
 // serving the memoized value while (path, size, mtime) is unchanged.
 // The lock guards the map and nothing else. Hashing runs outside it, deliberately:

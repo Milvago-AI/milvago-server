@@ -229,12 +229,17 @@ extension. Upgrade both together before activating this server's catalogue, incl
 the instance retains an older edited catalogue: this server conservatively signs every
 catalogue with that minimum. Agent `0.6.4` cannot apply the new catalogue. Its previous cached
 catalogue expires; an explicit upgrade-required refusal does not preserve detection forever.
-The agent and extension `0.7.0` are prepared in source and still await compatible signed
+The agent and extension `0.7.44` are prepared in source and still await compatible signed
 packages and release qualification. This server image does not prove that they are installed.
 Do not promote the new public installer until its pinned agent bundle has been replaced with
 the qualified release and its exact verified hashes, signatures and versions.
 
 They live in their own repository. An image built from this source alone serves no extension (`/ext/*` answers `503 extension_unconfigured`) and no installer. The prepared installation script fetches and mounts the signed Community agent bundle separately.
+
+The Linux installation archive and the signed executable update are distinct artifacts. When
+upgrading from 0.6.x, run the full Linux installer to update the relay, updater and discovery
+service as well. A binary update replaces the core agent executable; it does not install or
+upgrade those system services.
 
 ## Running the tests
 
