@@ -27,7 +27,7 @@ export function verifyPublicRelease(version,installer,metadata,sums){
  requireValue(listed.get('install-private.sh')===digest(installer)&&listed.get('release.json')===digest(metadata),'release_checksum_mismatch');
  if(version==='1.0.5')requireValue(digest(installer)===oldInstallerSHA,'old_installer_pin_mismatch');
  const release=JSON.parse(metadata.toString('utf8'));
- requireValue(release&&Object.keys(release).sort().join(',')==='image,source_commit,version','invalid_release_metadata');
+ requireValue(release&&Object.keys(release).length===3&&['image','source_commit','version'].every(name=>Object.hasOwn(release,name)),'invalid_release_metadata');
  requireValue(release.version===version&&/^[a-f0-9]{40}$/.test(release.source_commit),'invalid_release_identity');
  requireValue(new RegExp('^ghcr\\.io/milvago-ai/milvago-server:'+version.replaceAll('.','\\.')+'@sha256:[a-f0-9]{64}$').test(release.image),'invalid_release_image');
  const text=installer.toString('utf8');
