@@ -84,12 +84,14 @@ export function PeoplePicker({ people, view, apply }: Readonly<{ people: RankedP
   return <>
     <button type="button" className="button secondary" aria-haspopup="dialog" aria-expanded={open} disabled={people.length === 0} onClick={() => { setDraft(new Set(people.filter(person => person.checked).map(person => person.value))); setOpen(true); }}><Icon name="users" />{summary}</button>
     {open && <Dialog title={t('onlyThesePeople')} close={() => setOpen(false)}>
-      <OptionList dimension="actor_id" options={people} className="fd-picker-list" checked={option => draft.has(option.value)}
-        toggle={value => setDraft(current => { const next = new Set(current); if (next.has(value)) { next.delete(value); } else { next.add(value); } return next; })}
-        setAll={(values, checked) => setDraft(current => { const next = new Set(current); for (const value of values) { if (checked) { next.add(value); } else { next.delete(value); } } return next; })} />
-      <div className="dialog-actions">
-        <button type="button" className="button secondary" onClick={() => setOpen(false)}>{t('cancel')}</button>
-        <button type="button" className="button primary" disabled={draft.size === 0} onClick={() => { apply(onlyPeople(view, people.map(person => person.value), [...draft])); setOpen(false); }}>{t('apply')}</button>
+      <div className="dialog-body">
+        <OptionList dimension="actor_id" options={people} className="fd-picker-list" checked={option => draft.has(option.value)}
+          toggle={value => setDraft(current => { const next = new Set(current); if (next.has(value)) { next.delete(value); } else { next.add(value); } return next; })}
+          setAll={(values, checked) => setDraft(current => { const next = new Set(current); for (const value of values) { if (checked) { next.add(value); } else { next.delete(value); } } return next; })} />
+        <div className="dialog-actions">
+          <button type="button" className="button secondary" onClick={() => setOpen(false)}>{t('cancel')}</button>
+          <button type="button" className="button primary" disabled={draft.size === 0} onClick={() => { apply(onlyPeople(view, people.map(person => person.value), [...draft])); setOpen(false); }}>{t('apply')}</button>
+        </div>
       </div>
     </Dialog>}
   </>;

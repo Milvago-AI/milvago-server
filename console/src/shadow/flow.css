@@ -15,17 +15,17 @@ button.fd-rails-toggle{display:none}
 /* ---------- Canvas ---------- */
 .fd-scroll{position:relative;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;border-radius:var(--radius-m)}
 .fd-scroll.fd-hidden{display:none}
-fieldset.fd-canvas{margin:0;padding:0;min-inline-size:0;position:relative;border:1px solid var(--border);border-radius:var(--radius-m);background-color:var(--bg);background-image:radial-gradient(circle at 1px 1px,var(--border) 1px,transparent 1px);background-size:24px 24px;overflow:hidden}
+fieldset.fd-canvas{margin:0;padding:0;min-inline-size:0;position:relative;border:1px solid var(--border);border-radius:var(--radius-m);background-color:var(--bg);overflow:hidden}
 .fd-canvas>svg{position:absolute;inset:0;display:block}
-.fd-ribbons{transition:opacity .5s}
-.fd-ribbon{opacity:.35;transition:opacity .2s;cursor:pointer}
+.fd-ribbons{transition:opacity var(--mv-dur-slow) var(--mv-ease-in-out)}
+.fd-ribbon{opacity:.35;transition:opacity  var(--mv-dur-fast) var(--mv-ease-out);cursor:pointer}
 .fd-ribbon.fade{opacity:.07}
 .fd-ribbon.match{opacity:.6}
 .fd-ribbon.dim{opacity:.05}
 .fd-ribbon.hot{opacity:.85}
-.fd-highlight{opacity:.95;transition:opacity .2s}
+.fd-highlight{opacity:.95;transition:opacity  var(--mv-dur-fast) var(--mv-ease-out)}
 .fd-highlight.dim{opacity:.15}
-.fd-hatch{opacity:.7;transition:opacity .2s}
+.fd-hatch{opacity:.7;transition:opacity  var(--mv-dur-fast) var(--mv-ease-out)}
 .fd-hatch.fade,.fd-hatch.dim{opacity:.08}
 
 .fd-head{position:absolute;top:0;height:40px;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 2px;font-size:11px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:var(--text-3);line-height:1.2}
@@ -33,19 +33,19 @@ fieldset.fd-canvas{margin:0;padding:0;min-inline-size:0;position:relative;border
 
 /* ---------- Tiles ---------- */
 .fd-tiles{position:absolute;inset:0;pointer-events:none}
-.fd-tile{font:inherit;text-align:left;position:absolute;display:flex;align-items:center;gap:8px;padding:6px 8px 8px;border:1px solid var(--border);border-radius:var(--radius-m);background:color-mix(in srgb,var(--surface) 78%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);color:var(--text);cursor:pointer;overflow:hidden;pointer-events:auto;transition:border-color .15s,opacity .2s,box-shadow .15s,transform .35s}
+.fd-tile{font:inherit;text-align:left;position:absolute;display:flex;align-items:center;gap:8px;padding:6px 8px 8px;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--surface);color:var(--text);cursor:pointer;overflow:hidden;pointer-events:auto;transition:border-color  var(--mv-dur-fast) var(--mv-ease-out),opacity  var(--mv-dur-fast) var(--mv-ease-out),box-shadow  var(--mv-dur-fast) var(--mv-ease-out),transform var(--mv-dur-base) var(--mv-ease-out)}
 .fd-tile.compact{padding:4px 8px;gap:6px}
 .fd-tile:hover,.fd-tile.hot{border-color:var(--border-strong)}
-.fd-tile.dim{opacity:.35}
+.fd-tile.dim{background:var(--surface-2)}
 .fd-tile:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
-.fd-tile.selected{border-color:var(--accent-border);box-shadow:var(--glow)}
-.fd-tile.unknown{border-style:dashed;background:color-mix(in srgb,var(--surface-2) 60%,transparent)}
+.fd-tile.selected{border-color:var(--accent-border);outline:1px solid var(--accent-text);outline-offset:1px}
+.fd-tile.unknown{border-style:dashed;background:var(--surface-2)}
 .fd-tile.unknown .fd-name{color:var(--text-2)}
 
 .fd-logo{width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0;letter-spacing:-.3px;object-fit:contain}
 .fd-logo.soft{background:var(--surface-2);color:var(--text-2);border:1px solid var(--border)}
 img.fd-logo{background:var(--surface-2)}
-.fd-tile.compact .fd-logo{font-size:10px;border-radius:4px}
+.fd-tile.compact .fd-logo{font-size:10px;border-radius:var(--radius-s)}
 .fd-text{display:flex;flex-direction:column;min-width:0;line-height:1.25;flex:1}
 .fd-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* Badges wrap under the count when the tile is tall enough; a short tile clips them
@@ -59,7 +59,7 @@ img.fd-logo{background:var(--surface-2)}
 .fd-share i{display:block;height:100%;opacity:.9}
 
 /* ---------- Tooltip (floating: the one place a shadow is allowed) ---------- */
-.fd-tooltip{position:absolute;left:0;top:0;width:260px;padding:10px 12px;border:1px solid var(--border-strong);border-radius:var(--radius-m);background:var(--elevated);box-shadow:var(--shadow);pointer-events:none;opacity:0;transition:opacity .12s;z-index:3;font-size:12px;color:var(--text)}
+.fd-tooltip{position:absolute;left:0;top:0;width:260px;padding:10px 12px;border:1px solid var(--border-strong);border-radius:var(--radius-m);background:var(--elevated);box-shadow:var(--shadow);pointer-events:none;opacity:0;transition:opacity  var(--mv-dur-fast) var(--mv-ease-out);z-index:3;font-size:12px;color:var(--text)}
 .fd-tooltip.visible{opacity:1}
 /* Title and values clamp to two lines: a 300-character label must not grow the tooltip past the canvas. */
 .fd-tooltip-title{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;font-size:13px;font-weight:600;margin-bottom:6px;overflow-wrap:anywhere}
@@ -70,7 +70,7 @@ img.fd-logo{background:var(--surface-2)}
 /* ---------- Vendor legend ---------- */
 .fd-vendors{display:flex;flex-wrap:wrap;gap:6px 16px;margin:0;padding:0;list-style:none;font-size:12px;color:var(--text-2)}
 .fd-vendors li{display:inline-flex;align-items:center;gap:6px;overflow-wrap:anywhere}
-.fd-vendors i{width:10px;height:10px;border-radius:2px;display:inline-block;flex-shrink:0}
+.fd-vendors i{width:10px;height:10px;border-radius:var(--radius-s);display:inline-block;flex-shrink:0}
 
 /* ---------- Table fallback ---------- */
 .fd-table{display:none}
@@ -81,7 +81,7 @@ img.fd-logo{background:var(--surface-2)}
 /* ---------- Card head legend and footer ---------- */
 .fd-legend{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--text-2);white-space:nowrap}
 .fd-legend span{display:inline-flex;align-items:center;gap:6px}
-.fd-legend i{width:18px;height:10px;display:inline-block;border-radius:2px;flex-shrink:0}
+.fd-legend i{width:18px;height:10px;display:inline-block;border-radius:var(--radius-s);flex-shrink:0}
 .fd-legend i.fd-sensitive-swatch{border:1px solid var(--warning);background:repeating-linear-gradient(135deg,transparent 0 3px,var(--warning) 3px 4px)}
 .fd-legend i.fd-unknown-swatch{border:1px dashed var(--border-strong)}
 .fd-selection{display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:1;min-width:0}
@@ -99,7 +99,7 @@ img.fd-logo{background:var(--surface-2)}
 .fd-rail-toggle{align-self:flex-end}
 .fd-rail.right .fd-rail-toggle{align-self:flex-start}
 .fd-rail.collapsed .fd-rail-toggle{align-self:center}
-.fd-rail-toggle svg{transition:transform .2s}
+.fd-rail-toggle svg{transition:transform  var(--mv-dur-fast) var(--mv-ease-out)}
 .fd-rail.left .fd-rail-toggle svg{transform:rotate(180deg)}
 .fd-rail.left.collapsed .fd-rail-toggle svg{transform:none}
 .fd-rail.right.collapsed .fd-rail-toggle svg{transform:rotate(180deg)}

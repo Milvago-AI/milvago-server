@@ -53,6 +53,9 @@ func OpenDatabase(ctx context.Context, c Config) (*pgxpool.Pool, error) {
 	if e = tx.Commit(ctx); e != nil {
 		return nil, e
 	}
+	if e = validateDecisionReasons(ctx, m); e != nil {
+		return nil, e
+	}
 	return OpenRuntimeDatabase(ctx, c)
 }
 
@@ -82,7 +85,7 @@ func applyBaseDatabaseSchema(ctx context.Context, tx pgx.Tx, c Config) error {
 			return e
 		}
 	}
-	if _, e = tx.Exec(ctx, `INSERT INTO organizations(name) SELECT $1 WHERE NOT EXISTS(SELECT 1 FROM organizations)`, c.OrganizationName); e != nil {
+	if _, e = tx.Exec(ctx, `WITH created AS (INSERT INTO organizations(name) SELECT $1 WHERE NOT EXISTS(SELECT 1 FROM organizations) RETURNING id) SELECT set_config('milvago.new_dlp_organization',COALESCE((SELECT id::text FROM created),''),true)`, c.OrganizationName); e != nil {
 		return e
 	}
 	if Edition == "community" {
@@ -105,6 +108,9 @@ func applyBaseDatabaseSchema(ctx context.Context, tx pgx.Tx, c Config) error {
 
 func applyShadowDatabaseSchema(ctx context.Context, tx pgx.Tx, c Config) error {
 	var e error
+	if e = initializeErasedEvents(ctx, tx); e != nil {
+		return e
+	}
 	if _, e = tx.Exec(ctx, `DO $$ DECLARE org uuid; BEGIN FOR org IN SELECT id FROM organizations LOOP PERFORM set_config('milvago.organization_id',org::text,true); INSERT INTO settings(organization_id) VALUES(org) ON CONFLICT DO NOTHING; INSERT INTO policies(organization_id) VALUES(org) ON CONFLICT DO NOTHING; INSERT INTO roles(organization_id,name,permissions,builtin) VALUES (org,'owner',ARRAY['overview.read','events.read','devices.read','devices.manage','members.read','members.manage','settings.manage','policy.manage','installers.manage','content.read','audit.read','roles.manage','organizations.manage','directory.manage'],true),(org,'admin',ARRAY['overview.read','events.read','devices.read','devices.manage','members.read','members.manage','settings.manage','policy.manage','installers.manage','content.read'],true),(org,'viewer',ARRAY['overview.read','events.read','devices.read'],true) ON CONFLICT (organization_id,name) DO UPDATE SET permissions=EXCLUDED.permissions WHERE roles.builtin; UPDATE memberships SET role='viewer' WHERE role='analyst'; END LOOP; PERFORM set_config('milvago.organization_id','',true); END $$`); e != nil {
 		return e
 	}
@@ -244,7 +250,16 @@ func applyServiceDatabaseSchema(ctx context.Context, tx pgx.Tx, c Config) error 
 	if e = initializeDetection(ctx, tx, role); e != nil {
 		return e
 	}
+	if e = initializeDataReadIndexes(ctx, tx); e != nil {
+		return e
+	}
 	if e = initializeDeviceGroups(ctx, tx, role); e != nil {
+		return e
+	}
+	if e = initializeDLP(ctx, tx, role); e != nil {
+		return e
+	}
+	if e = initializeDiscovery(ctx, tx, role); e != nil {
 		return e
 	}
 	if e = initializeSSODomains(ctx, tx, role); e != nil {
@@ -269,6 +284,9 @@ func applyServiceDatabaseSchema(ctx context.Context, tx pgx.Tx, c Config) error 
 	// what makes running it unconditionally on every boot correct.
 	// TestBuiltinRolePermissionsConverge is the guard on all of this.
 	if _, e = tx.Exec(ctx, `DO $$ DECLARE org uuid; BEGIN FOR org IN SELECT id FROM organizations LOOP PERFORM set_config('milvago.organization_id',org::text,true); INSERT INTO privacy_settings(organization_id) VALUES(org) ON CONFLICT DO NOTHING; UPDATE roles SET permissions=array_append(permissions,'reports.aggregate') WHERE name IN ('owner','admin','viewer') AND builtin AND NOT ('reports.aggregate'=ANY(permissions)); UPDATE roles SET permissions=permissions||ARRAY['identity.reveal','identity.erase'] WHERE name='owner' AND builtin AND NOT ('identity.reveal'=ANY(permissions)); UPDATE roles SET permissions=array_append(permissions,'content.purge') WHERE name='owner' AND builtin AND NOT ('content.purge'=ANY(permissions)); INSERT INTO roles(organization_id,name,permissions,builtin) VALUES(org,'reporter',ARRAY['overview.read','reports.aggregate'],true) ON CONFLICT DO NOTHING; END LOOP; PERFORM set_config('milvago.organization_id','',true); END $$`); e != nil {
+		return e
+	}
+	if _, e = tx.Exec(ctx, `DO $$ DECLARE org uuid; BEGIN FOR org IN SELECT id FROM organizations LOOP PERFORM set_config('milvago.organization_id',org::text,true); UPDATE roles SET permissions=ARRAY(SELECT DISTINCT p FROM unnest(permissions||ARRAY['discovery.read','discovery.manage','discovery.catalog.manage','discovery.run']) p) WHERE builtin AND name IN ('owner','admin'); UPDATE roles SET permissions=array_append(permissions,'ai.governance.approve') WHERE builtin AND name='owner' AND NOT ('ai.governance.approve'=ANY(permissions)); UPDATE roles SET permissions=array_append(permissions,'discovery.read') WHERE builtin AND name='viewer' AND NOT ('discovery.read'=ANY(permissions)); END LOOP; PERFORM set_config('milvago.organization_id','',true); END $$`); e != nil {
 		return e
 	}
 	return nil
@@ -391,7 +409,19 @@ END $mig$`); e != nil {
 func applyFinalDatabaseGrants(ctx context.Context, tx pgx.Tx, c Config) error {
 	var e error
 	role := pgx.Identifier{c.RuntimeRole}.Sanitize()
+	if e = initializeSQLAccessIndexes(ctx, tx); e != nil {
+		return e
+	}
+	if e = initializeConversationPaging(ctx, tx); e != nil {
+		return e
+	}
+	if _, e = tx.Exec(ctx, `GRANT EXECUTE ON FUNCTION public.milvago_conversation_candidates(timestamptz,timestamptz),public.milvago_conversation_correlation_keys(uuid,uuid,text,text,text,text[]),public.milvago_conversation_scope_headers(uuid,uuid,text,text,text) TO `+role); e != nil {
+		return e
+	}
 	if _, e = tx.Exec(ctx, `GRANT SELECT,INSERT,UPDATE,DELETE ON shadow_settings,shadow_device_overrides,collaborators,device_collaborators,shadow_events,shadow_content,shadow_saved_filters,device_association_requests TO `+role+`; GRANT USAGE ON SEQUENCE shadow_revision TO `+role+`; GRANT EXECUTE ON FUNCTION association_identity(bytea) TO `+role); e != nil {
+		return e
+	}
+	if _, e = tx.Exec(ctx, `GRANT SELECT,INSERT,DELETE ON shadow_erased_events TO `+role); e != nil {
 		return e
 	}
 	if grants := editionGrants(role); grants != "" {
@@ -404,6 +434,9 @@ func applyFinalDatabaseGrants(ctx context.Context, tx pgx.Tx, c Config) error {
 	// authority — UPDATE is never allowed, and DELETE only under a
 	// transaction-local flag with the 730-day floor engraved in the trigger.
 	if _, e = tx.Exec(ctx, `REVOKE CREATE ON SCHEMA public FROM PUBLIC; GRANT USAGE ON SCHEMA public TO `+role+`; GRANT SELECT,INSERT,UPDATE,DELETE ON users,sessions,login_attempts,setup_sessions,memberships,roles,settings,policies,enrollments,devices,events,ldap_directories TO `+role+`; GRANT SELECT,INSERT,UPDATE,DELETE ON organizations TO `+role+`; GRANT SELECT,UPDATE ON app_config TO `+role+`; GRANT SELECT,INSERT,DELETE ON audit TO `+role+`; GRANT EXECUTE ON FUNCTION enrollment_identity(bytea),device_identity(bytea),user_organizations(uuid),effective_access(uuid,uuid),subtree_members(uuid,uuid) TO `+role); e != nil {
+		return e
+	}
+	if _, e = tx.Exec(ctx, `GRANT SELECT,INSERT,UPDATE,DELETE ON trusted_login_devices TO `+role); e != nil {
 		return e
 	}
 	if e = initializeSharedRates(ctx, tx, role); e != nil {
@@ -447,6 +480,11 @@ func OpenRuntimeDatabase(ctx context.Context, c Config) (*pgxpool.Pool, error) {
 }
 
 func tenantTx(ctx context.Context, p *pgxpool.Pool, org string) (pgx.Tx, error) {
+	// Acquisition is explicit after credential/body work, never here: API key
+	// usage touches also call tenantTx. Only reject reopening a finished read.
+	if e := checkDiscoverySummaryAdmissionOpen(ctx); e != nil {
+		return nil, e
+	}
 	tx, e := p.Begin(ctx)
 	if e != nil {
 		return nil, e
@@ -582,7 +620,7 @@ func (a *App) maintainMinute(ctx context.Context) error {
 }
 
 func (a *App) maintainHour(ctx context.Context) error {
-	if _, e := a.db.Exec(ctx, `DELETE FROM sessions WHERE expires_at<now(); DELETE FROM login_attempts WHERE expires_at<now(); DELETE FROM setup_sessions WHERE expires_at<now()`); e != nil {
+	if _, e := a.db.Exec(ctx, `DELETE FROM sessions WHERE expires_at<now(); DELETE FROM login_attempts WHERE expires_at<now(); DELETE FROM setup_sessions WHERE expires_at<now(); DELETE FROM trusted_login_devices WHERE expires_at<now()`); e != nil {
 		return e
 	}
 	a.revokeWithdrawnIdentities(ctx)
@@ -621,6 +659,9 @@ func (a *App) maintainHour(ctx context.Context) error {
 // DELETE grant on audit exists for — while the append-only trigger stays the
 // only authority on what may actually leave the audit table.
 func (a *App) purgeOrgRetention(ctx context.Context, org string) error {
+	if err := a.purgeErasedEvents(ctx, org); err != nil {
+		return err
+	}
 	tx, e := tenantTx(ctx, a.db, org)
 	if e != nil {
 		return e

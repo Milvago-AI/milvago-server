@@ -154,5 +154,6 @@ func (a *App) browserOrigin() string {
 }
 
 func (a *App) browserSecure() bool {
-	return strings.HasPrefix(a.browserOrigin(), "https://")
+	origin, err := url.Parse(a.browserOrigin())
+	return err == nil && origin.Scheme == "https"
 }

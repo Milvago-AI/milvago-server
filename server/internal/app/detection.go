@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"regexp"
 	"slices"
@@ -20,6 +21,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 )
+
+// detectionEngineVersion is the catalog capability level, independent of the server release.
+// This generation requires the coordinated agent and extension upgrade.
+const detectionEngineVersion = "0.7.0"
 
 //go:embed detection_migration.sql
 var detectionMigration string
@@ -39,12 +44,16 @@ type DetectionNetwork struct {
 	TextPath string `json:"text_path"`
 	// Ordered fallbacks for the text, first non-empty wins. A provider can rename
 	// the field between the request that opens a conversation and the ones that
-	// continue it -- chat.mistral.ai sends content[*].text on create and
-	// messageInput[*].text on append -- and a rule carries a single path. Declaring
+	// continue it -- content[*].text on create and messageInput[*].text on
+	// append -- and a rule carries a single path. Declaring
 	// two rules on the same route is not a way out: the engine refuses an ambiguous
 	// match outright and observes nothing at all.
 	TextPaths []string `json:"text_paths"`
-	ModelPath string   `json:"model_path"`
+	// The text paths that hold an attachment or a pasted block rather than the typed draft
+	// (claude.ai's 2.15.4): content control lets a confirmed paste cover these, and only
+	// these. Each one is also one of TextPaths. Omitted when empty: the agent refuses unknown fields.
+	AttachmentPaths []string `json:"attachment_paths,omitempty"`
+	ModelPath       string   `json:"model_path"`
 	// The reasoning effort a provider was asked for, where it sends one: "effort"
 	// on claude.ai, "thinking_effort" on chatgpt.com -- hence a path per provider
 	// rather than a fixed key. Its own field because Go re-marshals what it decoded:
@@ -72,11 +81,26 @@ type DetectionNetwork struct {
 	// and content control submits to the approved text. "file": an upload, which the
 	// file-upload block seals and observation ignores -- the observer would otherwise
 	// produce a zero-character request event.
+	// "paste": the upload a provider makes at paste time for a long paste, which content
+	// control holds to a paste the agent approved and observation ignores too.
 	Kind string `json:"kind,omitempty"`
 	// The account state the route itself implies: "signed_out" for a send route only
 	// reachable without an account (anonymous ChatGPT's `/unauth-mweb/`), "signed_in"
 	// for one that requires it. A property of the measured route, never of the page.
 	Session string `json:"session,omitempty"`
+	// A form field carrying the whole message as one JSON document, which then becomes
+	// the body every path of the rule reads, as in `<field>=<json>`. Its name may
+	// hold a dot, which no path segment can name.
+	FormField string `json:"form_field,omitempty"`
+	// A request header holding JSON from which ModelPath reads the model instead of the
+	// body, for a provider that states it nowhere else. Lower case.
+	ModelHeader string `json:"model_header,omitempty"`
+	// Opaque model identifiers mapped to canonical names. An identifier the map does not
+	// know is reported as `<provider>:<id>`, so the canonical names never hold `:`.
+	ModelMap map[string]string `json:"model_map,omitempty"`
+	// "protobuf": the route posts its message as binary protobuf. Its paths then name field
+	// numbers, every field read as a list. Omitted when empty: the agent refuses unknown fields.
+	BodyFormat string `json:"body_format,omitempty"`
 	// `omitempty` on all of these, like `conversation_url_segment` and for the same reason:
 	// `Network` refuses unknown fields on the agent side, so a catalogue that always
 	// carried them would be rejected outright by every earlier agent.
@@ -296,14 +320,43 @@ func validateProviderNetworkRule(p DetectionProvider, n DetectionNetwork) error 
 	if !slices.Contains([]string{"POST", "PUT"}, n.Method) || !domainPattern.MatchString(n.Host) || (!slices.Contains(p.Domains, n.Host) && !slices.Contains(p.Aliases, n.Host)) || !detectionPath.MatchString(n.Path) || strings.Count(n.Path, "*") > 8 || !validDetectionJSONPath(n.TextPath) || !validDetectionTextPaths(n.TextPaths) || !validDetectionJSONPath(n.ModelPath) || !validDetectionJSONPath(n.EffortPath) || !validDetectionJSONPath(n.ConversationPath) {
 		return bad("Invalid network rule.")
 	}
-	if !validDetectionJSONPath(n.FilesPath) || len(n.JSONFields) > 4 || !slices.Contains([]string{"", "prompt", "file"}, n.Kind) || !slices.Contains(eventSessions, n.Session) {
+	if !validDetectionJSONPath(n.FilesPath) || len(n.JSONFields) > 4 || !slices.Contains([]string{"", "prompt", "file", "paste"}, n.Kind) || !slices.Contains([]string{"", "protobuf"}, n.BodyFormat) || !slices.Contains(eventSessions, n.Session) {
 		return bad("Invalid network rule.")
 	}
 	if e := validateNetworkJSONFields(n.JSONFields); e != nil {
 		return e
 	}
+	if len(n.AttachmentPaths) > 4 || slices.ContainsFunc(n.AttachmentPaths, func(a string) bool { return !slices.Contains(n.TextPaths, a) }) {
+		return bad("Invalid network rule.")
+	}
 	if n.ConversationURLSegment != nil && (*n.ConversationURLSegment < 0 || *n.ConversationURLSegment > 16) {
 		return bad("Invalid conversation segment.")
+	}
+	return validateNetworkModelSource(n)
+}
+
+var detectionFormField = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,64}$`)
+var detectionHeaderName = regexp.MustCompile(`^[a-z0-9-]{1,64}$`)
+var detectionModelID = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,64}$`)
+var detectionModelName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`)
+
+// validateNetworkModelSource bounds the form field, the model header and the model map
+// as the agent and the extension bound them. A header named without a path reads nothing.
+func validateNetworkModelSource(n DetectionNetwork) error {
+	reserved := []string{"__proto__", "constructor", "prototype"}
+	if n.FormField != "" && (!detectionFormField.MatchString(n.FormField) || slices.Contains(reserved, n.FormField)) {
+		return bad("Invalid form field.")
+	}
+	if n.ModelHeader != "" && (!detectionHeaderName.MatchString(n.ModelHeader) || n.ModelPath == "") {
+		return bad("Invalid model header.")
+	}
+	if len(n.ModelMap) > 32 {
+		return bad("Invalid model map.")
+	}
+	for id, name := range n.ModelMap {
+		if !detectionModelID.MatchString(id) || slices.Contains(reserved, id) || !detectionModelName.MatchString(name) {
+			return bad("Invalid model map.")
+		}
 	}
 	return nil
 }
@@ -441,7 +494,9 @@ func cloneDetection(c DetectionContent) DetectionContent {
 		out.Providers[i].Network = slices.Clone(p.Network)
 		for j, n := range out.Providers[i].Network {
 			out.Providers[i].Network[j].TextPaths = slices.Clone(n.TextPaths)
+			out.Providers[i].Network[j].AttachmentPaths = slices.Clone(n.AttachmentPaths)
 			out.Providers[i].Network[j].JSONFields = slices.Clone(n.JSONFields)
+			out.Providers[i].Network[j].ModelMap = maps.Clone(n.ModelMap)
 			// A slice clone copies this struct by value, and the struct carries a
 			// pointer: without this the memo and every copy handed to a caller share
 			// the same *int. The shipped factory catalogue sets it on one rule, so
@@ -722,12 +777,12 @@ func (a *App) deviceDetectionCatalog(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	rev, raw, e := currentDetectionRaw(r.Context(), tx)
 	if e != nil {
-		a.fail(w, e)
+		a.failTransaction(w, r, tx, e)
 		return
 	}
 	digest := sha256.Sum256(raw)
 	now := time.Now().UTC()
-	header, _ := json.Marshal(map[string]any{"kind": "detection_catalog", "schema": 1, "revision": rev, "issued_at": now, "expires_at": now.Add(24 * time.Hour), "min_engine": map[string]string{"extension": "0.5.0", "bridge": "0.5.0"}, "content_hash": hex.EncodeToString(digest[:]), "content": base64.StdEncoding.EncodeToString(raw)})
+	header, _ := json.Marshal(map[string]any{"kind": "detection_catalog", "schema": 1, "revision": rev, "issued_at": now, "expires_at": now.Add(24 * time.Hour), "min_engine": map[string]string{"extension": detectionEngineVersion, "bridge": detectionEngineVersion}, "content_hash": hex.EncodeToString(digest[:]), "content": base64.StdEncoding.EncodeToString(raw)})
 	signature := ed25519.Sign(a.policyKey(org), header)
 	if e = tx.Commit(r.Context()); e != nil {
 		a.fail(w, e)
@@ -926,10 +981,10 @@ func (a *App) detectorHealth(w http.ResponseWriter, r *http.Request, tx pgx.Tx, 
 	rows, e := tx.Query(r.Context(), `WITH counters AS (
   SELECT h.device_id,coalesce((h.payload->>'catalog_revision')::bigint,0) revision,c->>'provider' provider,
    coalesce((c->>'navigations')::bigint,0) navigations,coalesce((c->>'prompts_network')::bigint,0) network,coalesce((c->>'prompts_dom')::bigint,0) dom,coalesce((c->>'responses_dom')::bigint,0) responses,
-   (h.payload->>'window_end')::timestamptz>now()-$1::interval AS current
+   h.window_end>now()-$1::interval AS current
   FROM detector_health h CROSS JOIN LATERAL jsonb_array_elements(h.payload->'providers') c
-  WHERE (h.payload->>'window_end')::timestamptz>now()-$1::interval-interval '7 days'
-  AND (h.payload->>'window_end')::timestamptz<=now()+interval '1 minute')
+  WHERE h.window_end>now()-$1::interval-interval '7 days'
+  AND h.window_end<=now()+interval '1 minute')
  SELECT provider,revision,
   count(DISTINCT device_id) FILTER(WHERE current AND navigations>0),
   coalesce(sum(navigations) FILTER(WHERE current),0),coalesce(sum(network) FILTER(WHERE current),0),coalesce(sum(dom) FILTER(WHERE current),0),coalesce(sum(responses) FILTER(WHERE current),0),
@@ -994,11 +1049,7 @@ func (a *App) candidateDomains(w http.ResponseWriter, r *http.Request, tx pgx.Tx
 	if e != nil {
 		return e
 	}
-	return jsonQuery(w, r, tx, `SELECT jsonb_build_object(
- 'items',coalesce((SELECT jsonb_agg(c) FROM (SELECT domain,count,first_seen,last_seen,status FROM candidate_domains WHERE domain<>ALL($3) ORDER BY last_seen DESC LIMIT 500) c),'[]'),
- 'platforms',coalesce((SELECT jsonb_agg(p) FROM (
-   SELECT provider,count(*) visits,count(*) FILTER(WHERE action='blocked') blocked,count(DISTINCT device_id) devices,count(DISTINCT user_key) FILTER(WHERE user_key<>'') accounts,max(occurred_at) last_seen
-   FROM shadow_events WHERE detector='presence' AND provider<>ALL($2) AND provider<>ALL($3) GROUP BY provider HAVING count(DISTINCT device_id)>=$1 ORDER BY max(occurred_at) DESC LIMIT 256) p),'[]'))`, floor, hidden, covered)
+	return jsonQuery(w, r, tx, candidateDomainsQuery, floor, hidden, covered, p.Config.DiscoveryEnabled)
 }
 
 // discoveryExclusions returns the hosts Discovery must not name: those the organization

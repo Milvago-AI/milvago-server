@@ -155,10 +155,13 @@ func (a *App) identifyDevice(r *http.Request) (deviceIdentified, error) {
 	if !strings.HasPrefix(bearer, "Bearer ") || len(bearer) != 50 {
 		return d, apiError{401, "device_unauthorized", msgDeviceCredentialRequired}
 	}
+	d.digest = hash(strings.TrimPrefix(bearer, "Bearer "))
+	if cached,ok:=a.deviceRouting.get(d.digest,time.Now());ok{
+		d.org,d.id=cached.organization,cached.device
+	}else{
 	if err := a.checkPublicRequest(r, "device-auth", 6000, 60000); err != nil {
 		return d, err
 	}
-	d.digest = hash(strings.TrimPrefix(bearer, "Bearer "))
 	// A live pgx pool can keep retrying connections during a database outage.
 	// Bound admission independently of the collector HTTP timeout.
 	lookup, cancelLookup := context.WithTimeout(r.Context(), 2*time.Second)
@@ -173,6 +176,8 @@ func (a *App) identifyDevice(r *http.Request) (deviceIdentified, error) {
 			return d, apiError{503, "device_identity_unavailable", "Device authorization is temporarily unavailable."}
 		}
 		return d, apiError{401, "device_unauthorized", msgDeviceCredentialRequired}
+	}
+	a.deviceRouting.put(d.digest,d.org,d.id,time.Now())
 	}
 	// Checked once the device is identified, so the budget cannot be escaped by
 	// presenting a different credential, and before the transaction and the row
@@ -205,7 +210,7 @@ func (a *App) deviceTx(r *http.Request) (pgx.Tx, string, string, error) {
 	}
 	org, id, digest, route := d.org, d.id, d.digest, d.route
 	var tx pgx.Tx
-	if route == routeV2Events {
+	if route == routeV2Events || route == "/v1/discovery/reports" {
 		tx, e = a.eventTransaction(r.Context(), org)
 	} else {
 		tx, e = tenantTx(r.Context(), a.db, org)
@@ -220,7 +225,7 @@ func (a *App) deviceTx(r *http.Request) (pgx.Tx, string, string, error) {
 	// enforcement and the v1 events read the policy under it after locking the row,
 	// which deadlocked with a group move or deletion (audit of 2026-09-24).
 	// Event batches read the privacy policy of the device's organization chain first.
-	if route == routeV2Events {
+	if route == routeV2Events || route == "/v1/discovery/reports" {
 		if e = sharedBarrier(r.Context(), tx, org, true); e != nil {
 			tx.Rollback(r.Context())
 			return nil, "", "", e
@@ -237,6 +242,7 @@ func (a *App) deviceTx(r *http.Request) (pgx.Tx, string, string, error) {
 		if e != nil && !errors.Is(e, pgx.ErrNoRows) {
 			return nil, "", "", e
 		}
+		a.deviceRouting.forget(digest)
 		return nil, "", "", apiError{401, "device_unauthorized", msgDeviceCredentialRequired}
 	}
 	return tx, org, id, nil
@@ -276,6 +282,16 @@ func (a *App) devicePolicyRequest(w http.ResponseWriter, r *http.Request) error 
 	var legacy int64
 	if e = tx.QueryRow(r.Context(), `SELECT revision FROM policies WHERE organization_id=$1`, org).Scan(&legacy); e != nil {
 		return e
+	}
+	config := map[string]json.RawMessage{}
+	cfg.Revision, e = a.projectLegacyDLP(r, tx, org, id, config, cfg)
+	if e != nil {
+		return e
+	}
+	if services, ok := config["services"]; ok {
+		if e = json.Unmarshal(services, &cfg.Config.Services); e != nil {
+			return e
+		}
 	}
 	payload.Revision = cfg.Revision + legacy
 	payload.Rules = rulesFromServices(cfg.Config.Services)

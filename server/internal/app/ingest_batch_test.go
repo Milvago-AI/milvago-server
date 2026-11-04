@@ -28,6 +28,12 @@ func (c *ingestQueryCounts) TraceQueryStart(ctx context.Context, _ *pgx.Conn, da
 }
 func (*ingestQueryCounts) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
 func (c *ingestQueryCounts) TraceBatchStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceBatchStartData) context.Context {
+	queries := data.Batch.QueuedQueries
+	if len(queries) == 2 && queries[0].SQL == sqlSetOrganizationContext && queries[1].SQL == "SELECT configuration,revision FROM privacy_settings WHERE organization_id=$1" {
+		// Transport batching must not hide per-event policy reads from the budget.
+		c.queries.Add(int32(len(queries)))
+		return ctx
+	}
 	c.batches.Add(1)
 	c.writes.Add(int32(data.Batch.Len()))
 	return ctx
@@ -39,6 +45,46 @@ func (c *ingestQueryCounts) reset() {
 	c.catalogues.Store(0)
 	c.batches.Store(0)
 	c.writes.Store(0)
+}
+
+func TestIngestQueryCountsKeepsBatchedPrivacyReadsInsideBudget(t *testing.T) {
+	counts := &ingestQueryCounts{}
+	var privacy pgx.Batch
+	privacy.Queue(sqlSetOrganizationContext, "synthetic-organization")
+	privacy.Queue("SELECT configuration,revision FROM privacy_settings WHERE organization_id=$1", "synthetic-organization")
+	ctx := context.Background()
+	for range 100 {
+		if counts.TraceBatchStart(ctx, nil, pgx.TraceBatchStartData{Batch: &privacy}) != ctx {
+			t.Fatal("read tracing changed its request context")
+		}
+	}
+	if counts.queries.Load() != 200 || counts.batches.Load() != 0 || counts.writes.Load() != 0 {
+		t.Fatal("batched per-event reads escaped the query budget")
+	}
+	counts.reset()
+	var writes pgx.Batch
+	for range 100 {
+		writes.Queue("WITH inserted AS (INSERT INTO shadow_events SELECT 1) SELECT 1")
+	}
+	counts.TraceBatchStart(ctx, nil, pgx.TraceBatchStartData{Batch: &writes})
+	if counts.queries.Load() != 0 || counts.batches.Load() != 1 || counts.writes.Load() != 100 {
+		t.Fatal("event pipeline lost its exact write bound")
+	}
+	// An extra or reordered statement is not the known read-only batch shape.
+	for _, queries := range [][]string{
+		{sqlSetOrganizationContext, "SELECT configuration,revision FROM privacy_settings WHERE organization_id=$1", "SELECT 1"},
+		{"SELECT configuration,revision FROM privacy_settings WHERE organization_id=$1", sqlSetOrganizationContext},
+	} {
+		counts.reset()
+		var unknown pgx.Batch
+		for _, query := range queries {
+			unknown.Queue(query)
+		}
+		counts.TraceBatchStart(ctx, nil, pgx.TraceBatchStartData{Batch: &unknown})
+		if counts.queries.Load() != 0 || counts.batches.Load() != 1 || counts.writes.Load() != int32(len(queries)) {
+			t.Fatal("unknown batch bypassed the pipeline guard")
+		}
+	}
 }
 
 type ingestBatchFixture struct {

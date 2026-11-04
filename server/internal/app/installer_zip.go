@@ -28,7 +28,7 @@ func (a *App) downloadWindowsPackage(w http.ResponseWriter, r *http.Request, tx 
 	}
 	// A session authenticated with a second factor must refresh that proof for
 	// the sensitive download. Accounts without an enabled factor remain usable.
-	if s.MFA {
+	if s.MFA || s.LoginTrusted {
 		if err := a.requireFreshMFA(r, tx, s); err != nil {
 			return err
 		}

@@ -1,7 +1,7 @@
 import { Fragment, createContext, useContext, useEffect, useId, useRef, useState } from 'react';
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import {
-  Activity, AppWindow, ArrowRight, Building2, Check, ChevronDown, ChevronRight, Copy, CornerDownRight, Download, Eye, File, FileArchive, FileSpreadsheet, FileText, Filter, GitFork, Globe, Image, Info, LayoutDashboard, List, Lock, LogOut, Menu, Monitor, Moon, PanelLeftClose, PanelLeftOpen, Plus, RefreshCw, ScrollText, Search, Settings, ShieldCheck, Smartphone, Sun, Trash2, TriangleAlert, Users, X,
+  Activity, BookOpen, CodeXml, Columns2, Workflow, AppWindow, ArrowRight, Building2, Check, ChevronDown, ChevronRight, Copy, CornerDownRight, Download, Eye, File, FileArchive, FileSpreadsheet, FileText, Filter, GitFork, Globe, Image, Info, LayoutDashboard, List, Lock, LogOut, Menu, Monitor, Moon, PanelLeftClose, PanelLeftOpen, Plus, RefreshCw, ScrollText, ScanLine, Search, Settings, ShieldCheck, Smartphone, Sun, Trash2, TriangleAlert, Users, X,
 } from 'lucide-react';
 import { ApiError, request } from './api';
 import type { Session } from './api';
@@ -127,8 +127,8 @@ export function useMutation() {
 }
 
 /* ---------- Icons (lucide-react, bundled, no network) ---------- */
-export type IconName = 'arrow' | 'refresh' | 'sun' | 'moon' | 'plus' | 'smartphone' | 'close' | 'check' | 'shield' | 'device' | 'activity' | 'dashboard' | 'map' | 'list' | 'apps' | 'settings' | 'users' | 'scroll' | 'building' | 'logout' | 'menu' | 'panel-close' | 'panel-open' | 'info' | 'alert' | 'search' | 'download' | 'trash' | 'lock' | 'eye' | 'filter' | 'globe' | 'chevron' | 'chevron-right' | 'corner' | 'copy' | 'file' | 'file-image' | 'file-text' | 'file-sheet' | 'file-archive';
-const icons = { arrow: ArrowRight, refresh: RefreshCw, sun: Sun, moon: Moon, plus: Plus, smartphone: Smartphone, close: X, check: Check, shield: ShieldCheck, device: Monitor, activity: Activity, dashboard: LayoutDashboard, map: GitFork, list: List, apps: AppWindow, settings: Settings, users: Users, scroll: ScrollText, building: Building2, logout: LogOut, menu: Menu, 'panel-close': PanelLeftClose, 'panel-open': PanelLeftOpen, info: Info, alert: TriangleAlert, search: Search, download: Download, trash: Trash2, lock: Lock, eye: Eye, filter: Filter, globe: Globe, chevron: ChevronDown, 'chevron-right': ChevronRight, corner: CornerDownRight, copy: Copy, file: File, 'file-image': Image, 'file-text': FileText, 'file-sheet': FileSpreadsheet, 'file-archive': FileArchive };
+export type IconName = 'arrow' | 'refresh' | 'sun' | 'moon' | 'plus' | 'smartphone' | 'close' | 'check' | 'shield' | 'scan' | 'book' | 'code' | 'split' | 'workflow' | 'device' | 'activity' | 'dashboard' | 'map' | 'list' | 'apps' | 'settings' | 'users' | 'scroll' | 'building' | 'logout' | 'menu' | 'panel-close' | 'panel-open' | 'info' | 'alert' | 'search' | 'download' | 'trash' | 'lock' | 'eye' | 'filter' | 'globe' | 'chevron' | 'chevron-right' | 'corner' | 'copy' | 'file' | 'file-image' | 'file-text' | 'file-sheet' | 'file-archive';
+const icons = { arrow: ArrowRight, refresh: RefreshCw, sun: Sun, moon: Moon, plus: Plus, smartphone: Smartphone, close: X, check: Check, shield: ShieldCheck, scan: ScanLine, book: BookOpen, code: CodeXml, split: Columns2, workflow: Workflow, device: Monitor, activity: Activity, dashboard: LayoutDashboard, map: GitFork, list: List, apps: AppWindow, settings: Settings, users: Users, scroll: ScrollText, building: Building2, logout: LogOut, menu: Menu, 'panel-close': PanelLeftClose, 'panel-open': PanelLeftOpen, info: Info, alert: TriangleAlert, search: Search, download: Download, trash: Trash2, lock: Lock, eye: Eye, filter: Filter, globe: Globe, chevron: ChevronDown, 'chevron-right': ChevronRight, corner: CornerDownRight, copy: Copy, file: File, 'file-image': Image, 'file-text': FileText, 'file-sheet': FileSpreadsheet, 'file-archive': FileArchive };
 export function Icon({ name, size = 16 }: Readonly<{ name: IconName; size?: number }>) { const Component = icons[name]; return <Component size={size} strokeWidth={1.75} aria-hidden="true" />; }
 
 /* ---------- Primitives ---------- */
@@ -197,7 +197,8 @@ export function Notice({ tone = 'neutral', title, action, role, children }: Read
   return <div className={tone === 'neutral' ? 'notice' : `notice notice-${tone}`} role={role ?? (tone === 'danger' ? 'alert' : 'status')}><Icon name={icon} /><div>{title && <strong>{title}</strong>}{children && <p>{children}</p>}</div>{action}</div>;
 }
 export function PageBar({ title, actions, info }: Readonly<{ title: ReactNode; actions?: ReactNode; info?: ReactNode }>) {
-  return <><div className="pagebar"><h1 className="page-title">{title}</h1>{actions && <div className="actions">{actions}</div>}</div>{info && <div className="info-line"><Icon name="info" /><span>{info}</span></div>}</>;
+  const t=useText();
+  return <header className="pagebar"><div className="pagebar-heading"><div><h1 className="page-title">{title}</h1>{info && <details className="page-help"><summary><Icon name="info" size={14}/><span>{t('viewInformation')}</span><Icon name="chevron" size={12}/></summary><div className="page-description">{info}</div></details>}</div></div>{actions && <div className="actions">{actions}</div>}</header>;
 }
 export function Empty({ title, action, children }: Readonly<{ title: string; action?: ReactNode; children?: ReactNode }>) { return <div className="empty"><span className="empty-symbol"><Icon name="activity" size={20} /></span><h3>{title}</h3>{children && <p>{children}</p>}{action}</div>; }
 // The title of an error, guard by guard rather than nested ternaries.
@@ -214,6 +215,9 @@ function errorTitle(error: unknown, t: Translate) {
 // device enrollment, the licence forms themselves), always through this one
 // component, so extending this map is enough to translate all of them at once.
 const knownErrorMessages: Partial<Record<string, TranslationKey>> = {
+  invalid_search_regex: "eventQueryRegex",
+  read_timeout: "dataReadTimeout",
+  response_too_large: "dataResponseTooLarge",
   license_restricted: "licenseErrorRestricted",
   license_required: "licenseErrorRequired",
   license_invalid: "licenseErrorInvalid",
@@ -320,5 +324,5 @@ export function Dialog({ title, children, close, side }: Readonly<{ title: strin
   // detail used to close the conversation as well.
   useEffect(() => { const dialog = ref.current!; const unlock = lockPageScroll(); const prior = document.activeElement as HTMLElement | null; dialog.showModal(); const cancel = (event: globalThis.Event) => { event.preventDefault(); closeRef.current(); }; const outside = (event: MouseEvent) => { const box = dialog.getBoundingClientRect(); return event.detail > 0 && (event.target as Element | null)?.closest('dialog') === dialog && (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom); }; let startedOutside = false; const down = (event: MouseEvent) => { startedOutside = outside(event); }; const click = (event: MouseEvent) => { if (startedOutside && outside(event)) closeRef.current(); }; dialog.addEventListener('cancel', cancel); dialog.addEventListener('mousedown', down); dialog.addEventListener('click', click); return () => { dialog.removeEventListener('cancel', cancel); dialog.removeEventListener('mousedown', down); dialog.removeEventListener('click', click); dialog.close(); unlock(); prior?.focus(); }; }, []);
   const variant = side ? dialogVariants[side] : '';
-  return <dialog ref={ref} className={variant ? `dialog ${variant}` : 'dialog'} aria-labelledby={id}><div className="dialog-heading"><h2 id={id}>{title}</h2><button type="button" className="icon-button" onClick={close} aria-label={t("close")}><Icon name="close" /></button></div>{children}</dialog>;
+  return <dialog ref={ref} className={variant ? `dialog ${variant}` : 'dialog'} aria-labelledby={id} onKeyDown={event => { if (event.key === 'Escape') event.stopPropagation(); }}><div className="dialog-heading"><h2 id={id}>{title}</h2><button type="button" className="icon-button" onClick={close} aria-label={t("close")}><Icon name="close" /></button></div>{children}</dialog>;
 }

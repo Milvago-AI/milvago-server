@@ -32,9 +32,9 @@ const (
 
 func modelCatalog() []ModelCatalogEntry {
 	out := []ModelCatalogEntry{}
-	names := []string{"ChatGPT", "Claude", "Le Chat", "Copilot", "Gemini", "NotebookLM", "DeepSeek", "Perplexity", "Grok"}
-	for i, s := range catalog {
-		out = append(out, ModelCatalogEntry{s.ID, "browser", names[i], s.Domains[0], []string{}})
+	names := map[string]string{"chatgpt": "ChatGPT", "claude": "Claude"}
+	for _, s := range catalog {
+		out = append(out, ModelCatalogEntry{s.ID, "browser", names[s.ID], s.Domains[0], []string{}})
 	}
 	if Edition == "commercial" {
 		for _, s := range []struct{ id, name, provider string }{{"codex", "Codex", "openai.com"}, {"claude-code", "Claude Code", anthropicDomain}, {"claude-desktop", "Claude Desktop", anthropicDomain}, {"claude-desktop-agent", "Claude Desktop Agent", anthropicDomain}} {
@@ -273,6 +273,29 @@ func modelStatusForRule(r *http.Request, tx pgx.Tx, d modelStatusDevice, rule Mo
 	return v, true, nil
 }
 
+type modelReadReport struct {
+	revision       int64
+	status, reason string
+	at             *time.Time
+}
+
+func modelStatusFromReport(d modelStatusDevice, rule ModelAccessRule, revision int64, now time.Time, report modelReadReport) (modelStatusItem, bool, error) {
+	if rule.Mode == "off" || (rule.Channel == "native" && d.kind != "native") {
+		return modelStatusItem{}, false, nil
+	}
+	v := modelStatusItem{DeviceID: d.id, Hostname: d.host, Version: d.version, Platform: d.platform, PlatformID: rule.PlatformID, Channel: rule.Channel, ExpectedRevision: revision, AppliedRevision: report.revision, Reason: report.reason, ReportedAt: report.at}
+	reportedStatus := report.status
+	v.Status = enforcementState(d.version, revision, v.AppliedRevision, reportedStatus, v.ReportedAt, now)
+	if d.status != "approved" {
+		v.Status = "unavailable"
+		v.Reason = "device_" + d.status
+	}
+	if v.Status == "unavailable" && v.Reason == "" {
+		v.Reason = "control_unavailable"
+	}
+	return v, true, nil
+}
+
 func (a *App) modelStatusItems(r *http.Request, tx pgx.Tx, s *Session, devices []modelStatusDevice) ([]modelStatusItem, error) {
 	items := []modelStatusItem{}
 	// Read the clock from the database, the same one that stamped `reported_at`.
@@ -282,13 +305,39 @@ func (a *App) modelStatusItems(r *http.Request, tx pgx.Tx, s *Session, devices [
 	if e := tx.QueryRow(r.Context(), `SELECT clock_timestamp()`).Scan(&now); e != nil {
 		return nil, e
 	}
+	ids := make([]string, 0, len(devices))
 	for _, d := range devices {
-		cfg, e := a.effectiveShadow(r.Context(), tx, s.OrganizationID, d.id)
-		if e != nil {
+		ids = append(ids, d.id)
+	}
+	policies, e := a.effectiveShadowBatch(r.Context(), tx, s.OrganizationID, ids)
+	if e != nil {
+		return nil, e
+	}
+	reports := map[string]modelReadReport{}
+	rows, e := tx.Query(r.Context(), `SELECT device_id,platform_id,channel,revision,status,reason,reported_at FROM model_enforcement WHERE device_id=ANY($1::uuid[])`, ids)
+	if e != nil {
+		return nil, e
+	}
+	for rows.Next() {
+		var id, platform, channel string
+		var v modelReadReport
+		if e = rows.Scan(&id, &platform, &channel, &v.revision, &v.status, &v.reason, &v.at); e != nil {
+			rows.Close()
 			return nil, e
 		}
+		reports[id+"\x00"+platform+"\x00"+channel] = v
+	}
+	rows.Close()
+	if e = rows.Err(); e != nil {
+		return nil, e
+	}
+	for _, d := range devices {
+		cfg, ok := policies[d.id]
+		if !ok {
+			return nil, pgx.ErrNoRows
+		}
 		for _, rule := range cfg.Config.ModelAccess {
-			v, active, e := modelStatusForRule(r, tx, d, rule, cfg.Revision, now)
+			v, active, e := modelStatusFromReport(d, rule, cfg.Revision, now, reports[d.id+"\x00"+rule.PlatformID+"\x00"+rule.Channel])
 			if e != nil {
 				return nil, e
 			}
@@ -302,48 +351,85 @@ func (a *App) modelStatusItems(r *http.Request, tx pgx.Tx, s *Session, devices [
 }
 
 func (a *App) modelAccessStatus(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
-	rows, e := tx.Query(r.Context(), `SELECT id,hostname_ciphertext,version,platform,kind,status FROM devices ORDER BY hostname,id`)
-	if e != nil {
-		return e
+	aggregate := requireIndividual(r) != nil
+	cursor := r.URL.Query().Get("after")
+	if cursor != "" && (!uuidPattern.MatchString(cursor) || aggregate) {
+		return bad("Invalid deployment cursor.")
 	}
-	devices := []modelStatusDevice{}
-	// The route is open to overview.read (the reporter role): a machine is named only
-	// to someone who may read the devices, and never under aggregate-only reporting,
-	// as Discovery already does. Otherwise it is its alias (audit of 2026-09-24).
-	named := namesMachines(r, s)
-	for rows.Next() {
-		var d modelStatusDevice
-		if e = rows.Scan(&d.id, &d.host, &d.version, &d.platform, &d.kind, &d.status); e != nil {
-			rows.Close()
-			return e
-		}
-		if named {
-			d.host, e = a.machineName(r, s.OrganizationID, d.id, d.host)
-		} else {
-			d.host = deviceAlias(d.id)
-		}
+	if cursor == "" {
+		cursor = "00000000-0000-0000-0000-000000000000"
+	}
+	counts := map[string]map[string]any{}
+	for {
+		rows, e := tx.Query(r.Context(), `SELECT id,hostname_ciphertext,version,platform,kind,status FROM devices WHERE id>$1::uuid ORDER BY id LIMIT 101`, cursor)
 		if e != nil {
-			rows.Close()
 			return e
 		}
-		devices = append(devices, d)
+		devices := []modelStatusDevice{}
+		for rows.Next() {
+			var d modelStatusDevice
+			if e = rows.Scan(&d.id, &d.host, &d.version, &d.platform, &d.kind, &d.status); e != nil {
+				rows.Close()
+				return e
+			}
+			devices = append(devices, d)
+		}
+		rows.Close()
+		if e = rows.Err(); e != nil {
+			return e
+		}
+		next := ""
+		if len(devices) > 100 {
+			next = devices[99].id
+			devices = devices[:100]
+		}
+		if !aggregate {
+			for i := range devices {
+				d := &devices[i]
+				if namesMachines(r, s) {
+					d.host, e = a.machineName(r, s.OrganizationID, d.id, d.host)
+					if e != nil {
+						return e
+					}
+				} else {
+					d.host = deviceAlias(d.id)
+				}
+			}
+		}
+		items, e := a.modelStatusItems(r, tx, s, devices)
+		if e != nil {
+			return e
+		}
+		if !aggregate {
+			reply(w, 200, map[string]any{"items": items, "next": next})
+			return nil
+		}
+		// Each device appears in one page only. Deduplicate each cell within that
+		// page, then sum the exact counts before applying K to the whole fleet.
+		for _, cell := range aggregateModelStatus(items, 0) {
+			key := cell["platform_id"].(string) + "\x00" + cell["channel"].(string) + "\x00" + cell["status"].(string)
+			if counts[key] == nil {
+				counts[key] = cell
+			} else {
+				counts[key]["devices"] = counts[key]["devices"].(int) + cell["devices"].(int)
+			}
+		}
+		if next == "" {
+			break
+		}
+		cursor = next
 	}
-	rows.Close()
-	if e = rows.Err(); e != nil {
-		return e
+	keys := []string{}
+	for key := range counts {
+		keys = append(keys, key)
 	}
-	items, e := a.modelStatusItems(r, tx, s, devices)
-	if e != nil {
-		return e
+	slices.Sort(keys)
+	out := []map[string]any{}
+	for _, key := range keys {
+		if counts[key]["devices"].(int) >= privacyFor(r).view.Config.K {
+			out = append(out, counts[key])
+		}
 	}
-	// Under aggregate-only reporting, counts only (product decision, 2026-09-24): machines
-	// per platform, channel and state. A row per machine, even under a label, kept its
-	// set of rules together -- a group or an override -- and /api/devices names it.
-	if requireIndividual(r) != nil {
-		counts := aggregateModelStatus(items, privacyFor(r).view.Config.K)
-		reply(w, 200, map[string]any{"items": []modelStatusItem{}, "counts": counts})
-		return nil
-	}
-	reply(w, 200, map[string]any{"items": items})
+	reply(w, 200, map[string]any{"items": []modelStatusItem{}, "counts": out})
 	return nil
 }

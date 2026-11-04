@@ -7,6 +7,7 @@ licensor of every component in this repository.
 | --- | --- | --- |
 | Backend, single organization | `server/` | AGPL-3.0-only |
 | Console frontend | `console/` | AGPL-3.0-only |
+| Shared DLP engine | `dlp-engine/` | Apache-2.0 (see its LICENSE) |
 
 Full text: `LICENSE`. Where a directory carries its own license file (bundled fonts, for
 instance), that file governs it.

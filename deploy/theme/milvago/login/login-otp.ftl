@@ -26,6 +26,16 @@
                 <p class="field-hint" id="otp-hint">${msg("mvOtpHint")}</p>
             </div>
 
+            <div data-login-trust hidden>
+                <label class="choice">
+                    <input type="checkbox" data-trust-device aria-describedby="trust-device-hint"/>
+                    <@layout.icon "shield"/>
+                    <strong>${msg("mvTrustDeviceSixMonths")}</strong>
+                </label>
+                <p class="field-hint" id="trust-device-hint">${msg("mvTrustDeviceHint")}</p>
+                <p class="field-error" data-trust-error role="alert" hidden>${msg("mvTrustDeviceError")}</p>
+            </div>
+
             <div class="actions">
                 <button class="button primary" name="login" id="kc-login" type="submit">${msg("mvVerify")}<@layout.icon "arrow"/></button>
             </div>

@@ -126,6 +126,7 @@ func (a *App) openShadow(org, purpose, encoded string) ([]byte, error) {
 }
 
 type V2Event struct {
+	DLP            *DLPTrace `json:"dlp,omitempty"`
 	PlatformID     string    `json:"platform_id,omitempty"`
 	DecisionReason string    `json:"decision_reason,omitempty"`
 	ID             string    `json:"id"`
@@ -191,12 +192,24 @@ func normalizeEventURL(raw, provider string) (string, error) {
 // does not rebuild the same slice literals on every call.
 var eventDetectors = []string{"dom", "network", "both", "otlp", "native_cache", "presence"}
 var eventDecisionReasons = []string{"model_denied", "model_unknown", "control_unavailable"}
+
+// Reasons that are not a model decision, each on the one event it explains (2026-10-16):
+// a blocked or redirected service visit, a refused file, a protected word.
+var eventPolicyReasons = map[string][2]string{
+	"service_blocked":    {"navigation", "blocked"},
+	"service_redirected": {"navigation", "redirected"},
+	"upload_blocked":     {"prompt", "blocked"},
+	"keyword":            {"prompt", "blocked"},
+}
 var eventKinds = []string{"navigation", "prompt", "response"}
 var eventActions = []string{"observed", "blocked", "redirected"}
 var eventSources = []string{"browser", "native"}
 var nativeEventTools = []string{"claude-code", "codex", "claude-desktop", "claude-desktop-agent"}
 
 func validateV2(v *V2Event, now time.Time) error {
+	if !validDLPTrace(v.DLP) {
+		return bad("Invalid DLP metadata.")
+	}
 	if e := validateEventDetector(v); e != nil {
 		return e
 	}
@@ -249,6 +262,9 @@ func validEventMeasurement(n *int64) bool {
 }
 
 func validEventDecision(v *V2Event) bool {
+	if shape, ok := eventPolicyReasons[v.DecisionReason]; ok {
+		return v.Kind == shape[0] && v.Action == shape[1]
+	}
 	return v.DecisionReason == "" || (slices.Contains(eventDecisionReasons, v.DecisionReason) && v.PlatformID != "" && v.Action == "blocked" && v.Kind == "prompt")
 }
 
@@ -373,6 +389,18 @@ func (a *App) versionedPolicyRequest(w http.ResponseWriter, r *http.Request, ver
 	if Edition != "commercial" {
 		delete(config, "blocked_platforms")
 	}
+	if version < 4 {
+		settings.Revision, e = a.projectLegacyDLP(r, tx, org, id, config, settings)
+		if e != nil {
+			return e
+		}
+	}
+	if version >= 4 {
+		settings.Revision, e = a.enrichDLPPolicy(r, tx, org, id, config, settings.Revision)
+		if e != nil {
+			return e
+		}
+	}
 	now := time.Now().UTC()
 	raw, e := json.Marshal(map[string]any{"version": version, "revision": settings.Revision, "issued_at": now, "expires_at": now.Add(15 * time.Minute), "config": config, "capabilities": caps})
 	if e != nil {
@@ -490,6 +518,9 @@ func (a *App) v2CompleteRequest(w http.ResponseWriter, r *http.Request) error {
 		// An unknown identity is not an error: the event may have been purged by
 		// retention between the send and the completion. It simply applies to nothing.
 		if tag.RowsAffected() > 0 {
+			if e = completeDLPObservation(r, tx, org, device, c.ID); e != nil {
+				return e
+			}
 			applied = append(applied, c.ID)
 		}
 	}
@@ -546,6 +577,9 @@ func eventSensitivity(v V2Event, cfg ShadowSettings) string {
 type ingestBatchState struct {
 	org, device, deviceKind string
 	cfg                     ShadowSettings
+	dlpRetention            int
+	v4Revision              int64
+	dlpPolicies             map[string]DLPPolicy
 	retainedAfter           time.Time
 	aliasKey                []byte
 	catalogues              detectionEventBatch
@@ -557,11 +591,20 @@ func (a *App) queueIngestEvent(r *http.Request, tx pgx.Tx, state *ingestBatchSta
 	if v.Source == "native" && state.deviceKind != "native" {
 		return forbidden()
 	}
+	historical, err := a.validateDLPEvent(r, tx, state, v)
+	if err != nil {
+		return err
+	}
+	if !state.cfg.Config.Collection.Enabled && (v.DLP == nil || !historical.Journal || v.Prompt != nil || v.Response != nil || len(v.Files) > 0) {
+		return apiError{403, "collection_disabled", "Only authorized DLP metadata can be reported while collection is disabled."}
+	}
+	currentRevision := state.cfg.Revision
+	currentPolicy := v.PolicyRevision == currentRevision || v.PolicyRevision == state.v4Revision
 	hasContent := v.Prompt != nil || v.Response != nil
-	if hasContent && (!state.cfg.Config.Collection.StoreContent || v.PolicyRevision != state.cfg.Revision) {
+	if hasContent && (!state.cfg.Config.Collection.Enabled || !state.cfg.Config.Collection.StoreContent || !currentPolicy) {
 		return apiError{409, "content_policy_changed", "Refresh the policy and remove unauthorized queued content before retrying."}
 	}
-	if len(v.Files) > 0 && (!state.cfg.Config.Collection.StoreFileNames || v.PolicyRevision != state.cfg.Revision) {
+	if len(v.Files) > 0 && (!state.cfg.Config.Collection.Enabled || !state.cfg.Config.Collection.StoreFileNames || !currentPolicy) {
 		return apiError{409, "content_policy_changed", "Refresh the policy and remove unauthorized queued file names before retrying."}
 	}
 	if v.OccurredAt.Before(state.retainedAfter) {
@@ -608,19 +651,34 @@ func (a *App) sealAndQueueIngestEvent(r *http.Request, tx pgx.Tx, state *ingestB
 		content = []byte(encrypted)
 	}
 	// Pipeline bounded writes on this transaction's connection. The CTE's
-	// RETURNING set keeps content insertion conditional on a NEW event, so a
+	// RETURNING set keeps content and DLP attribution conditional on a NEW event, so a
 	// replay cannot recreate purged content or overwrite the original record.
 	// Association remains resolved at the event's timestamp under tenant RLS.
+	var traceFingerprint, traceAction, traceDelivery, traceDecisions any
+	if v.DLP != nil {
+		traceFingerprint = v.DLP.Fingerprint
+		traceAction = v.DLP.Action
+		traceDelivery = v.DLP.Delivery
+		traceDecisions = dlpJSON(v.DLP.Decisions)
+	}
 	state.writes.Queue(`WITH inserted AS (
  INSERT INTO shadow_events(organization_id,device_id,id,occurred_at,kind,provider,source,tool,model,effort,conversation_id,correlation_id,url,action,characters,labels,policy_revision,collaborator_id,sensitivity,platform_id,decision_reason,files,"user",user_key,detector,catalog_revision,input_tokens,output_tokens,body_bytes,characters_known,session)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
+ SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
   (SELECT collaborator_id FROM device_collaborators WHERE device_id=$2 AND bound_at<=$18::timestamptz AND expires_at>$18::timestamptz AND expires_at>now()),
-  $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$33)
+  $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$33
+ WHERE NOT EXISTS(SELECT 1 FROM shadow_erased_events erased
+ WHERE erased.organization_id=$1 AND erased.device_id=$2 AND erased.event_id=$3)
  ON CONFLICT DO NOTHING RETURNING organization_id,device_id,id
 )
-INSERT INTO shadow_content(organization_id,device_id,event_id,encrypted,expires_at)
+ , content_written AS (
+ INSERT INTO shadow_content(organization_id,device_id,event_id,encrypted,expires_at)
  SELECT organization_id,device_id,id,$31::bytea,now()+make_interval(days=>$32)
- FROM inserted WHERE $31::bytea IS NOT NULL`, state.org, state.device, v.ID, v.OccurredAt, v.Kind, v.Provider, v.Source, v.Tool, v.Model, v.Effort, v.ConversationID, v.CorrelationID, v.URL, v.Action, v.Characters, labels, v.PolicyRevision, v.OccurredAt, sensitivity, v.PlatformID, v.DecisionReason, files, v.User, userKey, v.Detector, v.CatalogRevision, v.InputTokens, v.OutputTokens, v.BodyBytes, v.CharactersKnown == nil || *v.CharactersKnown, content, state.cfg.Config.Collection.ContentRetentionDays, v.Session)
+ FROM inserted WHERE $31::bytea IS NOT NULL RETURNING event_id
+ )
+ INSERT INTO dlp_decisions(organization_id,channel,policy_fingerprint,device_id,event_id,action,delivery,decisions,occurred_at,expires_at)
+ SELECT organization_id,$7,$34::text,device_id,id,$35::text,$36::text,$37::jsonb,$4::timestamptz,$4::timestamptz+make_interval(days=>$38)
+ FROM inserted WHERE $34::text IS NOT NULL ON CONFLICT DO NOTHING`, state.org, state.device, v.ID, v.OccurredAt, v.Kind, v.Provider, v.Source, v.Tool, v.Model, v.Effort, v.ConversationID, v.CorrelationID, v.URL, v.Action, v.Characters, labels, v.PolicyRevision, v.OccurredAt, sensitivity, v.PlatformID, v.DecisionReason, files, v.User, userKey, v.Detector, v.CatalogRevision, v.InputTokens, v.OutputTokens, v.BodyBytes, v.CharactersKnown == nil || *v.CharactersKnown, content, state.cfg.Config.Collection.ContentRetentionDays, v.Session, traceFingerprint, traceAction, traceDelivery, traceDecisions, state.dlpRetention)
+
 	state.accepted = append(state.accepted, v.ID)
 	return nil
 }
@@ -657,7 +715,13 @@ func (a *App) v2IngestRequest(w http.ResponseWriter, r *http.Request) error {
 		return e
 	}
 	if !cfg.Config.Collection.Enabled {
-		return apiError{403, "collection_disabled", "Collection is disabled for this installation."}
+		settings, err := a.readDLP(r.Context(), tx, org, "endpoint", "device", device, 0)
+		if err != nil {
+			return err
+		}
+		if !settings.Policy.Journal || slices.ContainsFunc(body.Events, func(v V2Event) bool { return v.DLP == nil }) {
+			return apiError{403, "collection_disabled", "Collection is disabled for this installation."}
+		}
 	}
 	var deviceKind string
 	if e = tx.QueryRow(r.Context(), `SELECT kind FROM devices WHERE id=$1`, device).Scan(&deviceKind); e != nil {
@@ -671,6 +735,11 @@ func (a *App) v2IngestRequest(w http.ResponseWriter, r *http.Request) error {
 		return e
 	}
 	if len(rejected) > 0 {
+		// A permanent reject writes no batch state. Release device/privacy
+		// locks, the pool connection and the event slot before client I/O.
+		if e = tx.Rollback(r.Context()); e != nil {
+			return e
+		}
 		reply(w, http.StatusBadRequest, map[string]any{"error": "invalid_event", "message": "Remove only the identified invalid events before retrying.", "rejected_ids": rejected})
 		return nil
 	}
@@ -685,8 +754,15 @@ func (a *App) v2IngestRequest(w http.ResponseWriter, r *http.Request) error {
 		return e
 	}
 	retainedAfter := now.Add(-time.Duration(min(retentionDays, privacy.Config.IdentityDays)) * 24 * time.Hour)
+	var v4Revision int64
+	e = tx.QueryRow(r.Context(), `SELECT revision FROM dlp_device_policy_versions WHERE device_id=$1`, device).Scan(&v4Revision)
+	if e != nil && e != pgx.ErrNoRows {
+		return e
+	}
 	state := ingestBatchState{
 		org: org, device: device, deviceKind: deviceKind, cfg: cfg,
+		dlpRetention: min(30, retentionDays, privacy.Config.IdentityDays),
+		v4Revision:   v4Revision, dlpPolicies: map[string]DLPPolicy{},
 		retainedAfter: retainedAfter, accepted: make([]string, 0, len(body.Events)),
 	}
 	if e = a.writeIngestBatch(r, tx, &state, body.Events); e != nil {

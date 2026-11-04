@@ -38,7 +38,7 @@ export function TileLogo({ dimension, value, label, size }: Readonly<{ dimension
   if (dimension === 'actor_id') return <span className="fd-logo soft" style={{ width: size, height: size }}>{initials(label)}</span>;
   const info = brand(dimension, value);
   if (info.logo && !failed) return <img className="fd-logo" style={{ width: size, height: size }} src={info.logo} alt="" onError={() => setFailed(true)} />;
-  return <span className="fd-logo" style={{ width: size, height: size, background: info.color }}>{info.monogram}</span>;
+  return <span className="fd-logo soft" style={{ width: size, height: size }}>{info.monogram}</span>;
 }
 
 export function FlowDiagram({ flows, dimensions = ALL_DIMENSIONS, selected, select, drill, sensitivity, totals, tableToggle = true, actorLabels }: Readonly<{

@@ -1,0 +1,59 @@
+{
+  "case": "network-protobuf-body",
+  "reason": "A route may carry its message as binary protobuf (body_format protobuf): its paths then name field numbers, every field read as a list, as a provider posting one protobuf message per send does. Its attachment_paths name the text paths that hold a pasted block, each one of its text_paths. The field is omitted when empty, so a catalogue that does not use it still reaches an agent that predates it.",
+  "server": "accept",
+  "engine": "accept",
+  "content": {
+    "providers": [
+      {
+        "id": "acme-assistant",
+        "label": "Acme Assistant",
+        "domains": [
+          "assistant.example-corp.test"
+        ],
+        "aliases": [
+          "assistant-alias.example-corp.test"
+        ],
+        "conversation_path": "/session/*",
+        "conversation_segment": 1,
+        "dom": {
+          "editor": "textarea.prompt",
+          "send": "button.send",
+          "response": ".response"
+        },
+        "network": [
+          {
+            "method": "POST",
+            "host": "assistant.example-corp.test",
+            "path": "/rpc/acme.v1.ChatService/Send",
+            "body_format": "protobuf",
+            "text_path": "",
+            "text_paths": [
+              "2[*].3[*]",
+              "2[*].15[*].4[*]"
+            ],
+            "attachment_paths": [
+              "2[*].15[*].4[*]"
+            ],
+            "model_path": "",
+            "conversation_path": "1[*].2[*]"
+          }
+        ],
+        "qualified_at": "2026-09-11T00:00:00Z"
+      }
+    ],
+    "native_tools": [],
+    "heuristics": {
+      "keys": [
+        "messages",
+        "prompt",
+        "model",
+        "input"
+      ],
+      "mime_types": [
+        "text/event-stream",
+        "application/json"
+      ]
+    }
+  }
+}

@@ -242,20 +242,22 @@ export function GroupsPage() {
       )}
       {remove && (
         <Dialog title={t("deleteGroup")} close={() => !deletion.pending && setRemove(undefined)}>
-          <p>{t("devicesOfADeletedGroupFallBack")}</p>
-          <ul className="confirm-list">
-            <li>
-              <strong>{remove.name}</strong> · {remove.device_count === 1 ? t("oneDevice") : t("nDevices", [remove.device_count])}
-            </li>
-          </ul>
-          <ErrorNotice error={deletion.error} />
-          <div className="dialog-actions">
-            <button type="button" className="button secondary" disabled={deletion.pending} onClick={() => setRemove(undefined)}>
-              {t("cancel")}
-            </button>
-            <button type="button" className="button danger" disabled={deletion.pending} onClick={() => void del(remove)}>
-              {t("confirmDeletion")}
-            </button>
+          <div className="dialog-body">
+            <p>{t("devicesOfADeletedGroupFallBack")}</p>
+            <ul className="confirm-list">
+              <li>
+                <strong>{remove.name}</strong> · {remove.device_count === 1 ? t("oneDevice") : t("nDevices", [remove.device_count])}
+              </li>
+            </ul>
+            <ErrorNotice error={deletion.error} />
+            <div className="dialog-actions">
+              <button type="button" className="button secondary" disabled={deletion.pending} onClick={() => setRemove(undefined)}>
+                {t("cancel")}
+              </button>
+              <button type="button" className="button danger" disabled={deletion.pending} onClick={() => void del(remove)}>
+                {t("confirmDeletion")}
+              </button>
+            </div>
           </div>
         </Dialog>
       )}

@@ -1,0 +1,25 @@
+.ai-governance-panel,.ai-governance-policy,.ai-governance-policy>fieldset {display:grid;gap:1rem;min-width:0}
+.ai-governance-panel>h2,.ai-governance-panel>p {margin:0}
+.ai-governance-rule {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;padding:1rem;min-width:0;border:1px solid var(--border);border-radius:var(--radius-m)}
+.ai-governance-rule legend {padding:0 .4rem;font-weight:600}
+.ai-governance-rule label {display:grid;align-content:start;gap:.4rem;min-width:0}
+.ai-governance-rule label.ai-governance-checkbox {display:flex;flex-direction:row;align-items:flex-start;gap:.6rem;grid-column:1/-1;font-weight:400}
+.ai-governance-checkbox input {flex:0 0 auto;margin-top:.2rem}
+.ai-governance-rule .ai-governance-help,.ai-governance-rule .dlp-target-picker {grid-column:1/-1}
+.ai-governance-rule .ai-governance-help {margin:0;font-size:.875rem;line-height:1.5}
+.ai-governance-policy>fieldset>.button,.ai-governance-rule>.button {justify-self:start}
+.ai-governance-panel details {padding:.8rem 0;border-top:1px solid var(--border);min-width:0}
+.ai-governance-panel summary {font-weight:600;cursor:pointer}
+.ai-governance-panel details>p,.ai-governance-panel details>ul {margin-top:.8rem}
+@media(max-width:700px){.ai-governance-rule{grid-template-columns:minmax(0,1fr);padding:.8rem}.ai-governance-panel{gap:.9rem}}
+.ai-systems { margin-block: 1.5rem; min-width: 0; max-width: 100%; }
+.ai-systems-toolbar, .ai-systems-actions { display: flex; gap: .75rem; align-items: end; flex-wrap: wrap; }
+.ai-systems-toolbar label { flex: 1; min-width: 12rem; }
+.ai-systems-table { overflow-x: auto; min-width: 0; max-width: 100%; }
+.ai-systems-table table { width: 100%; }
+.ai-systems-form { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+.ai-systems-form > fieldset { display: grid; gap: 1rem; flex: 1; min-height: 0; min-width: 0; overflow-y: auto; border: 0; margin: 0; padding: 1rem; }
+.ai-systems-form > .ai-systems-actions { flex: none; padding: 1rem; border-top: 1px solid var(--border); justify-content: flex-end; }
+.ai-systems-form label { display: flex; flex-direction: column; gap: .35rem; }
+.ai-systems-form label.ai-governance-checkbox { flex-direction: row; align-items: center; }
+.ai-systems-form label.ai-governance-checkbox input { flex-shrink: 0; }

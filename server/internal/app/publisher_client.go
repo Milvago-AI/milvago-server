@@ -120,7 +120,7 @@ func decodePublisherEnvelope(raw []byte, key ed25519.PublicKey, minimum int64, o
 		return h, nil, errors.New("publisher authority invalid")
 	}
 	for _, v := range []string{h.MinEngine.Extension, h.MinEngine.Bridge} {
-		if !versionPattern.MatchString(v) || versionNewer(v, "0.5.0") {
+		if !versionPattern.MatchString(v) || versionNewer(v, detectionEngineVersion) {
 			return h, nil, errors.New("publisher engine incompatible")
 		}
 	}
@@ -244,14 +244,14 @@ func (state *publisherSnapshotState) publisherAddHealth(ctx context.Context, tx 
 	known, counts, dayEnd := state.known, state.counts, state.dayEnd
 	var e error
 	data, e := tx.Query(ctx, `SELECT c->>'provider',(payload->>'catalog_revision')::bigint,
- count(DISTINCT device_id) FILTER(WHERE (payload->>'window_end')::timestamptz >= $3 AND coalesce((c->>'navigations')::bigint,0)>0),
- coalesce(sum((c->>'prompts_network')::bigint) FILTER(WHERE (payload->>'window_end')::timestamptz >= $3),0),
- coalesce(sum((c->>'prompts_dom')::bigint) FILTER(WHERE (payload->>'window_end')::timestamptz >= $3),0),
- coalesce(sum((c->>'navigations')::bigint) FILTER(WHERE (payload->>'window_end')::timestamptz >= $3),0),
- coalesce(sum((c->>'prompts_network')::bigint+(c->>'prompts_dom')::bigint) FILTER(WHERE (payload->>'window_end')::timestamptz < $3),0)
+ count(DISTINCT device_id) FILTER(WHERE window_end >= $3 AND coalesce((c->>'navigations')::bigint,0)>0),
+ coalesce(sum((c->>'prompts_network')::bigint) FILTER(WHERE window_end >= $3),0),
+ coalesce(sum((c->>'prompts_dom')::bigint) FILTER(WHERE window_end >= $3),0),
+ coalesce(sum((c->>'navigations')::bigint) FILTER(WHERE window_end >= $3),0),
+ coalesce(sum((c->>'prompts_network')::bigint+(c->>'prompts_dom')::bigint) FILTER(WHERE window_end < $3),0)
  FROM detector_health CROSS JOIN LATERAL jsonb_array_elements(payload->'providers') c
- WHERE (payload->>'window_end')::timestamptz < $1 AND (payload->>'window_end')::timestamptz >= $4
- AND (payload->>'window_start')::timestamptz >= $2
+ WHERE window_end < $1 AND window_end >= $4
+ AND window_start >= $2
  GROUP BY c->>'provider',(payload->>'catalog_revision')::bigint`, dayEnd, since, dayEnd.Add(-24*time.Hour), dayEnd.Add(-8*24*time.Hour))
 	if e != nil {
 		return e
@@ -350,7 +350,7 @@ func (state *publisherSnapshotState) finishHealth() {
 // Consent rows remain locked through delivery: a completed opt-out cannot race
 // a send assembled from an older consent. Organization IDs stay local.
 func (a *App) publisherSnapshot(ctx context.Context, tx pgx.Tx) (publisherBatch, []publisherConsent, string, bool, error) {
-	batch := publisherBatch{SentAt: time.Now().UTC(), EngineVersion: "0.5.0", ProviderHealth: []publisherHealth{}}
+	batch := publisherBatch{SentAt: time.Now().UTC(), EngineVersion: detectionEngineVersion, ProviderHealth: []publisherHealth{}}
 	var root string
 	if e := tx.QueryRow(ctx, "SELECT organization_id FROM app_config").Scan(&root); e != nil {
 		return batch, nil, "", false, e

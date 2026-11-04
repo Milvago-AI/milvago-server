@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
+import { DiscoveryPage } from './DiscoveryPage';
+import { Context } from './ui';
 import type { Session } from './api';
 
 const permissions = ['overview.read', 'events.read', 'devices.read', 'members.read', 'settings.manage', 'policy.manage'];
@@ -12,7 +14,11 @@ const degraded = { ...healthy, items: [{ provider: 'chatgpt', state: 'suspect', 
 const overview = { '/api/overview': { events: 0, devices: 0, providers: [] }, '/api/devices': { items: [] } };
 
 function reply(body: unknown, status = 200) { return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }); }
+let projectionSession: Session;
+// Keep the legacy bounded projection independently tested; the new searchable inventory has its own end-to-end component tests.
+function ProjectionHarness() { return location.hash === '#discovery' && projectionSession.permissions.includes('policy.manage') ? <Context.Provider value={{session:projectionSession,language:'fr',refreshSession:async()=>undefined}}><DiscoveryPage/></Context.Provider> : <App/>; }
 function serve(session: Session, routes: Record<string, unknown>) {
+  projectionSession=session;
   return vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
     const url = String(input);
     if (url === '/api/session') return reply(session);
@@ -31,7 +37,7 @@ describe('Catalogue editor behind MILVAGO_DEBUG', () => {
   it('hides the page and refuses the hash typed by hand when the instance runs without the flag', async () => {
     window.location.hash = '#detection';
     serve(base, { '/api/settings': settings, '/api/detection': catalog });
-    render(<App />);
+    render(<ProjectionHarness />);
     // Reaching the page by its hash is as easy as following a link, so the refusal has
     // to come from the page itself and not only from the missing navigation entry.
     expect(await screen.findByText('Accès réservé')).toBeInTheDocument();
@@ -41,7 +47,7 @@ describe('Catalogue editor behind MILVAGO_DEBUG', () => {
   it('carries the editor when the operator asked for it', async () => {
     window.location.hash = '#detection';
     serve({ ...base, console_debug: true }, { '/api/settings': settings, '/api/detection/health': healthy, '/api/detection/catalog': catalog });
-    render(<App />);
+    render(<ProjectionHarness />);
     expect(await screen.findByRole('heading', { level: 1, name: 'Catalogue de détection' })).toBeInTheDocument();
     expect(screen.queryByText('Accès réservé')).not.toBeInTheDocument();
   });
@@ -51,7 +57,7 @@ describe('Discovery', () => {
   it('refuses the page to a reader without policy.manage, hash typed by hand included', async () => {
     window.location.hash = '#discovery';
     const fetcher = serve({ ...base, permissions: ['overview.read', 'events.read', 'devices.read'] }, { '/api/settings': settings, '/api/detection/catalog': catalog, '/api/detection/candidates': { items: [{ domain: 'ai.example.invalid', count: 12, status: 'new' }] } });
-    render(<App />);
+    render(<ProjectionHarness />);
     expect(await screen.findByText('Accès réservé')).toBeInTheDocument();
     expect(screen.queryByText('ai.example.invalid')).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Découverte' })).not.toBeInTheDocument();
@@ -65,7 +71,7 @@ describe('Discovery', () => {
       '/api/detection/catalog': catalog,
       '/api/detection/candidates': { items: [{ domain: 'ai.example.invalid', count: 12, status: 'new' }, { domain: 'other.example.invalid', count: 3, status: 'new' }] },
     });
-    render(<App />);
+    render(<ProjectionHarness />);
     expect(await screen.findByText('ai.example.invalid')).toBeInTheDocument();
     // The published domain may be promoted; the one the catalogue does not carry may
     // not, which is exactly what the server would answer with 409.
@@ -78,7 +84,7 @@ describe('Discovery', () => {
     const platforms = { items: [], platforms: [{ provider: 'aggregator.example.invalid', visits: 12, devices: 3, accounts: 2, last_seen: '2026-09-16T09:00:00Z' }] };
     for (const session of [base, { ...base, edition: 'commercial' as const }]) {
       serve(session, { '/api/settings': settings, '/api/detection/catalog': catalog, '/api/detection/candidates': platforms });
-      const { unmount } = render(<App />);
+      const { unmount } = render(<ProjectionHarness />);
       expect(await screen.findByText('aggregator.example.invalid')).toBeInTheDocument();
       // The promise the card makes, in the reader's own language.
       expect(screen.getByText(/Aucun prompt, aucune réponse, aucune adresse/)).toBeInTheDocument();
@@ -91,7 +97,7 @@ describe('Discovery', () => {
     const platforms = { items: [], platforms: [{ provider: 'aggregator.example.invalid', visits: 12, blocked: 7, devices: 3, accounts: 2, last_seen: '2026-09-16T09:00:00Z' }] };
     for (const [session, shown] of [[base, false], [{ ...base, edition: 'commercial' as const }, true]] as const) {
       serve(session, { '/api/settings': settings, '/api/detection/catalog': catalog, '/api/detection/candidates': platforms });
-      const { unmount } = render(<App />);
+      const { unmount } = render(<ProjectionHarness />);
       expect(await screen.findByText('aggregator.example.invalid')).toBeInTheDocument();
       expect(!!screen.queryByRole('columnheader', { name: 'Tentatives bloquées' })).toBe(shown);
       expect(!!screen.queryByRole('cell', { name: '7' })).toBe(shown);
@@ -105,7 +111,7 @@ describe('Discovery', () => {
     // Community has no local inventory and the route is not even registered there, so
     // the domain stays plain text rather than a control that would answer 404.
     serve(base, { '/api/settings': settings, '/api/detection/catalog': catalog, '/api/detection/candidates': candidates });
-    const { unmount } = render(<App />);
+    const { unmount } = render(<ProjectionHarness />);
     expect(await screen.findByText('ai.example.invalid')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'ai.example.invalid' })).not.toBeInTheDocument();
     unmount();
@@ -114,7 +120,7 @@ describe('Discovery', () => {
       '/api/detection/candidates/ai.example.invalid/devices': devices,
       '/api/detection/candidates': candidates,
     });
-    render(<App />);
+    render(<ProjectionHarness />);
     fireEvent.click(await screen.findByRole('button', { name: 'ai.example.invalid' }));
     // The machine is named and leads to its own page; the window it answers for is
     // said out loud, because detector reports are purged at thirty days.
@@ -132,7 +138,7 @@ describe('Discovery', () => {
         '/api/detection/platforms/aggregator.example.invalid/devices': devices,
         '/api/detection/candidates': platforms,
       });
-      const { unmount } = render(<App />);
+      const { unmount } = render(<ProjectionHarness />);
       fireEvent.click(await screen.findByRole('button', { name: 'aggregator.example.invalid' }));
       expect(await screen.findByRole('link', { name: 'LT-FIN-2051' })).toHaveAttribute('href', '#devices?id=20000000-0000-4000-8000-000000000002');
       // The announced window is the organization's retention, not a fixed number, and
@@ -157,7 +163,7 @@ describe('Discovery', () => {
       '/api/detection/platforms/aggregator.example.invalid/devices': { window_days: 90, items },
       '/api/detection/candidates': platforms,
     });
-    render(<App />);
+    render(<ProjectionHarness />);
     fireEvent.click(await screen.findByRole('button', { name: 'aggregator.example.invalid' }));
     const dialog = await screen.findByRole('dialog');
     // Twenty rows rendered out of twenty-four, and the twenty-first is one click away.
@@ -173,21 +179,34 @@ describe('Discovery', () => {
     fireEvent.change(within(dialog).getByRole('searchbox'), { target: { value: 'LT-RH' } });
     expect(await within(dialog).findByText('Aucun poste ne correspond à cette recherche')).toBeInTheDocument();
   });
-  it('explains that discovery is off rather than showing a bare empty table', async () => {
+  it.each([false, true, undefined])('reports the discovery setting independently of an empty list (%s)', async enabled => {
     window.location.hash = '#discovery';
-    serve(base, { '/api/settings': settings, '/api/detection/catalog': catalog, '/api/detection/candidates': { items: [] } });
-    render(<App />);
+    const fetcher = serve({ ...base, permissions: ['policy.manage'] }, { '/api/settings': settings, '/api/detection/catalog': catalog, '/api/detection/candidates': { items: [], discovery_enabled: enabled } });
+    render(<ProjectionHarness />);
     expect(await screen.findByText('Aucun domaine candidat observé')).toBeInTheDocument();
-    // The switch moved to Shadow AI > AI platforms on 2026-09-16, so the hint has to lead
-    // where it is now: a link still pointing at Privacy would send the reader to a page
-    // that no longer carries the control.
-    expect(screen.getByRole('link', { name: /La découverte des domaines candidats est désactivée/ })).toHaveAttribute('href', '#shadow');
+    const link = screen.getByRole('link', { name: /Plateformes IA/ });
+    expect(link).toHaveAttribute('href', '#shadow?area=platforms');
+    if (enabled === false) expect(link).toHaveTextContent('La découverte des domaines candidats est désactivée.');
+    else if (enabled === true) expect(link).toHaveTextContent('La découverte des domaines candidats est activée.');
+    else expect(link).toHaveTextContent('Consultez les réglages de découverte');
+    expect(fetcher.mock.calls.some(([url]) => url === '/api/privacy')).toBe(false);
+  });
+  it('reloads the discovery setting when privacy configuration changes', async () => {
+    window.location.hash = '#discovery';
+    const candidates = { items: [], discovery_enabled: false };
+    serve(base, { '/api/settings': settings, '/api/detection/catalog': catalog, '/api/detection/candidates': candidates });
+    render(<ProjectionHarness />);
+    await screen.findByRole('link', { name: /La découverte des domaines candidats est désactivée/ });
+    candidates.discovery_enabled = true;
+    fireEvent(window, new Event('milvago:privacy-changed'));
+    await screen.findByRole('link', { name: /La découverte des domaines candidats est activée/ });
+    expect(screen.queryByText(/La découverte des domaines candidats est désactivée/)).not.toBeInTheDocument();
   });
   it('pages the candidate domains and sets the rows per page', async () => {
     window.location.hash = '#discovery';
     const items = Array.from({ length: 25 }, (_, index) => ({ domain: `ai-${String(index).padStart(2, '0')}.example.invalid`, count: 25 - index, status: 'new' }));
     serve(base, { '/api/settings': settings, '/api/detection/catalog': catalog, '/api/detection/candidates': { items } });
-    render(<App />);
+    render(<ProjectionHarness />);
     expect(await screen.findByText('25 résultats')).toBeInTheDocument();
     expect(screen.getByText('ai-00.example.invalid')).toBeInTheDocument();
     expect(screen.queryByText('ai-20.example.invalid')).not.toBeInTheDocument();
@@ -206,14 +225,14 @@ describe('Coverage banner', () => {
   it('warns on the pages where the figures are read', async () => {
     window.location.hash = '#overview';
     serve(base, { '/api/settings': settings, '/api/detection/health': degraded, ...overview });
-    render(<App />);
+    render(<ProjectionHarness />);
     expect(await screen.findByText('Ces chiffres sont peut-être incomplets')).toBeInTheDocument();
     expect(screen.getByText(/chatgpt/)).toBeInTheDocument();
   });
   it('stays silent when every detector reports, and for a reader without policy.manage', async () => {
     window.location.hash = '#overview';
     serve(base, { '/api/settings': settings, '/api/detection/health': healthy, ...overview });
-    const { unmount } = render(<App />);
+    const { unmount } = render(<ProjectionHarness />);
     await screen.findByRole('heading', { level: 1, name: 'Vue d’ensemble' });
     expect(screen.queryByText('Ces chiffres sont peut-être incomplets')).not.toBeInTheDocument();
     unmount();
@@ -223,7 +242,7 @@ describe('Coverage banner', () => {
     // /api/detection/health demands policy.manage, so a reader without it must not even
     // reach for it: a banner that always 403s is worse than no banner.
     const fetcher = serve({ ...base, permissions: ['overview.read', 'events.read', 'devices.read'] }, { '/api/settings': settings, '/api/detection/health': degraded, ...overview });
-    render(<App />);
+    render(<ProjectionHarness />);
     await screen.findByRole('heading', { level: 1, name: 'Vue d’ensemble' });
     expect(screen.queryByText('Ces chiffres sont peut-être incomplets')).not.toBeInTheDocument();
     expect(fetcher).not.toHaveBeenCalledWith('/api/detection/health', expect.anything());

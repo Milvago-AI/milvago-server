@@ -84,17 +84,9 @@ func (a *App) readPrivacy(ctx context.Context, tx pgx.Tx, org string) (out Priva
 		}
 	}()
 	for depth := 0; current != "" && depth < 20; depth++ {
-		if _, err = tx.Exec(ctx, sqlSetOrganizationContext, current); err != nil {
-			return
-		}
 		var raw []byte
 		var rev int64
-		err = tx.QueryRow(ctx, "SELECT configuration,revision FROM privacy_settings WHERE organization_id=$1", current).Scan(&raw, &rev)
-		if errors.Is(err, pgx.ErrNoRows) {
-			err = nil
-			raw = []byte("{}")
-			rev = 1
-		}
+		raw, rev, err = readPrivacyLevel(ctx, tx, current)
 		if err != nil {
 			return
 		}
@@ -148,6 +140,9 @@ type routePermissionKey struct{}
 func exclusiveBarrier(r *http.Request) bool {
 	if r.Method == "GET" || r.Method == "HEAD" {
 		return false
+	}
+	if r.Pattern == "DELETE /api/subjects/{id}" {
+		return true
 	}
 	switch r.URL.Path {
 	case "/api/privacy":
@@ -286,7 +281,7 @@ func routePermissionHeld(r *http.Request, tx pgx.Tx, s *Session, org string) (st
 		return user, false, nil
 	}
 	// As permissionsFor: another organization's second-factor requirement applies.
-	if org != s.OrganizationID && !s.MFA {
+	if org != s.OrganizationID && !s.MFA && !s.LoginTrusted {
 		if required, e := organizationRequiresMFA(ctx, tx, org); e != nil || required {
 			return user, false, e
 		}
@@ -518,10 +513,13 @@ func osAccountKey(key []byte, account string) string {
 
 // machineName is independent of personal identity. Empty means unavailable.
 func (a *App) machineName(r *http.Request, org, id, cipher string) (string, error) {
-	if privacyFor(r) == nil {
+	p := privacyFor(r)
+	if p == nil || p.session == nil {
 		return "", errors.New(msgPrivacyContextMissing)
 	}
-	if r.URL.Query().Get("identity") == "aliases" {
+	// Apply the effective permission ceiling before every name read or predicate.
+	// Device administration may still name machines under aggregate-only privacy.
+	if !hasPermission(p.session.Permissions, permDevicesRead) || r.URL.Query().Get("identity") == "aliases" {
 		return deviceAlias(id), nil
 	}
 	return a.openIdentity(org, "device-name:"+id, cipher)
@@ -728,7 +726,17 @@ func (a *App) eraseIdentity(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s
 	if !present {
 		return apiError{404, "not_found", "Subject not found."}
 	}
-	tag, e := tx.Exec(r.Context(), "DELETE FROM shadow_events WHERE collaborator_id=$1", id)
+	var erasedCount int64
+	// A calendar-year-old event is still admissible on the wire. The extra day
+	// conservatively covers leap-year normalization without retaining content.
+	e := tx.QueryRow(r.Context(), `WITH erased AS (
+ DELETE FROM shadow_events WHERE collaborator_id=$1
+ RETURNING organization_id,device_id,id,occurred_at
+), markers AS (
+ INSERT INTO shadow_erased_events(organization_id,device_id,event_id,expires_at)
+ SELECT organization_id,device_id,id,occurred_at+interval '367 days' FROM erased
+ ON CONFLICT DO NOTHING RETURNING event_id
+) SELECT count(*) FROM erased`, id).Scan(&erasedCount)
 	if e != nil {
 		return e
 	}
@@ -748,13 +756,13 @@ func (a *App) eraseIdentity(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s
 	if deleted.RowsAffected() != 1 {
 		return errors.New("subject was not erased")
 	}
-	if e = privacyAudit(r, tx, s, permIdentityErase, id, map[string]any{"events": tag.RowsAffected()}); e != nil {
+	if e = privacyAudit(r, tx, s, permIdentityErase, id, map[string]any{"events": erasedCount}); e != nil {
 		return e
 	}
 	if e = tx.Commit(r.Context()); e != nil {
 		return e
 	}
-	reply(w, 200, map[string]any{"erased": true, "events": tag.RowsAffected()})
+	reply(w, 200, map[string]any{"erased": true, "events": erasedCount})
 	return nil
 }
 
@@ -849,6 +857,11 @@ func (a *App) rotateAliasKey(w http.ResponseWriter, r *http.Request, tx pgx.Tx, 
 	return nil
 }
 func auditSubjectFilters(r *http.Request, tx pgx.Tx, view string, count int) error {
+	for _, key := range r.URL.Query()["regex"] {
+		if key == "actor_id" || key == "query" {
+			return auditRegexSearchFilters(r, tx, view, count)
+		}
+	}
 	ids := r.URL.Query()["actor_id"]
 	if len(ids) <= 1 {
 		return auditSubjectView(r, tx, strings.Join(ids, ""), view, count)
@@ -920,8 +933,8 @@ func (a *App) associateIdentity(ctx context.Context, tx pgx.Tx, org, subject, em
 // this group" dialog: exactly the screen this filter exists for. The inclusion arm
 // ($4) must drop NULLs, which `=` already does, matching the Go behaviour it replaces.
 const devicesPredicate = `($2='' OR d.platform=$2) AND ($3='' OR d.status=$3)
-  AND ($4='' OR d.group_id::text=$4)
-  AND ($5='' OR d.group_id IS NULL OR d.group_id::text<>$5)`
+  AND ($4='' OR d.group_id=NULLIF($4,'')::uuid)
+  AND ($5='' OR d.group_id IS NULL OR d.group_id<>NULLIF($5,'')::uuid)`
 
 // `fleet`, `pending` and `platforms` read every machine; only `matched` honours the
 // device_id scope and the filters. The console opens a device by naming it in the URL,
@@ -935,10 +948,10 @@ const devicesPredicate = `($2='' OR d.platform=$2) AND ($3='' OR d.status=$3)
 const devicesFacets = `SELECT count(*),
   count(*) FILTER (WHERE d.status='pending'),
   coalesce(array_agg(DISTINCT d.platform),'{}'),
-  count(*) FILTER (WHERE ($1='' OR d.id::text=$1) AND ` + devicesPredicate + `)
+  count(*) FILTER (WHERE ($1='' OR d.id=NULLIF($1,'')::uuid) AND ` + devicesPredicate + `)
   FROM devices d`
 
-const devicesRows = `SELECT jsonb_build_object('id',d.id,'hostname',d.hostname,'platform',d.platform,'version',d.version,'status',d.status,'last_seen',d.last_seen,'os_user',d.os_user,'browsers',d.browsers,'update_status',d.update_status,'update_reported_at',d.update_reported_at,'hostname_ciphertext',d.hostname_ciphertext,'collector_health',d.collector_health,'group_id',d.group_id,'group_name',g.name,'machine_domains',d.machine_domains) FROM devices d LEFT JOIN device_groups g ON g.organization_id=d.organization_id AND g.id=d.group_id WHERE ($1='' OR d.id::text=$1) AND ` + devicesPredicate + ` ORDER BY d.id`
+const devicesRows = `SELECT jsonb_build_object('id',d.id,'hostname',d.hostname,'platform',d.platform,'version',d.version,'status',d.status,'last_seen',d.last_seen,'os_user',d.os_user,'browsers',d.browsers,'update_status',d.update_status,'update_reported_at',d.update_reported_at,'hostname_ciphertext',d.hostname_ciphertext,'collector_health',d.collector_health,'group_id',d.group_id,'group_name',g.name,'machine_domains',d.machine_domains) FROM devices d LEFT JOIN device_groups g ON g.organization_id=d.organization_id AND g.id=d.group_id WHERE ($1='' OR d.id=NULLIF($1,'')::uuid) AND ` + devicesPredicate + ` ORDER BY d.id`
 
 type privateDeviceFilter struct {
 	limit, offset                      int
@@ -960,9 +973,8 @@ func parsePrivateDeviceFilter(r *http.Request) (privateDeviceFilter, error) {
 	if (groupID != "" && !uuidPattern.MatchString(groupID)) || (excludeGroupID != "" && !uuidPattern.MatchString(excludeGroupID)) || (groupID != "" && excludeGroupID != "") {
 		return privateDeviceFilter{}, bad("Invalid device group filter.")
 	}
-	// uuidPattern accepts either case; the predicates below compare `::text`, which
-	// PostgreSQL renders lowercase. Without this an uppercase identity passed
-	// validation and silently matched nothing -- an exclusion that excluded no one.
+	// Normalize the accepted UUID spellings for stable filter state. SQL compares
+	// UUIDs directly so indexed identity/group lookups remain available.
 	deviceID, groupID, excludeGroupID = strings.ToLower(deviceID), strings.ToLower(groupID), strings.ToLower(excludeGroupID)
 	query := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("query")))
 	userQuery := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("user")))
@@ -1018,6 +1030,37 @@ func (p *privateDevicePage) add(row map[string]any) {
 	p.items = append(p.items, row)
 }
 
+// Encrypted-name searches must inspect every matching envelope for an exact
+// total, but collector health, browser reports and policy metadata belong only
+// to the selected device page.
+func (a *App) privateDeviceNamePage(r *http.Request, tx pgx.Tx, s *Session, f privateDeviceFilter, show bool) ([]string, int, error) {
+	rows, err := tx.Query(r.Context(), `SELECT d.id::text,d.hostname_ciphertext,d.os_user FROM devices d WHERE ($1='' OR d.id=NULLIF($1,'')::uuid) AND `+devicesPredicate+` ORDER BY d.id`, f.deviceID, f.platform, f.status, f.groupID, f.excludeGroupID)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	page := privateDevicePage{items: []map[string]any{}, scan: true, query: f.query, userQuery: f.userQuery, limit: f.limit, offset: f.offset}
+	for rows.Next() {
+		var id, hostname, user string
+		if err = rows.Scan(&id, &hostname, &user); err != nil {
+			return nil, 0, err
+		}
+		row := map[string]any{"id": id, "hostname_ciphertext": hostname, "os_user": user}
+		if err = a.presentPrivateDevice(r, s, row, show); err != nil {
+			return nil, 0, err
+		}
+		page.add(row)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	ids := make([]string, 0, len(page.items))
+	for _, row := range page.items {
+		ids = append(ids, row["id"].(string))
+	}
+	return ids, page.total, nil
+}
+
 func (a *App) privateDeviceRows(r *http.Request, tx pgx.Tx, s *Session, f privateDeviceFilter, show bool, matched int) ([]map[string]any, int, error) {
 	limit, offset, deviceID, groupID, excludeGroupID := f.limit, f.offset, f.deviceID, f.groupID, f.excludeGroupID
 	query, userQuery, platform, status := f.query, f.userQuery, f.platform, f.status
@@ -1032,7 +1075,15 @@ func (a *App) privateDeviceRows(r *http.Request, tx pgx.Tx, s *Session, f privat
 	if !scan {
 		statement, args = statement+" LIMIT $6 OFFSET $7", append(args, limit, offset)
 	} else {
-		total = 0
+		ids, count, err := a.privateDeviceNamePage(r, tx, s, f, show)
+		if err != nil {
+			return nil, 0, err
+		}
+		if len(ids) == 0 {
+			return []map[string]any{}, count, nil
+		}
+		statement = strings.Replace(devicesRows, " ORDER BY d.id", " AND d.id=ANY($6::uuid[]) ORDER BY d.id", 1)
+		args, total, scan = append(args, ids), count, false
 	}
 	rows, e := tx.Query(r.Context(), statement, args...)
 	if e != nil {

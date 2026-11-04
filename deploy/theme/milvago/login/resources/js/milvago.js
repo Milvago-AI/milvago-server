@@ -3,26 +3,33 @@
 // works without it: these are conveniences on top of plain forms.
 (() => {
   const root = document.documentElement;
-  // Same choice, cookie and storage key as the console. Dark is the brand's default
-  // rendering: the system setting is not consulted, only an explicit choice.
+  // Persist only an explicit choice; otherwise follow the system in real time.
   const saved = () => {
-    const cookie = document.cookie.split('; ').find((value) => /^milvago_theme=(light|dark)$/.test(value));
+    const cookie = document.cookie.split(';').map(value => value.trim()).find((value) => /^milvago_theme=(light|dark)$/.test(value));
     if (cookie) return cookie.split('=')[1];
     try { return localStorage.getItem('milvago.theme'); } catch { return null; }
   };
-  let theme = saved() === 'light' ? 'light' : 'dark';
+  const valid = value => value === 'light' || value === 'dark';
+  const media = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: light)') : null;
+  let choice = saved();
+  let theme = valid(choice) ? choice : media?.matches ? 'light' : 'dark';
+  const labels = [];
   const applyTheme = () => {
     if (theme === 'light') root.dataset.theme = 'light';
-    else delete root.dataset.theme;
+    else root.dataset.theme = 'dark';
+    labels.forEach(label => label());
   };
   applyTheme();
+  media?.addEventListener?.('change', () => { if (!valid(choice)) { theme = media.matches ? 'light' : 'dark'; applyTheme(); } });
   root.classList.add('has-script');
 
   const themeToggle = (button) => {
     const label = () => button.setAttribute('aria-label', theme === 'light' ? button.dataset.labelDark : button.dataset.labelLight);
+    labels.push(label);
     label();
     button.addEventListener('click', () => {
       theme = theme === 'light' ? 'dark' : 'light';
+      choice = theme;
       applyTheme();
       label();
       document.cookie = 'milvago_theme=' + theme + '; Path=/; SameSite=Lax' + (location.protocol === 'https:' ? '; Secure' : '');
@@ -120,7 +127,57 @@
     }, () => { /* without it, the page simply stays where it is */ });
   };
 
+  const loginTrust = (group) => {
+    const form = group.closest('form');
+    const checkbox = group.querySelector('[data-trust-device]');
+    const error = group.querySelector('[data-trust-error]');
+    if (!form || !checkbox || !error) return;
+    let endpoint;
+    try {
+      // Keycloak carries the OIDC state in client_data on its login action URL.
+      const encoded = new URL(form.action).searchParams.get('client_data');
+      const data = JSON.parse(atob(encoded.replace(/-/g, '+').replace(/_/g, '/')));
+      if (typeof data.st !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(data.st)) return;
+      endpoint = '/auth/login/device-trust?state=' + encodeURIComponent(data.st);
+    } catch { return; }
+    let csrf, submitting = false, resumed = false;
+    const initialized = fetch(endpoint, { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(5000) }).then(async response => {
+      if (!response.ok) return;
+      const data = await response.json();
+      if (typeof data.csrf_token !== 'string' || !data.csrf_token) return;
+      csrf = data.csrf_token;
+      checkbox.checked = data.remember === true;
+      group.hidden = false;
+    }).catch(() => { /* Trust stays unavailable; ordinary MFA still works. */ });
+    form.addEventListener('submit', async event => {
+      if (resumed) return;
+      event.preventDefault();
+      if (submitting) return;
+      submitting = true;
+      error.hidden = true;
+      await initialized;
+      try {
+        if (csrf) {
+          const response = await fetch(endpoint, {
+            method: 'POST', credentials: 'same-origin', signal: AbortSignal.timeout(5000),
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+            body: JSON.stringify({ remember: checkbox.checked }),
+          });
+          if (!response.ok) throw new Error('Preference was not saved');
+        }
+        resumed = true;
+        if (event.submitter) form.requestSubmit(event.submitter);
+        else form.requestSubmit();
+      } catch {
+        error.hidden = false;
+      } finally {
+        submitting = false;
+      }
+    });
+  };
+
   const ready = () => {
+    document.querySelectorAll('[data-login-trust]').forEach(loginTrust);
     document.querySelectorAll('[data-theme-toggle]').forEach(themeToggle);
     document.querySelectorAll('[data-reveal]').forEach(reveal);
     document.querySelectorAll('[data-caps-for]').forEach(capsLock);

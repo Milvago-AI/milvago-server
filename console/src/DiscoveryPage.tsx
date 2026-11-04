@@ -21,7 +21,7 @@ function usePaged<T>(items: T[], initial = 20) {
 }
 
 type Platform = { provider: string; visits: number; blocked?: number; devices: number; accounts: number; last_seen: string };
-type Candidates = { items: { domain: string; count: number; status: string }[]; platforms?: Platform[] };
+type Candidates = { items: { domain: string; count: number; status: string }[]; platforms?: Platform[]; discovery_enabled?: boolean };
 type CandidateDevices = { items: { device_id: string; hostname: string; observations: number; last_seen: string }[]; window_days: number };
 // Only the published domains matter here, so the catalogue is read for those alone
 // rather than through the editor's full shape.
@@ -95,9 +95,8 @@ export function DiscoveryPage() {
         </tr>)}</tbody>
       </table></div>
       <PageNumbers page={domains.page} pages={domains.pages} go={domains.go} label={t("pagination")} /></>
-      // An empty table is the normal state, not a failure: discovery is off unless the
-      // organization turned it on, and nothing else on this page would say so.
-      : <Empty title={t("discoveryNoCandidates")}><a className="text-link" href="#shadow">{t("discoveryDisabledHint")}</a></Empty>}
+      // Missing data never implies that discovery is disabled; older servers may omit its state.
+      : <Empty title={t("discoveryNoCandidates")}><a className="text-link" href="#shadow?area=platforms">{t(data.discovery_enabled === false ? 'discoveryDisabledHint' : data.discovery_enabled === true ? 'discoveryEnabledEmptyHint' : 'discoveryEmptyHint')}</a></Empty>}
     </Card>
     {inspected && <ReachedByDialog title={inspected.title} path={inspected.path} platform={inspected.platform} close={() => setInspected(null)} />}
   </>}</ResourceView>;
@@ -111,7 +110,7 @@ export function DiscoveryPage() {
  * its presence events. One dialog, two routes, because a reader asking "who reached
  * this" does not care which table holds the answer.
  */
-function ReachedByDialog({ title, path, platform, close }: Readonly<{ title: string; path: string; platform: boolean; close: () => void }>) {
+export function ReachedByDialog({ title, path, platform, close }: Readonly<{ title: string; path: string; platform: boolean; close: () => void }>) {
   const t = useText();
   const devices = useResource<CandidateDevices>(path);
   // A platform reached by an entire fleet yields hundreds of rows: the

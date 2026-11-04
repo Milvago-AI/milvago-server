@@ -1,7 +1,10 @@
+import { UsageOverview } from './UsageOverview';
+import { useTheme } from './useTheme';
+import { DlpPage } from "./dlp/DlpPage";
 import { AliasRotation } from "./AliasRotation";
 import { ObservabilityPage } from "./ObservabilityPage";
 import { PrivacyPanel, ReportsPanel, DetectionPanel, CoverageNotice } from "./PrivacyDetectionPage";
-import { DiscoveryPage } from "./DiscoveryPage";
+import { DiscoveryHub } from "./DiscoveryHub";
 import { SetupWizard } from "./SetupWizard";
 import { SetupPage } from "./SetupPage";
 import type { SetupStatus } from "./SetupPage";
@@ -62,7 +65,6 @@ import {
   RefreshButton,
   Dialog,
   Card,
-  Kpi,
   Badge,
   Button,
   Tabs,
@@ -90,6 +92,7 @@ const pages = new Set<Page>([
   "roles",
   "audit",
   "shadow",
+  "dlp",
   "organizations",
   "observability",
   "profile",
@@ -113,13 +116,7 @@ function persist(key: string, value: string) {
     /* Preference persistence is optional. */
   }
 }
-function preferredTheme() {
-  const cookie = document.cookie
-    .split(";")
-    .map((value) => value.trim())
-    .find((value) => /^milvago_theme=(light|dark)$/.test(value));
-  return cookie?.split("=")[1] ?? stored("milvago.theme", "");
-}
+
 function pageFromHash(): Page {
   const value = window.location.hash.slice(1).split("?")[0] as Page;
   return pages.has(value) ? value : "overview";
@@ -179,9 +176,8 @@ const pageViews: Partial<Record<Page, (context: PageContext) => ReactNode>> = {
     return <GroupsPage />;
   },
   applications: ({ session, t }) => {
-    if (session.edition !== "commercial" || !canAnalyze(session))
-      return <Empty title={t("accessRestricted")} />;
-    return <ApplicationsPage />;
+    if (!can(session, "discovery.read") && !can(session, "policy.manage")) return <Empty title={t("accessRestricted")} />;
+    return <DiscoveryHub key={session.organization.id + session.user.id} />;
   },
   observability: ({ session, t }) => {
     if (session.edition !== "commercial" || !can(session, "observability.manage"))
@@ -245,12 +241,7 @@ const pageViews: Partial<Record<Page, (context: PageContext) => ReactNode>> = {
   },
   discovery: ({ session, t }) => {
     if (!can(session, "policy.manage")) return <Empty title={t("accessRestricted")} />;
-    return (
-      <>
-        <PageBar title={t("discovery")} />
-        <DiscoveryPage />
-      </>
-    );
+    return <DiscoveryHub key={session.organization.id + session.user.id} />;
   },
   // The URL fragment is typed as easily as a link is followed: the flag is
   // checked here too, and not only where the navigation entry is built.
@@ -264,6 +255,7 @@ const pageViews: Partial<Record<Page, (context: PageContext) => ReactNode>> = {
       </>
     );
   },
+  dlp: () => <DlpPage />,
   shadow: ({ session, t }) => {
     if (!can(session, "policy.manage")) return <Empty title={t("accessRestricted")} />;
     return <ShadowAdministration />;
@@ -295,11 +287,7 @@ export function App() {
     persist("milvago.language", selected.code);
     setLanguage(selected.code);
   };
-  // Dark is the brand's default rendering (charte graphique v2.0): the system
-  // setting is not consulted, only an explicit choice by this reader.
-  const [theme, setTheme] = useState(() =>
-    preferredTheme() === "light" ? "light" : "dark",
-  );
+  const [theme, setTheme] = useTheme();
   const [session, setSession] = useState<Session>();
   // Edition of this instance as served publicly, for the signed-out entry page.
   const [publicEdition, setPublicEdition] = useState<Session["edition"]>();
@@ -387,23 +375,19 @@ export function App() {
       if (outcome === 'resumed') window.location.reload();
     });
   }, [session]);
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    persist("milvago.theme", theme);
-    document.cookie = `milvago_theme=${theme};Path=/;SameSite=Lax${window.location.protocol === "https:" ? ";Secure" : ""}`;
-  }, [theme]);
   const pageNames = {
     map: t("cartography"),
     overview: t("overview"),
     events: t("conversations"),
     devices: t("devices"),
     groups: t("groups"),
-    applications: t("aiApplications"),
+    applications: t("aiInventory"),
     settings: t("settings"),
     members: t("members"),
     roles: t("roles"),
     audit: t("auditLog"),
     shadow: "Shadow AI",
+    dlp: t("dlpTitle"),
     organizations: t("organizations"),
     observability: t("observability"),
     profile: t("myProfile"),
@@ -445,12 +429,11 @@ export function App() {
   const brand = (
     <a className="brand" href="#overview" aria-label="Milvago">
       <img
-        src={theme === "light" ? "/milvago-symbol-mono-black.svg" : "/milvago-symbol-mono-white.svg"}
+        src={theme === "light" ? "/milvago-logo-horizontal-mono-black.svg" : "/milvago-logo-horizontal-inverse.svg"}
         alt=""
-        width="32"
+        width="109"
         height="32"
       />
-      <span className="brand-name">Milvago</span>
     </a>
   );
   // As long as the session is not known, assert neither "signed in" nor "signed out".
@@ -711,12 +694,6 @@ function OverviewPage() {
       />
       <ResourceView resource={resource}>
         {(data) => {
-          const share = data.events
-            ? new Intl.NumberFormat(language, { maximumFractionDigits: 1 }).format(
-                (data.blocked / data.events) * 100,
-              )
-            : null;
-          const inactive = Math.max(0, data.devices - data.active_devices);
           const pending = data.pending_devices;
           return (
             <>
@@ -787,134 +764,7 @@ function OverviewPage() {
                   </div>
                 </Card>
               )}
-              <section className="kpis" aria-label={t("metrics")}>
-                <Kpi
-                  label={t("requests")}
-                  icon="list"
-                  value={number(data.events)}
-                  hint={t("last0Hours1Navigations", [data.period_hours, number(data.navigations)])}
-                />
-                <Kpi
-                  label={t("blocked")}
-                  icon="shield"
-                  value={number(data.blocked)}
-                  tone={data.blocked > 0 ? "danger" : undefined}
-                  hint={
-                    share !== null
-                      ? t("n0OfRequests", [share])
-                      : t("accordingToAppliedRules")
-                  }
-                />
-                <Kpi
-                  label={t("activeDevices")}
-                  icon="device"
-                  value={
-                    <>
-                      {number(data.active_devices)}{" "}
-                      <small>/ {number(data.devices)}</small>
-                    </>
-                  }
-                  hint={t("n0InactivePendingOrRevoked", [number(inactive)])}
-                />
-                <Kpi
-                  label={t("observedProviders")}
-                  icon="globe"
-                  value={number(data.providers.length)}
-                  hint={t("overThePeriod")}
-                />
-              </section>
-              <div className="overview-grid">
-                <Card
-                  title={t("usageRhythm")}
-                  description={t("requestsReceivedPerHour")}
-                  actions={
-                    <div className="legend">
-                      <span>
-                        <i />
-                        {t("observed")}
-                      </span>
-                      <span className="legend-blocked">
-                        <i />
-                        {t("blocked")}
-                      </span>
-                    </div>
-                  }
-                  footer={
-                    <>
-                      <span className="muted">
-                        {t("observationWindowLast0Hours", [data.period_hours])}
-                      </span>
-                      <a className="button ghost small" href="#events">
-                        {t("openConversations")}
-                        <Icon name="arrow" />
-                      </a>
-                    </>
-                  }
-                >
-                  {data.events === 0 || data.timeline.length === 0 ? (
-                    <Empty title={t("noEventsReceived")}>
-                      {t("eventsWillAppearAsSoonAs")}
-                    </Empty>
-                  ) : (
-                    <TimelineChart
-                      timeline={data.timeline}
-                      label={t("n0EventsIncluding1BlockedOver", [data.events, data.blocked, data.period_hours])}
-                    />
-                  )}
-                </Card>
-                <Card
-                  title={t("observedProviders")}
-                  description={t("distributionOfReceivedEvents")}
-                  footer={
-                    canAnalyze(session) ? (
-                      <>
-                        <span className="muted">
-                          {t("peopleToolsServicesModels")}
-                        </span>
-                        <a className="button ghost small" href="#map">
-                          {t("openCartography")}
-                          <Icon name="arrow" />
-                        </a>
-                      </>
-                    ) : undefined
-                  }
-                >
-                  {data.providers.length === 0 ? (
-                    <Empty title={t("noProvidersObserved")}>
-                      {t("thisListReflectsOnlyEventsActually")}
-                    </Empty>
-                  ) : (
-                    <div className="providers">
-                      {data.providers.map((provider) => (
-                        <div className="provider" key={provider.name}>
-                          <div className="provider-name">
-                            <strong>{provider.name}</strong>
-                            <div className="provider-track">
-                              <span
-                                style={{
-                                  width: `${data.events ? ((provider.events - provider.blocked) / data.events) * 100 : 0}%`,
-                                }}
-                              />
-                              <span
-                                className="blocked"
-                                style={{
-                                  width: `${data.events ? (provider.blocked / data.events) * 100 : 0}%`,
-                                }}
-                              />
-                            </div>
-                          </div>
-                          <span className="provider-count">
-                            {number(provider.events)}
-                            <small>
-                              {number(provider.blocked)} {t("blocked2")}
-                            </small>
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </Card>
-              </div>
+              <UsageOverview data={data}/>
             </>
           );
         }}
@@ -922,61 +772,6 @@ function OverviewPage() {
     </>
   );
 }
-function TimelineChart({
-  timeline,
-  label,
-}: Readonly<{
-  timeline: Overview["timeline"];
-  label: string;
-}>) {
-  const { language } = useContext(Context);
-  const width = 760;
-  const height = 224;
-  const left = 40;
-  const top = 12;
-  const bottom = 200;
-  const max = Math.max(...timeline.map((point) => point.events), 1);
-  const step = (width - left) / timeline.length;
-  const bar = Math.max(2, Math.min(22, step - 6));
-  const every = Math.max(1, Math.ceil(timeline.length / 5));
-  const time = (iso: string) =>
-    Number.isNaN(Date.parse(iso))
-      ? iso
-      : new Intl.DateTimeFormat(language, { hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
-  return (
-    <svg className="chart-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={label}>
-      {[0, 0.25, 0.5, 0.75, 1].map((tick) => {
-        const y = bottom - tick * (bottom - top);
-        return (
-          <g key={tick}>
-            <line className="grid" x1={left} x2={width} y1={y} y2={y} />
-            <text className="axis" x={left - 8} y={y + 4} textAnchor="end">
-              {Math.round(max * tick)}
-            </text>
-          </g>
-        );
-      })}
-      {timeline.map((point, index) => {
-        const x = left + index * step + (step - bar) / 2;
-        const full = (point.events / max) * (bottom - top);
-        const blocked = point.events ? (point.blocked / point.events) * full : 0;
-        return (
-          <g key={point.hour} className="bar-group">
-            <title>{`${time(point.hour)} · ${point.events} / ${point.blocked}`}</title>
-            <rect className="bar" x={x} y={bottom - full} width={bar} height={full} />
-            <rect className="bar-blocked" x={x} y={bottom - blocked} width={bar} height={blocked} />
-            {index % every === 0 && (
-              <text className="axis" x={x} y={height - 4}>
-                {time(point.hour)}
-              </text>
-            )}
-          </g>
-        );
-      })}
-    </svg>
-  );
-}
-
 // Detail pages are reached by a UUID in the hash query: #devices?id= and #organizations?id=.
 type DeviceArea = "details" | "policy" | "tools";
 
@@ -1091,132 +886,6 @@ function BrowserPresence({ browsers }: Readonly<{ browsers?: Record<string, stri
 // AI applications observed across the organization. A presence is not a use: an
 // observation says an application exists on a device, and nothing about whether
 // anyone ran it or what they sent.
-type Observation = { device_id: string; hostname: string; tool: string; kind: string; observed_at: string; first_seen?: string };
-type CatalogEntry = { id: string; name: string; vendor: string; category: string; hosting: string; risk: string };
-// The risk level of an application, as a tone and a label. An unknown or
-// absent risk carries no tone and reads as "low", as before.
-const RISK_TONES: Partial<Record<string, "danger" | "warning">> = { high: "danger", medium: "warning" };
-const RISK_LABELS: Partial<Record<string, TranslationKey>> = { high: "high", medium: "medium" };
-const KIND_LABELS: Record<string, TranslationKey> = {
-  process: "kindProcess",
-  executable: "kindExecutable",
-  installed: "kindInstalled",
-  extension: "kindExtension",
-  port: "kindPort",
-};
-function ApplicationsPage() {
-  const t = useText();
-  const [page, setPage] = useState(1);
-  const [size, setSize] = useState(50);
-  const path = page === 1 && size === 50 ? "/api/tools" : `/api/tools?limit=${size}&offset=${(page - 1) * size}`;
-  const resource = useResource<{ items: Observation[]; catalog: CatalogEntry[]; total?: number }>(path);
-  const { current, pages } = useBoundedPage(page, setPage, size, resource.data?.total ?? resource.data?.items.length);
-  const [inspected, setInspected] = useState<{ name: string; rows: Observation[] } | null>(null);
-  return (
-    <>
-      <PageBar title={t("aiApplications")} />
-      <ResourceView resource={resource}>
-        {(data) => {
-          const known = new Map(data.catalog.map((entry) => [entry.id, entry]));
-          const grouped = new Map<string, { devices: Set<string>; kinds: Set<string>; rows: Observation[]; first?: string; last?: string }>();
-          for (const item of data.items) {
-            const row = grouped.get(item.tool) ?? { devices: new Set(), kinds: new Set(), rows: [] };
-            row.devices.add(item.hostname || t("machineNameUnavailable") + " (" + item.device_id + ")");
-            row.kinds.add(item.kind);
-            row.rows.push(item);
-            if (item.first_seen && (!row.first || item.first_seen < row.first)) row.first = item.first_seen;
-            if (!row.last || item.observed_at > row.last) row.last = item.observed_at;
-            grouped.set(item.tool, row);
-          }
-          const rows = [...grouped.entries()].sort((a, b) => b[1].devices.size - a[1].devices.size || a[0].localeCompare(b[0]));
-          if (rows.length === 0) {
-            return (
-              <Empty title={t("noAiApplicationObserved")}>
-                {t("enterpriseDevicesReportTheApplicationsDescri")}
-              </Empty>
-            );
-          }
-          return (
-            <Card
-              title={t("observedApplications")}
-              description={t("aDetectedPresenceEstablishesNeitherA")}
-              actions={<PageSize value={size} label={t("perPage")} change={value => { setSize(value); setPage(1); }} />}
-            >
-              <div className="table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>{t("application")}</th>
-                      <th>{t("vendor")}</th>
-                      <th>{t("risk")}</th>
-                      {/* Which devices the tool was found on. A count alone forces a
-                          reopen of every machine to know which one to act on; the name
-                          is already returned by /api/tools, the console was discarding it by
-                          grouping by tool. The "Hosting" column is gone:
-                          it showed local/cloud and nothing, anywhere, depended on it. */}
-                      <th>{t("devices")}</th>
-                      <th>{t("onWhichDevices")}</th>
-                      <th>{t("recognisedBy")}</th>
-                      <th>{t("firstObservation")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map(([tool, row]) => {
-                      const entry = known.get(tool);
-                      return (
-                        <tr key={tool}>
-                          <td><strong>{entry?.name ?? tool}</strong><span className="cell-detail">{tool}</span></td>
-                          <td>{entry?.vendor ?? "—"}</td>
-                          <td><Badge tone={RISK_TONES[entry?.risk ?? ""]}>{t(RISK_LABELS[entry?.risk ?? ""] ?? "low")}</Badge></td>
-                          <td>{row.devices.size}</td>
-                          {/* The first names, then a counted remainder: a list of
-                              forty machines in a cell does not read well, and the
-                              per-device detail already lives in the machine's own page. */}
-                          {/* The cell is a control: the full list opens
-                              instead of forcing a reopen of every machine to find out
-                              which ones carry the tool. */}
-                          <td><button type="button" className="text-link" title={t("foundOnDevices")} onClick={() => setInspected({ name: entry?.name ?? tool, rows: row.rows })}>
-                            {[...row.devices].sort((a, b) => a.localeCompare(b)).slice(0, 3).join(", ")}
-                            {row.devices.size > 3 && <span className="cell-detail">{t("andNMoreDevices", [row.devices.size - 3])}</span>}
-                          </button></td>
-                          <td>{[...row.kinds].map((kind) => (KIND_LABELS[kind] ? t(KIND_LABELS[kind]) : kind)).join(", ")}</td>
-                          <td>{row.first ? <DateValue value={row.first} /> : "—"}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <PageNumbers page={current} pages={pages} go={setPage} label={t("pagination")} />
-            </Card>
-          );
-        }}
-      </ResourceView>
-      {inspected && (
-        <Dialog title={inspected.name} close={() => setInspected(null)} side="list">
-          <div className="dialog-body">
-            <div className="table-scroll">
-              <table className="privacy-table">
-                <thead><tr><th>{t("device")}</th><th>{t("recognisedBy")}</th><th>{t("firstObservation")}</th></tr></thead>
-                <tbody>
-                  {[...inspected.rows]
-                    .sort((a, b) => (a.hostname || a.device_id).localeCompare(b.hostname || b.device_id) || a.kind.localeCompare(b.kind))
-                    .map((row) => (
-                      <tr key={row.device_id + ":" + row.kind}>
-                        <td><a className="text-link" href={`#devices?id=${row.device_id}`}>{row.hostname || t("machineNameUnavailable")}</a></td>
-                        <td>{KIND_LABELS[row.kind] ? t(KIND_LABELS[row.kind]) : row.kind}</td>
-                        <td>{row.first_seen ? <DateValue value={row.first_seen} /> : "—"}</td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </Dialog>
-      )}
-    </>
-  );
-}
 // No device at all, or none matching the filter: two distinct empty
 // screens. `null` means there are rows to show.
 function deviceEmptyState(total: number, matching: number, t: Translate) {
@@ -1767,39 +1436,41 @@ function DevicesPage() {
           }
           close={() => !mutation.pending && setConfirmDelete(null)}
         >
-          <p>
-            {t("deletionRemovesTheDeviceIdentityIt")}
-          </p>
-          <ul className="confirm-list">
-            {confirmDelete.slice(0, 10).map((device) => (
-              <li key={device.id}>{device.hostname || t("machineNameUnavailable")}</li>
-            ))}
-            {confirmDelete.length > 10 && (
-              <li className="muted">
-                {t("and")} {confirmDelete.length - 10}{" "}
-                {t("others")}
-              </li>
-            )}
-          </ul>
-          <ErrorNotice error={mutation.error} />
-          <div className="dialog-actions">
-            <button
-              type="button"
-              className="button secondary"
-              disabled={mutation.pending}
-              onClick={() => setConfirmDelete(null)}
-            >
-              {t("cancel")}
-            </button>
-            <button
-              className="button danger"
-              disabled={mutation.pending}
-              onClick={() => void runDelete(confirmDelete)}
-            >
-              {mutation.pending
-                ? t("deleting")
-                : t("confirmDeletion")}
-            </button>
+          <div className="dialog-body">
+            <p>
+              {t("deletionRemovesTheDeviceIdentityIt")}
+            </p>
+            <ul className="confirm-list">
+              {confirmDelete.slice(0, 10).map((device) => (
+                <li key={device.id}>{device.hostname || t("machineNameUnavailable")}</li>
+              ))}
+              {confirmDelete.length > 10 && (
+                <li className="muted">
+                  {t("and")} {confirmDelete.length - 10}{" "}
+                  {t("others")}
+                </li>
+              )}
+            </ul>
+            <ErrorNotice error={mutation.error} />
+            <div className="dialog-actions">
+              <button
+                type="button"
+                className="button secondary"
+                disabled={mutation.pending}
+                onClick={() => setConfirmDelete(null)}
+              >
+                {t("cancel")}
+              </button>
+              <button
+                className="button danger"
+                disabled={mutation.pending}
+                onClick={() => void runDelete(confirmDelete)}
+              >
+                {mutation.pending
+                  ? t("deleting")
+                  : t("confirmDeletion")}
+              </button>
+            </div>
           </div>
         </Dialog>
       )}
@@ -1808,28 +1479,30 @@ function DevicesPage() {
           title={t("revokeThisDevice")}
           close={() => !mutation.pending && setRevoke(undefined)}
         >
-          <p>
-            {t("device2")} <strong>{revoke.hostname || t("machineNameUnavailable")}</strong>{" "}
-            {t("willLoseAccessToEventSubmission")}
-          </p>
-          <ErrorNotice error={mutation.error} />
-          <div className="dialog-actions">
-            <button
-              className="button secondary"
-              disabled={mutation.pending}
-              onClick={() => setRevoke(undefined)}
-            >
-              {t("cancel")}
-            </button>
-            <button
-              className="button primary"
-              disabled={mutation.pending}
-              onClick={() => void change(revoke, "revoke")}
-            >
-              {mutation.pending
-                ? t("revoking")
-                : t("confirmRevocation")}
-            </button>
+          <div className="dialog-body">
+            <p>
+              {t("device2")} <strong>{revoke.hostname || t("machineNameUnavailable")}</strong>{" "}
+              {t("willLoseAccessToEventSubmission")}
+            </p>
+            <ErrorNotice error={mutation.error} />
+            <div className="dialog-actions">
+              <button
+                className="button secondary"
+                disabled={mutation.pending}
+                onClick={() => setRevoke(undefined)}
+              >
+                {t("cancel")}
+              </button>
+              <button
+                className="button primary"
+                disabled={mutation.pending}
+                onClick={() => void change(revoke, "revoke")}
+              >
+                {mutation.pending
+                  ? t("revoking")
+                  : t("confirmRevocation")}
+              </button>
+            </div>
           </div>
         </Dialog>
       )}
@@ -2240,81 +1913,83 @@ function InvitationDialog({
       title={t("inviteAMember")}
       close={() => !mutation.pending && close()}
     >
-      {sent ? (
-        <>
-          <output className="notice success">
-            <Icon name="check" />
-            {t("theServerConfirmedSendingAnInvitation")}{" "}
-            {email}.
-          </output>
-          <div className="dialog-actions">
-            <button className="button primary" onClick={close}>
-              {t("done")}
-            </button>
-          </div>
-        </>
-      ) : (
-        <form onSubmit={invite}>
-          <p>
-            {t("yourIdentityProviderWillSendAn")}
-          </p>
-          <div className="invitation-fields">
-            <label>
-              {t("emailAddress")}
-              <input
-                autoFocus
-                required
-                type="email"
-                maxLength={254}
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="member@example.org"
-              />
-            </label>
-            <label>
-              {t("role")}
-              <select value={role} onChange={(e) => setRole(e.target.value)}>
-                {roles
-                  .filter(
-                    (r) =>
-                      r !== "owner" || session.organization.role === "owner",
-                  )
-                  .map((r) => (
-                    <option key={r} value={r}>
-                      {roleLabel(t, r)}
-                    </option>
-                  ))}
-              </select>
-            </label>
-            <label>
-              {t("consoleLanguage")}
-              <select
-                value={invitedLanguage}
-                onChange={(e) => setInvitedLanguage(e.target.value as Member["language"] & string)}
+      <div className="dialog-body">
+        {sent ? (
+          <>
+            <output className="notice success">
+              <Icon name="check" />
+              {t("theServerConfirmedSendingAnInvitation")}{" "}
+              {email}.
+            </output>
+            <div className="dialog-actions">
+              <button className="button primary" onClick={close}>
+                {t("done")}
+              </button>
+            </div>
+          </>
+        ) : (
+          <form onSubmit={invite}>
+            <p>
+              {t("yourIdentityProviderWillSendAn")}
+            </p>
+            <div className="invitation-fields">
+              <label>
+                {t("emailAddress")}
+                <input
+                  autoFocus
+                  required
+                  type="email"
+                  maxLength={254}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="member@example.org"
+                />
+              </label>
+              <label>
+                {t("role")}
+                <select value={role} onChange={(e) => setRole(e.target.value)}>
+                  {roles
+                    .filter(
+                      (r) =>
+                        r !== "owner" || session.organization.role === "owner",
+                    )
+                    .map((r) => (
+                      <option key={r} value={r}>
+                        {roleLabel(t, r)}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <label>
+                {t("consoleLanguage")}
+                <select
+                  value={invitedLanguage}
+                  onChange={(e) => setInvitedLanguage(e.target.value as Member["language"] & string)}
+                >
+                  <option value="">{languageLabel(t, "")}</option>
+                  {languages.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
+                </select>
+              </label>
+            </div>
+            <ErrorNotice error={mutation.error} />
+            <div className="dialog-actions">
+              <button
+                type="button"
+                className="button secondary"
+                disabled={mutation.pending}
+                onClick={close}
               >
-                <option value="">{languageLabel(t, "")}</option>
-                {languages.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
-              </select>
-            </label>
-          </div>
-          <ErrorNotice error={mutation.error} />
-          <div className="dialog-actions">
-            <button
-              type="button"
-              className="button secondary"
-              disabled={mutation.pending}
-              onClick={close}
-            >
-              {t("cancel")}
-            </button>
-            <button type="submit" className="button primary" disabled={mutation.pending}>
-              {mutation.pending
-                ? t("sending")
-                : t("sendInvitation")}
-            </button>
-          </div>
-        </form>
-      )}
+                {t("cancel")}
+              </button>
+              <button type="submit" className="button primary" disabled={mutation.pending}>
+                {mutation.pending
+                  ? t("sending")
+                  : t("sendInvitation")}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
     </Dialog>
   );
 }
@@ -3186,33 +2861,35 @@ function OrganizationsView() {
           title={t("deleteOrganizations")}
           close={() => setConfirm(null)}
         >
-          <p>
-            {t("thisPermanentlyDeletesTheFollowingOrganizati")}
-          </p>
-          <ul>
-            {confirm.map((org) => (
-              <li key={org.id}>{org.name}</li>
-            ))}
-          </ul>
-          <ErrorNotice error={mutation.error} />
-          <div className="dialog-actions">
-            <button
-              type="button"
-              className="button secondary"
-              onClick={() => setConfirm(null)}
-            >
-              {t("cancel")}
-            </button>
-            <button
-              className="button danger"
-              disabled={mutation.pending}
-              onClick={() => runDelete(confirm)}
-            >
-              <Icon name="trash" />
-              {mutation.pending
-                ? t("deleting")
-                : t("delete")}
-            </button>
+          <div className="dialog-body">
+            <p>
+              {t("thisPermanentlyDeletesTheFollowingOrganizati")}
+            </p>
+            <ul>
+              {confirm.map((org) => (
+                <li key={org.id}>{org.name}</li>
+              ))}
+            </ul>
+            <ErrorNotice error={mutation.error} />
+            <div className="dialog-actions">
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setConfirm(null)}
+              >
+                {t("cancel")}
+              </button>
+              <button
+                className="button danger"
+                disabled={mutation.pending}
+                onClick={() => runDelete(confirm)}
+              >
+                <Icon name="trash" />
+                {mutation.pending
+                  ? t("deleting")
+                  : t("delete")}
+              </button>
+            </div>
           </div>
         </Dialog>
       )}

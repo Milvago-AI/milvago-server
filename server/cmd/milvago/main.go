@@ -52,6 +52,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return e
 	}
 	defer a.CloseExportConnections()
+	defer a.CloseDiscovery()
 	cancel()
 	srv := &http.Server{Addr: c.Listen, Handler: a.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 100 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 * 1024}
 	listener, e := net.Listen("tcp", c.Listen)

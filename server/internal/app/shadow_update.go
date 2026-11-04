@@ -47,9 +47,9 @@ const (
 	msgReleaseArtifactUnverified = "The release artifact could not be verified."
 )
 
-// Updates are served from the very installers the console hands out: one artifact,
-// one directory. A signed manifest sits next to each installer and is what actually
-// authorizes an update; the trust anchor is the separate release key.
+// Updates and initial installers share one directory. Linux executable updates
+// are separate from the installation archive; signed manifests authorize update
+// bytes, using the separate release trust key.
 func (a *App) updatesAvailable() bool {
 	directory := os.Getenv("MILVAGO_INSTALLER_DIRECTORY")
 	if len(a.config.UpdatePublicKey) != 32 || directory == "" {
@@ -145,13 +145,13 @@ func (a *App) readUpdateManifest(edition, platform string) (signedEnvelope, Upda
 	return env, m, nil
 }
 
-// releaseArtifactReady reports whether the signed manifest actually corresponds to an
-// installer this server can deliver. A manifest is only half the release: without
+// releaseArtifactReady reports whether the signed manifest actually corresponds to
+// update bytes this server can deliver. A manifest is only half the release: without
 // this, a correctly signed manifest whose artifact is missing or has been replaced
 // would still be announced, and every device would keep asking for bytes that can
 // never be served.
 func (a *App) releaseArtifactReady(m UpdateManifest) bool {
-	bundle, _, e := a.releaseBundle(m.Platform)
+	bundle, _, e := a.releaseUpdateBundle(m)
 	return e == nil && bundle.SHA256 == m.SHA256 && bundle.Size == m.Size
 }
 
@@ -215,8 +215,14 @@ func (a *App) updateManifest(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	env, _, offered, e := a.applicableUpdate(r, tx, org, device)
+	// This read-only decision must not keep device/policy locks during client I/O.
+	rollbackError := tx.Rollback(r.Context())
 	if e != nil {
 		a.fail(w, e)
+		return
+	}
+	if rollbackError != nil {
+		a.fail(w, rollbackError)
 		return
 	}
 	if !offered {
@@ -237,33 +243,41 @@ func (a *App) updateAnchor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	if !a.updatesAvailable() {
-		w.WriteHeader(204)
+	envelope, offered := a.readUpdateAnchor()
+	// Keep the authorization fence through verification, then end it before I/O.
+	if e = tx.Rollback(r.Context()); e != nil {
+		a.fail(w, e)
 		return
 	}
-	root, err := installerRoot()
-	if err != nil {
-		w.WriteHeader(204)
-		return
-	}
-	raw, err := root.ReadFile("anchor.json")
-	root.Close()
-	if err != nil || len(raw) > 8192 {
-		w.WriteHeader(204)
-		return
-	}
-	var envelope signedEnvelope
-	if json.Unmarshal(raw, &envelope) != nil {
-		w.WriteHeader(204)
-		return
-	}
-	payload, e1 := base64.StdEncoding.DecodeString(envelope.Payload)
-	signature, e2 := base64.StdEncoding.DecodeString(envelope.Signature)
-	if e1 != nil || e2 != nil || !ed25519.Verify(a.config.UpdatePublicKey, payload, signature) {
+	if !offered {
 		w.WriteHeader(204)
 		return
 	}
 	reply(w, 200, envelope)
+}
+
+func (a *App) readUpdateAnchor() (envelope signedEnvelope, offered bool) {
+	if !a.updatesAvailable() {
+		return envelope, false
+	}
+	root, err := installerRoot()
+	if err != nil {
+		return envelope, false
+	}
+	raw, err := root.ReadFile("anchor.json")
+	root.Close()
+	if err != nil || len(raw) > 8192 {
+		return envelope, false
+	}
+	if json.Unmarshal(raw, &envelope) != nil {
+		return envelope, false
+	}
+	payload, e1 := base64.StdEncoding.DecodeString(envelope.Payload)
+	signature, e2 := base64.StdEncoding.DecodeString(envelope.Signature)
+	if e1 != nil || e2 != nil || !ed25519.Verify(a.config.UpdatePublicKey, payload, signature) {
+		return envelope, false
+	}
+	return envelope, true
 }
 
 const deviceAuditActorPrefix = "device:"
@@ -275,77 +289,72 @@ var artifactSlots = make(chan struct{}, 2)
 var artifactHolders sync.Map
 
 func (a *App) updateArtifact(w http.ResponseWriter, r *http.Request) {
+	if e := a.updateArtifactRequest(w, r); e != nil {
+		a.fail(w, e)
+	}
+}
+
+func (a *App) updateArtifactRequest(w http.ResponseWriter, r *http.Request) error {
 	tx, org, device, e := a.deviceTx(r)
 	if e != nil {
-		a.fail(w, e)
-		return
+		return e
 	}
 	defer tx.Rollback(r.Context())
 	_, m, offered, e := a.applicableUpdate(r, tx, org, device)
 	if e != nil {
-		a.fail(w, e)
-		return
+		return e
 	}
 	if !offered || r.PathValue("sha256") != m.SHA256 {
-		a.fail(w, apiError{404, "not_found", "No matching authorized release."})
-		return
+		return apiError{404, "not_found", "No matching authorized release."}
 	}
 	if _, busy := artifactHolders.LoadOrStore(device, struct{}{}); busy {
-		a.fail(w, apiError{503, "download_busy", "Try the release download again shortly."})
-		return
+		return apiError{503, "download_busy", "Try the release download again shortly."}
 	}
 	defer artifactHolders.Delete(device)
 	select {
 	case artifactSlots <- struct{}{}:
 		defer func() { <-artifactSlots }()
 	default:
-		a.fail(w, apiError{503, "download_busy", "Try the release download again shortly."})
-		return
+		return apiError{503, "download_busy", "Try the release download again shortly."}
 	}
-	// The signed manifest authorizes; the install manifest only locates the file the
-	// console already serves. Its name is therefore untrusted: the bytes are hashed
-	// against the signed digest before anything leaves the server.
-	bundle, path, e := a.releaseBundle(m.Platform)
+	// The signed manifest authorizes the exact bytes. Linux resolves its separate
+	// executable; Windows retains the installer manifest locator. In both cases the
+	// bytes are hashed against the signed digest before anything leaves the server.
+	bundle, path, e := a.releaseUpdateBundle(m)
 	if e != nil || bundle.SHA256 != m.SHA256 || bundle.Size != m.Size {
-		a.fail(w, apiError{503, "artifact_invalid", msgReleaseArtifactUnverified})
-		return
+		return apiError{503, "artifact_invalid", msgReleaseArtifactUnverified}
 	}
 	info, e := os.Lstat(path)
 	if e != nil || !info.Mode().IsRegular() || info.Size() != m.Size {
-		a.fail(w, apiError{503, "artifact_invalid", msgReleaseArtifactUnverified})
-		return
+		return apiError{503, "artifact_invalid", msgReleaseArtifactUnverified}
 	}
 	// Committed before the copy: the transaction holds the device row FOR UPDATE and a
 	// pool connection, which a copy and re-hash of up to 128 MB kept for its whole
 	// duration, stalling a revocation of that device (audit of 2026-09-24).
 	if e = audit(r.Context(), tx, org, deviceAuditActorPrefix+device, "update.download", m.Version); e != nil {
-		a.fail(w, e)
-		return
+		return e
 	}
 	if e = tx.Commit(r.Context()); e != nil {
-		a.fail(w, e)
-		return
+		return e
 	}
 	directory, e := os.MkdirTemp("", "milvago-update-")
 	if e != nil {
-		a.fail(w, apiError{503, "artifact_invalid", msgReleaseArtifactUnverified})
-		return
+		return apiError{503, "artifact_invalid", msgReleaseArtifactUnverified}
 	}
 	defer os.RemoveAll(directory)
 	snapshot := filepath.Join(directory, "artifact")
 	size, digest, e := copyInstallerFileAndHash(path, snapshot, m.Size)
 	if e != nil || size != m.Size || digest != m.SHA256 {
-		a.fail(w, apiError{503, "artifact_invalid", msgReleaseArtifactUnverified})
-		return
+		return apiError{503, "artifact_invalid", msgReleaseArtifactUnverified}
 	}
 	verified, e := openConfined(snapshot)
 	if e != nil {
-		a.fail(w, apiError{503, "artifact_invalid", msgReleaseArtifactUnverified})
-		return
+		return apiError{503, "artifact_invalid", msgReleaseArtifactUnverified}
 	}
 	defer verified.Close()
 	w.Header().Set("Content-Type", "application/octet-stream")
 	http.ServeContent(w, r, "milvago-update.bin", time.Time{}, verified)
+	return nil
 }
 func (a *App) updateStatus(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -385,7 +394,7 @@ RETURNING prior.version IS DISTINCT FROM d.version OR prior.update_status IS DIS
 		e = tx.Commit(r.Context())
 	}
 	if e != nil {
-		a.fail(w, e)
+		a.failTransaction(w, r, tx, e)
 		return
 	}
 	reply(w, 200, map[string]bool{"ok": true})

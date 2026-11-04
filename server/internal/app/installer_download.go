@@ -415,6 +415,11 @@ func validateInstallerExecutables(payload, edition string) error {
 		agent = "milvago-commercial-bridge"
 	}
 	executables := []string{agent, "milvago-updater"}
+	if discovery, err := discoveryInstallerPayload(payload); err != nil {
+		return err
+	} else if discovery {
+		executables = append(executables, "milvago-discovery-system")
+	}
 	if edition == "commercial" {
 		executables = append(executables, "milvago-model-filter", "milvago-collector")
 	}

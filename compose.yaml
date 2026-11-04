@@ -31,15 +31,16 @@ services:
       timeout: 3s
       retries: 30
   mail:
-    image: axllent/mailpit:v1.31.4@sha256:b68349e3a014b90c5610bfb26b2ae36f3892d7b8cf25ee140c6c71c98d2fcf48
+    image: axllent/mailpit:v1.32.0@sha256:0790692be935ea4420d085694f7985b1f692ca6a8771ab0e0bd8ba75ac180498
     security_opt: [no-new-privileges:true]
     ports:
       - "127.0.0.1:${MILVAGO_MAIL_PORT:-4081}:8025"
   identity:
-    image: quay.io/keycloak/keycloak:26.8.1@sha256:79c623a22abacf3fe6c00a5fb30f5b7843d717b234033b80995891c06116d244
-    command: [start-dev, --import-realm]
+    image: quay.io/keycloak/keycloak:26.8.1@sha256:a78d6b79572168cb25886b80a8b5b8d4ed4390743e3eecb810538683e209dd6b
+    command: [start, --import-realm]
     security_opt: [no-new-privileges:true]
     environment:
+      KC_HTTP_ENABLED: "true"
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://database:5432/milvago_identity
       KC_DB_USERNAME: milvago_identity
@@ -73,7 +74,7 @@ services:
       MILVAGO_SHADOW_METRICS: ${MILVAGO_SHADOW_METRICS:-}
       APP_URL: http://localhost:${MILVAGO_APP_PORT:-4020}
       PUBLIC_URL: ${MILVAGO_PUBLIC_URL:-}
-      DATABASE_URL: postgresql://milvago_runtime:${DB_RUNTIME_PASSWORD}@database:5432/milvago
+      DATABASE_URL: postgresql://milvago_runtime:${DB_RUNTIME_PASSWORD}@database:5432/milvago?pool_max_conns=12
       MIGRATION_DATABASE_URL: postgresql://milvago_migration:${DB_MIGRATION_PASSWORD}@database:5432/milvago
       DB_RUNTIME_ROLE: milvago_runtime
       OIDC_ISSUER: http://localhost:${MILVAGO_IDENTITY_PORT:-4080}/realms/milvago

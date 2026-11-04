@@ -71,7 +71,7 @@ func (b *deviceGroupBody) validate() error {
 const groupView = `jsonb_build_object('id',g.id,'name',g.name,'description',g.description,'device_count',(SELECT count(*) FROM devices d WHERE d.group_id=g.id),'created_at',g.created_at,'updated_at',g.updated_at)`
 
 func (a *App) deviceGroups(w http.ResponseWriter, r *http.Request, tx pgx.Tx, s *Session) error {
-	return jsonQuery(w, r, tx, `SELECT jsonb_build_object('items',COALESCE(jsonb_agg(`+groupView+` ORDER BY g.name),'[]'::jsonb)) FROM device_groups g`)
+	return jsonQuery(w, r, tx, deviceGroupsQuery)
 }
 
 // duplicateGroupName refuses two groups that differ only by case: the unique

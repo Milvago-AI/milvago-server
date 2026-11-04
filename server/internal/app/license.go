@@ -255,7 +255,7 @@ func licenseGated(pattern string) bool {
 		return false
 	}
 	// /auth/device binds a device's user: a device route, unlike sign-in.
-	for _, prefix := range []string{"/api", "/v1", "/v2", "/v3", "/ext", mcpPath, "/auth/device"} {
+	for _, prefix := range []string{"/api", "/v1", "/v2", "/v3", "/v4", "/ext", mcpPath, "/auth/device"} {
 		if p == prefix || strings.HasPrefix(p, prefix+"/") {
 			return true
 		}

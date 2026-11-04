@@ -1,0 +1,6 @@
+Milvago DLP engine
+Copyright (c) 2026 Milvago AI, LLC
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+Third-party dependencies retain their own licenses; exact versions are recorded
+in Cargo.toml and Cargo.lock.

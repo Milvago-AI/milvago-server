@@ -307,15 +307,17 @@ function RemoveProviderDialog({
   }
   return (
     <Dialog title={t("ssoRemoveProvider")} close={() => !mutation.pending && close()}>
-      <p>{t("ssoRemoveProviderWarning")}</p>
-      <ErrorNotice error={mutation.error} />
-      <div className="dialog-actions">
-        <Button variant="secondary" disabled={mutation.pending} onClick={close}>
-          {t("cancel")}
-        </Button>
-        <Button variant="danger" disabled={mutation.pending} onClick={() => void remove()}>
-          {t("confirmRemoval2")}
-        </Button>
+      <div className="dialog-body">
+        <p>{t("ssoRemoveProviderWarning")}</p>
+        <ErrorNotice error={mutation.error} />
+        <div className="dialog-actions">
+          <Button variant="secondary" disabled={mutation.pending} onClick={close}>
+            {t("cancel")}
+          </Button>
+          <Button variant="danger" disabled={mutation.pending} onClick={() => void remove()}>
+            {t("confirmRemoval2")}
+          </Button>
+        </div>
       </div>
     </Dialog>
   );

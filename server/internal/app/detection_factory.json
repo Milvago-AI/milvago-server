@@ -2,18 +2,21 @@
   "providers": [
     {
       "id": "chatgpt",
-      "label": "chatgpt",
+      "label": "ChatGPT",
       "domains": [
         "chatgpt.com",
         "chat.openai.com"
       ],
       "aliases": [],
       "conversation_path": "/c/*",
+      "conversation_paths": [
+        "/uc/*"
+      ],
       "conversation_segment": 1,
       "dom": {
-        "editor": "#prompt-textarea,textarea[data-testid=\"prompt-textarea\"],#mobile-composer-prompt",
-        "send": "button[data-testid=\"send-button\"],form:has(#mobile-composer-prompt) button[type=\"submit\"]",
-        "response": "[data-message-author-role=\"assistant\"],[data-message-role=\"assistant\"]"
+        "editor": "#prompt-textarea,textarea[data-testid=\"prompt-textarea\"],#mobile-composer-prompt,.ProseMirror[data-composer-markdown]",
+        "send": "button[data-testid=\"send-button\"],form:has(#mobile-composer-prompt) button[type=\"submit\"],[data-composer-body]:has(.ProseMirror[data-composer-markdown]) button[type=\"submit\"]",
+        "response": "[data-markdown-text-style=\"assistant-message\"],[data-message-author-role=\"assistant\"],[data-message-role=\"assistant\"]"
       },
       "network": [
         {
@@ -72,13 +75,19 @@
           "host": "chatgpt.com",
           "path": "/backend-anon/files/process_upload_stream",
           "kind": "file"
+        },
+        {
+          "method": "POST",
+          "host": "chatgpt.com",
+          "path": "/backend-api/files",
+          "kind": "paste"
         }
       ],
       "qualified_at": "2026-09-11T00:00:00Z"
     },
     {
       "id": "claude",
-      "label": "claude",
+      "label": "Claude",
       "domains": [
         "claude.ai"
       ],
@@ -104,146 +113,27 @@
         {
           "method": "POST",
           "host": "claude.ai",
+          "path": "/claudeai-rpc/*.ConversationService/PerformAction",
+          "body_format": "protobuf",
+          "text_path": "",
+          "text_paths": [
+            "2[*].3[*]",
+            "2[*].15[*].4[*]"
+          ],
+          "attachment_paths": [
+            "2[*].15[*].4[*]"
+          ],
+          "model_path": "2[*].7[*].2[*]",
+          "effort_path": "",
+          "conversation_path": "1[*].2[*]"
+        },
+        {
+          "method": "POST",
+          "host": "claude.ai",
           "path": "/api/organizations/*/conversations/*/wiggle/upload-file",
           "kind": "file"
         }
       ],
-      "qualified_at": "2026-09-11T00:00:00Z"
-    },
-    {
-      "id": "lechat",
-      "label": "lechat",
-      "domains": [
-        "chat.mistral.ai"
-      ],
-      "aliases": [],
-      "conversation_path": "/chat/*",
-      "conversation_segment": 1,
-      "dom": {
-        "editor": "textarea,[contenteditable=\"true\"]",
-        "send": "button[type=\"submit\"][aria-busy]",
-        "response": "[data-message-role=\"assistant\"]"
-      },
-      "network": [],
-      "qualified_at": "2026-09-11T00:00:00Z"
-    },
-    {
-      "id": "copilot",
-      "label": "copilot",
-      "domains": [
-        "copilot.microsoft.com",
-        "copilot.cloud.microsoft"
-      ],
-      "aliases": [],
-      "conversation_path": "/chats/*",
-      "conversation_segment": 1,
-      "dom": {
-        "editor": "textarea,[contenteditable=\"true\"][role=\"textbox\"]",
-        "send": "button[data-testid=\"submit-button\"],button[aria-label=\"Submit message\"]",
-        "response": "[data-content=\"ai-message\"]"
-      },
-      "network": [],
-      "qualified_at": "2026-09-11T00:00:00Z"
-    },
-    {
-      "id": "gemini",
-      "label": "gemini",
-      "domains": [
-        "gemini.google.com"
-      ],
-      "aliases": [],
-      "conversation_path": "/app/*",
-      "conversation_segment": 1,
-      "dom": {
-        "editor": "rich-textarea [contenteditable=\"true\"],textarea",
-        "send": ".send-button button",
-        "response": "model-response"
-      },
-      "network": [],
-      "qualified_at": "2026-09-11T00:00:00Z"
-    },
-    {
-      "id": "notebooklm",
-      "label": "notebooklm",
-      "domains": [
-        "notebook.google.com",
-        "notebooklm.google.com"
-      ],
-      "aliases": [],
-      "conversation_path": "/notebook/*",
-      "conversation_segment": 1,
-      "dom": {
-        "editor": "textarea,[contenteditable=\"true\"][role=\"textbox\"]",
-        "send": "button[type=\"submit\"]",
-        "response": "[data-message-role=\"assistant\"],.to-user-message"
-      },
-      "network": [],
-      "qualified_at": "2026-09-11T00:00:00Z"
-    },
-    {
-      "id": "deepseek",
-      "label": "deepseek",
-      "domains": [
-        "chat.deepseek.com"
-      ],
-      "aliases": [],
-      "conversation_path": "/a/chat/s/*",
-      "conversation_segment": 3,
-      "dom": {
-        "editor": "textarea",
-        "send": "div[role=\"button\"].ds-button--primary.ds-button--circle",
-        "response": "[data-message-role=\"assistant\"]"
-      },
-      "network": [],
-      "qualified_at": "2026-09-11T00:00:00Z"
-    },
-    {
-      "id": "perplexity",
-      "label": "perplexity",
-      "domains": [
-        "www.perplexity.ai",
-        "perplexity.ai"
-      ],
-      "aliases": [],
-      "conversation_path": "/search/*",
-      "conversation_segment": 1,
-      "dom": {
-        "editor": "",
-        "send": "",
-        "response": ""
-      },
-      "network": [
-        {
-          "method": "POST",
-          "host": "www.perplexity.ai",
-          "path": "/rest/sse/perplexity_ask",
-          "text_path": "",
-          "text_paths": [
-            "query_str",
-            "params.dsl_query"
-          ],
-          "model_path": "params.model_preference",
-          "effort_path": "",
-          "conversation_path": ""
-        }
-      ],
-      "qualified_at": "2026-09-11T00:00:00Z"
-    },
-    {
-      "id": "grok",
-      "label": "grok",
-      "domains": [
-        "grok.com"
-      ],
-      "aliases": [],
-      "conversation_path": "/c/*",
-      "conversation_segment": 1,
-      "dom": {
-        "editor": "textarea,[contenteditable=\"true\"][role=\"textbox\"]",
-        "send": "button[data-testid=\"chat-submit\"]",
-        "response": "[data-message-role=\"assistant\"],[data-testid=\"assistant-message\"]"
-      },
-      "network": [],
       "qualified_at": "2026-09-11T00:00:00Z"
     }
   ],
@@ -389,22 +279,24 @@
     },
     {
       "id": "gemini",
-      "label": "Google Gemini",
+      "label": "Gemini",
       "domains": [
-        "gemini.google.com"
+        "gemini.google.com",
+        "bard.google.com"
       ]
     },
     {
       "id": "copilot",
-      "label": "Microsoft Copilot",
+      "label": "Copilot",
       "domains": [
         "copilot.microsoft.com",
-        "copilot.cloud.microsoft"
+        "copilot.cloud.microsoft",
+        "copilot.com"
       ]
     },
     {
       "id": "lechat",
-      "label": "Mistral Le Chat",
+      "label": "Mistral Vibe",
       "domains": [
         "chat.mistral.ai"
       ]
@@ -434,7 +326,8 @@
       "id": "notebooklm",
       "label": "NotebookLM",
       "domains": [
-        "notebooklm.google.com"
+        "notebooklm.google.com",
+        "notebook.google.com"
       ]
     },
     {

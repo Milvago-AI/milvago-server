@@ -1,0 +1,59 @@
+{
+  "case": "network-attachment-path-outside-text",
+  "reason": "An attachment path is one of the rule's text paths: a path of its own would let a paste approval cover text the comparison never reads.",
+  "server": "reject",
+  "engine": "reject",
+  "content": {
+    "providers": [
+      {
+        "id": "acme-assistant",
+        "label": "Acme Assistant",
+        "domains": [
+          "assistant.example-corp.test"
+        ],
+        "aliases": [
+          "assistant-alias.example-corp.test"
+        ],
+        "conversation_path": "/session/*",
+        "conversation_segment": 1,
+        "dom": {
+          "editor": "textarea.prompt",
+          "send": "button.send",
+          "response": ".response"
+        },
+        "network": [
+          {
+            "method": "POST",
+            "host": "assistant.example-corp.test",
+            "path": "/rpc/acme.v1.ChatService/Send",
+            "body_format": "protobuf",
+            "text_path": "",
+            "text_paths": [
+              "2[*].3[*]",
+              "2[*].15[*].4[*]"
+            ],
+            "attachment_paths": [
+              "2[*].16[*].4[*]"
+            ],
+            "model_path": "",
+            "conversation_path": "1[*].2[*]"
+          }
+        ],
+        "qualified_at": "2026-09-11T00:00:00Z"
+      }
+    ],
+    "native_tools": [],
+    "heuristics": {
+      "keys": [
+        "messages",
+        "prompt",
+        "model",
+        "input"
+      ],
+      "mime_types": [
+        "text/event-stream",
+        "application/json"
+      ]
+    }
+  }
+}

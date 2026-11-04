@@ -24,8 +24,8 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '26.9.0'
-      - run: node --test scripts/server-release.test.mjs scripts/installer-url.test.mjs scripts/installer-docker.test.mjs
+          node-version: '26.13.0'
+      - run: node --test scripts/server-release.test.mjs scripts/installer-url.test.mjs scripts/installer-docker.test.mjs scripts/check-public-installer.test.mjs
       - run: node scripts/server-release.mjs check
       - run: node scripts/check-production-installer.mjs
       - run: node scripts/check-production-installer.mjs --localhost
@@ -77,11 +77,15 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '26.9.0'
+          node-version: '26.13.0'
           cache: npm
           cache-dependency-path: console/package-lock.json
       - run: npm ci --ignore-scripts
         working-directory: console
+      - run: rustup toolchain install 1.96.1 --profile minimal --target wasm32-unknown-unknown
+      - run: cargo +1.96.1 test --locked --manifest-path dlp-engine/Cargo.toml
+      - run: sh scripts/build-dlp.sh
+      - run: sh scripts/build-discovery.sh
       - run: npm test
         working-directory: console
       - run: npm run build
@@ -97,6 +101,9 @@ jobs:
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
+      - run: rustup toolchain install 1.96.1 --profile minimal --target wasm32-unknown-unknown
+      - run: sh scripts/build-dlp.sh
+      - run: sh scripts/build-discovery.sh
       # No build tag: this builds and tests the Community edition.
       - run: go test ./...
         working-directory: server
@@ -106,3 +113,40 @@ jobs:
         working-directory: server
       - run: go build -trimpath ./cmd/milvago
         working-directory: server
+
+  discovery-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      database:
+        image: postgres:18.4@sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636
+        env:
+          POSTGRES_USER: fixture_admin
+          POSTGRES_PASSWORD: fixture-only
+          POSTGRES_DB: milvago_test
+        options: >-
+          --publish 127.0.0.1:5432:5432
+          --health-cmd "pg_isready -U fixture_admin -d milvago_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DISCOVERY_FIXTURE_ADMIN_URL: postgres://fixture_admin:fixture-only@127.0.0.1/milvago_test?sslmode=disable
+      TEST_DATABASE_URL: postgres://milvago_runtime:fixture-runtime@127.0.0.1/milvago_test?sslmode=disable
+      TEST_MIGRATION_DATABASE_URL: postgres://milvago_migration:fixture-migration@127.0.0.1/milvago_test?sslmode=disable
+      MILVAGO_REQUIRE_INTEGRATION: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - run: rustup toolchain install 1.96.1 --profile minimal --target wasm32-unknown-unknown
+      - run: sh scripts/build-dlp.sh && sh scripts/build-discovery.sh
+      - run: go run ../scripts/discovery-fixture.go
+        working-directory: server
+      - run: MILVAGO_INVENTORY_LOAD=1 go test ./internal/app -run 'TestDiscovery|TestPrivacyReadLevel|TestInventorySearch|TestLegacyConversationPage|TestPaginatedMetadata|TestSharedRate|TestSharedPublicQuota|TestRejectedIngest|TestUpdateReadOnlyResponses|TestAssociationGETEndsTransaction|TestHeartbeatValidationErrors|TestUpdateArtifactErrors|TestIngestionBatchPipeline|TestEventTransactionsPreserveAdmissionCapacity|TestDetectionBuiltin|TestDetectionCatalogPublish|TestPublisherClientDatabase' -count=1 -timeout=8m
+        working-directory: server
+
+
+  # Long-running load profiles are explicitly dispatched in discovery-performance.yml.

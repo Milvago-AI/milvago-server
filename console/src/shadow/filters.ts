@@ -1,6 +1,6 @@
 import type { Criteria } from './types';
 
-export const filterKeys = ['from', 'to', 'actor_id', 'device_id', 'tool', 'provider', 'model', 'sensitivity', 'action', 'attachment', 'query', 'kind'] as const;
+export const filterKeys = ['from', 'to', 'regex', 'actor_id', 'device_name', 'device_id', 'tool', 'provider', 'model', 'sensitivity', 'action', 'attachment', 'query', 'kind', 'dlp_rule', 'dlp_mode', 'dlp_consequence', 'dlp_outcome'] as const;
 export function serializeCriteria(criteria: Criteria) {
   const params = new URLSearchParams();
   for (const key of filterKeys) for (const value of Array.isArray(criteria[key]) ? criteria[key] : [criteria[key]]) if (value) params.append(key, value);

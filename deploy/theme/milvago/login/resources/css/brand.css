@@ -1,0 +1,38 @@
+/* Website identity; workspace surfaces deliberately remain opaque. */
+:root{
+  --mv-bg:#111722;--mv-surface:#1B2432;--mv-surface-2:#222D3D;--mv-elevated:#2B3749;
+  --mv-border:#344154;--mv-border-strong:#4B5A70;
+  --mv-text:#F4F6FA;--mv-text-2:#B6C0CE;--mv-text-3:#98A7B9;
+  --mv-accent:#2B50FF;--mv-accent-text:#6E8BFF;--mv-accent-solid:#2B50FF;--mv-accent-hover:#4A6AFF;
+  --mv-accent-bg:rgba(43,80,255,.16);--mv-accent-border:rgba(43,80,255,.45);
+  --mv-allowed:#3DD68C;--mv-allowed-bg:rgba(16,84,54,.38);
+  --mv-masked:#FFB224;--mv-masked-bg:rgba(120,60,6,.40);
+  --mv-blocked:#FF6B6B;--mv-blocked-bg:rgba(127,29,29,.40);
+  --mv-radius-s:3px;--mv-radius-m:6px;--mv-radius-l:10px;
+  --mv-dur-fast:160ms;--mv-dur-base:280ms;--mv-dur-slow:520ms;
+  --mv-ease-out:cubic-bezier(.2,.7,.2,1);--mv-ease-in-out:cubic-bezier(.65,0,.35,1);
+}
+[data-theme=light]{
+  --mv-bg:#F3F6FA;--mv-surface:#FFFFFF;--mv-surface-2:#E9EEF5;--mv-elevated:#FFFFFF;
+  --mv-border:#DCE4EE;--mv-border-strong:#BFCCDC;
+  --mv-text:#172033;--mv-text-2:#4D596B;--mv-text-3:#647083;
+  --mv-accent-text:#1F3FE6;--mv-accent-solid:#2B50FF;--mv-accent-hover:#1B3FD6;
+  --mv-accent-bg:#EAEFFF;--mv-accent-border:rgba(43,80,255,.38);
+  --mv-allowed:#15803D;--mv-allowed-bg:#DCFCE7;
+  --mv-masked:#B45309;--mv-masked-bg:#FEF3C7;
+  --mv-blocked:#B91C1C;--mv-blocked-bg:#FEE2E2;
+}
+/* Re-resolve aliases on theme boundaries, including the printable light report. */
+:root,[data-theme=light]{
+  --bg:var(--mv-bg);--surface:var(--mv-surface);--surface-2:var(--mv-surface-2);--elevated:var(--mv-elevated);
+  --border:var(--mv-border);--border-strong:var(--mv-border-strong);
+  --text:var(--mv-text);--text-2:var(--mv-text-2);--text-3:var(--mv-text-3);
+  --accent:var(--mv-accent);--accent-text:var(--mv-accent-text);--accent-solid:var(--mv-accent-solid);--accent-hover:var(--mv-accent-hover);
+  --accent-bg:var(--mv-accent-bg);--accent-border:var(--mv-accent-border);
+  --success:var(--mv-allowed);--success-bg:var(--mv-allowed-bg);
+  --warning:var(--mv-masked);--warning-bg:var(--mv-masked-bg);
+  --danger:var(--mv-blocked);--danger-bg:var(--mv-blocked-bg);
+  --radius-s:var(--mv-radius-s);--radius-m:var(--mv-radius-m);--radius-l:var(--mv-radius-l);
+  --primary:var(--accent-solid);--primary-hover:var(--accent-solid);--focus:var(--accent-text);--control-border:var(--text-3);
+  --panel:var(--surface);--ink:var(--text);--muted:var(--text-2);--line:var(--border);--subtle:var(--surface-2);--inverse:var(--on-primary);
+}

@@ -32,6 +32,8 @@ describe('Printable synthesis report', () => {
   it('opens on the scope the map shows, and no longer offers the retired PDF format', async () => {
     serve(url => url.startsWith('/api/shadow/cartography') ? reply(map) : undefined);
     show(<CartographyPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Diagramme complet' }));
+    fireEvent.click(screen.getByText('Rapports et exports'));
     const diagram = await screen.findByRole('group', { name: /Cartographie des requêtes/ });
     const format = screen.getByRole('combobox', { name: /Format d.export/ });
     expect(within(format).queryByRole('option', { name: 'PDF' })).toBeNull();

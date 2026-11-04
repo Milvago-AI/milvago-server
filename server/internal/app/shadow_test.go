@@ -1142,8 +1142,8 @@ func (s *shadowScenarioFixture) signedRelease(t *testing.T) {
 
 func (s *shadowScenarioFixture) seedSignedRelease(t *testing.T, dir string, key ed25519.PrivateKey) (string, []byte, UpdateManifest) {
 	t.Helper()
-	// The update artifact is the installer the console serves, located through the
-	// unsigned install manifest and authorized by the signed one.
+	// Initial Linux installation archives and executable updates are distinct.
+	// The signed update authorizes only the raw executable bytes.
 	artifact := []byte("synthetic signed artifact fixture")
 	digest := sha256.Sum256(artifact)
 	sha := hex.EncodeToString(digest[:])
@@ -1152,13 +1152,19 @@ func (s *shadowScenarioFixture) seedSignedRelease(t *testing.T, dir string, key 
 	// community). A fixture naming one edition therefore only ever satisfies one of
 	// the two runs, which is why this subtest failed under -tags commercial. Both are
 	// published instead, so the assertion tests the offer rather than the fixture.
-	name := "milvago-release-0.2.1-linux.tar.gz"
-	if e := os.WriteFile(filepath.Join(dir, name), artifact, 0600); e != nil {
+	name := "milvago-community-0.2.1-linux"
+	archiveName := "milvago-release-0.2.1-linux.tar.gz"
+	archive := []byte("synthetic initial installation archive; distinct from executable")
+	archiveDigest := sha256.Sum256(archive)
+	if e := os.WriteFile(filepath.Join(dir, archiveName), archive, 0600); e != nil {
 		t.Fatal(e)
 	}
-	install, _ := json.Marshal(InstallerBundle{Version: "0.2.1", Artifact: name, SHA256: sha, Size: int64(len(artifact))})
+	install, _ := json.Marshal(InstallerBundle{Version: "0.2.1", Artifact: archiveName, SHA256: hex.EncodeToString(archiveDigest[:]), Size: int64(len(archive))})
 	var manifest UpdateManifest
 	for _, release := range []string{"community", "commercial"} {
+		if e := os.WriteFile(filepath.Join(dir, "milvago-"+release+"-0.2.1-linux"), artifact, 0600); e != nil {
+			t.Fatal(e)
+		}
 		if e := os.WriteFile(filepath.Join(dir, release+"-linux.json"), install, 0600); e != nil {
 			t.Fatal(e)
 		}

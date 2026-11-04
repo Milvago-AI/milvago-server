@@ -1,16 +1,4 @@
-/* Milvago console — design system, charte graphique v2.1 (September 19, 2026).
-   Values mirror brand/tokens/milvago-tokens.css; the console keeps its own token
-   names, which map one to one onto the brand's.
-
-   Dark is the brand's default rendering: it lives on :root and ignores the system
-   setting. Light is the explicit exception, under [data-theme=light].
-
-   --accent is DECORATIVE ONLY (2.75:1 on --surface): rules, borders, glows, the
-   middle stop of --metal. It must never appear in a `color`
-   property — blue text uses --accent-text, blue fills under white text use
-   --accent-solid. --metal is a rule or a bar, never a surface, never behind text
-   and never on the logo. Radii 4/6/10 px, 1 px borders, no shadow on ordinary
-   surfaces. State colours belong to the interface only: red means blocked. */
+/* Compact console layout; website colour tokens live in brand.css. */
 :root{
   --bg:#111722;--surface:#1B2432;--surface-2:#222D3D;--elevated:#2B3749;--border:#344154;--border-strong:#4B5A70;
   --text:#F4F6FA;--text-2:#B6C0CE;--text-3:#98A7B9;
@@ -20,7 +8,7 @@
   --primary:var(--accent-solid);--on-primary:var(--accent-ink);--focus:var(--accent-hi);--control-border:var(--text-3);--primary-hover:var(--accent-solid);
   --success:#3DD68C;--success-bg:rgba(16,84,54,.38);--warning:#FFB224;--warning-bg:rgba(120,60,6,.40);--danger:#FF6B6B;--danger-bg:rgba(127,29,29,.40);
   --chart:#8A8A93;--hatch:#4A4A52;
-  --radius-s:4px;--radius-m:6px;--radius-l:10px;--shadow:0 18px 50px rgba(0,0,0,.65);
+  --radius-s:3px;--radius-m:6px;--radius-l:10px;--shadow:0 18px 50px rgba(0,0,0,.65);
   --glow:0 0 0 1px var(--accent-border),0 12px 40px -12px var(--accent-glow);
   --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:20px;--space-6:24px;--space-7:32px;--space-8:40px;
   --font:'Inter Variable',Inter,system-ui,-apple-system,'Segoe UI',sans-serif;--mono:ui-monospace,'Cascadia Mono',Consolas,'Courier New',monospace;
@@ -48,7 +36,7 @@
 [data-theme=light] :is(.tag-empty,.bubble,.fd-tile,.vnav-item.active,.vnav-item[aria-pressed=true],.shadow-area-nav button:hover,.shadow-area-nav button.selected,.shadow-area-nav button[aria-pressed=true],.user:hover,.user[aria-current],.org-tree-item:hover,.org-tree-item:focus-visible,.platform-row:hover,tbody tr:hover td,.catalog-row.is-selected){--text-3:var(--text-2)}
 /* A soft fade between the console and its sign-in pages, which share this frame
    (effective when they share the origin, as behind the installer's proxy). */
-@view-transition{navigation:auto}
+@media(prefers-reduced-motion:no-preference){@view-transition{navigation:auto}}
 *{box-sizing:border-box}
 html{overflow-x:hidden}
 body{margin:0;min-width:320px;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
@@ -61,7 +49,7 @@ h1,h2,h3,p{margin-top:0}h1,h2,h3{font-weight:600;letter-spacing:-.2px}
 h2{font-size:16px;line-height:20px;margin-bottom:0}h3{font-size:14px;line-height:20px}
 p{line-height:1.55}
 svg{flex-shrink:0}
-code,.mono{font-family:var(--mono);font-size:12px;overflow-wrap:anywhere}
+code,.mono{font-family:var(--mono);font-size:13px;overflow-wrap:anywhere}
 .muted{color:var(--text-2);font-size:12px}.faint{color:var(--text-3)}.nowrap{white-space:nowrap}
 /* Cells default to overflow-wrap:anywhere, which shreds a long word mid-letter.
    `.nowrap` suits a single value; this suits a list that should still wrap
@@ -96,8 +84,8 @@ input[type=checkbox]{width:16px;height:16px;accent-color:var(--primary);margin:0
 .button.secondary:hover:not(:disabled){border-color:var(--accent);color:var(--accent-text)}
 .button.ghost{background:transparent;border-color:transparent;color:var(--text-2)}
 .button.ghost:hover:not(:disabled){background:var(--surface-2);color:var(--text)}
-.button.danger{background:var(--surface);color:var(--danger);border-color:var(--border-strong)}
-.button.danger:hover:not(:disabled){background:var(--danger-bg)}
+.button.danger{background:var(--surface);color:var(--text);border-color:var(--border-strong)}
+.button.danger:hover:not(:disabled){background:var(--surface-2);border-color:var(--border-strong)}
 .button.small{height:32px;min-height:32px;padding:0 10px;font-size:12px}
 .button svg{width:16px;height:16px}
 .icon-button{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;color:var(--text-2);border-radius:var(--radius-s);font-size:12px;font-weight:600;padding:0}
@@ -116,14 +104,13 @@ button.text-link{background:none;border:0;padding:0;text-align:left}
    than sliding the whole sidebar. */
 .sidebar{background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:16px 12px;gap:16px;position:sticky;top:0;height:100vh;overflow:hidden;z-index:30}
 .brand{display:flex;align-items:center;gap:10px;padding:4px 8px;min-width:0}
-.brand img{width:28px;height:28px;border-radius:var(--radius-s);flex-shrink:0}
+.brand img{width:95px;height:28px;border-radius:var(--radius-s);flex-shrink:0}
 .brand-name{font-size:15px;font-weight:600;letter-spacing:-.2px;flex:1;min-width:0}
 .edition{font-size:11px;font-weight:500;color:var(--text-2);border:1px solid var(--border);border-radius:var(--radius-s);padding:2px 6px;line-height:16px;white-space:nowrap}
 .org{display:flex;flex-direction:column;gap:6px;padding:0 8px}
-/* Label tier (eyebrow): 700 11/14, 1.4 px, uppercase, in accent-text, preceded
-   by a 22 x 2 px metal rule. The only place where the accent is systematic. */
-.org-label,.nav-label{font:700 11px/14px var(--font);letter-spacing:1.4px;text-transform:uppercase;color:var(--accent-text);display:flex;align-items:center;gap:8px}
-.org-label::before,.nav-label::before{content:'';width:22px;height:2px;flex:none;border-radius:1px;background:var(--metal)}
+/* Compact section labels use spaced uppercase monospace. */
+.org-label,.nav-label{font:600 11px/14px var(--mono);letter-spacing:1.4px;text-transform:uppercase;color:var(--accent-text);display:flex;align-items:center;gap:8px}
+.org-label::before,.nav-label::before{display:none;content:'';width:22px;height:2px;flex:none;border-radius:var(--radius-s);background:var(--metal)}
 .org-button{display:flex;align-items:center;gap:8px;width:100%;height:36px;padding:0 10px;font-size:13px;font-weight:500;text-align:left;color:var(--text);background:var(--surface-2);border:1px solid transparent;border-radius:var(--radius-s);min-width:0}
 .org-button:hover:not(:disabled),.org-button[aria-expanded=true]{border-color:var(--border-strong)}
 .org-button svg{width:16px;height:16px;flex-shrink:0;color:var(--text-2)}
@@ -148,8 +135,8 @@ button.text-link{background:none;border:0;padding:0;text-align:left}
 .nav-item svg{width:16px;height:16px}
 .nav-item:hover{background:var(--surface-2);color:var(--text)}
 .nav-item[aria-current=page]{background:var(--surface-2);color:var(--text)}
-/* The active entry carries a 2 px metal underline (charte v2.1, ch. 06). */
-.nav-item[aria-current=page]::before{content:'';position:absolute;left:10px;right:10px;bottom:0;height:2px;border-radius:1px;background:var(--metal)}
+/* The active entry carries a small decorative rule. */
+.nav-item[aria-current=page]::before{content:'';position:absolute;left:10px;right:10px;bottom:0;height:2px;border-radius:var(--radius-s);background:var(--accent)}
 .sidebar-footer{border-top:1px solid var(--border);padding-top:12px;display:flex;flex-direction:column;gap:10px}
 .user{display:flex;align-items:center;gap:10px;padding:0 8px;min-width:0;text-decoration:none;color:inherit;border-radius:var(--radius-s)}
 .user:hover,.user[aria-current]{background:var(--surface-2)}
@@ -172,7 +159,7 @@ button.text-link{background:none;border:0;padding:0;text-align:left}
    tree, clipped rather than removed, so links and buttons keep their names; the nav
    links also get a `title` tooltip. Below 900 px the drawer ignores this state. */
 @media(min-width:901px){
-  .shell{transition:grid-template-columns .2s}
+  .shell{transition:grid-template-columns var(--mv-dur-base) var(--mv-ease-in-out)}
   .shell.collapsed{--sidebar:64px}
   .collapsed .sidebar{padding:16px 10px}
   .collapsed .brand-row{justify-content:center}
@@ -232,9 +219,9 @@ button.text-link{background:none;border:0;padding:0;text-align:left}
 .badge,.status,.count-badge,.role-badge{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:var(--radius-s);font-size:12px;font-weight:500;line-height:1;white-space:nowrap;border:1px solid transparent;background:var(--surface-2);color:var(--text-2);border-color:var(--border)}
 .badge-dot::before,.status>span{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor}
 .status>span{border:0}
-.badge-success,.status-approved,.status-active,.status-applied{background:var(--success-bg);color:var(--success);border-color:transparent}
-.badge-warning,.status-pending,.status-needs_update{background:var(--warning-bg);color:var(--warning);border-color:transparent}
-.badge-danger,.status-blocked,.status-revoked,.status-block,.status-unavailable{background:var(--danger-bg);color:var(--danger);border-color:transparent}
+.badge-success,.status-approved{background:var(--success-bg);color:var(--success);border-color:transparent}
+.badge-warning,.status-masked{background:var(--warning-bg);color:var(--warning);border-color:transparent}
+.badge-danger,.status-blocked,.status-revoked,.status-block{background:var(--danger-bg);color:var(--danger);border-color:transparent}
 .badge-neutral,.status-observed,.status-observe{background:var(--surface-2);color:var(--text-2);border-color:var(--border)}
 .count-badge,.role-badge{gap:0}
 .role-badge{text-transform:lowercase}
@@ -244,7 +231,7 @@ button.text-link{background:none;border:0;padding:0;text-align:left}
 .tags:is(fieldset){border:0;padding:0;margin:0;min-width:0}
 .tag{display:inline-flex;align-items:center;height:24px;padding:0 10px;border-radius:var(--radius-s);font-size:12px;font-weight:500;line-height:1;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;background:var(--surface-2);color:var(--text-2);border:1px solid var(--border)}
 button.tag:hover:not(:disabled),a.tag:hover{border-color:var(--border-strong);color:var(--text)}
-.tag-on{background:var(--accent-bg);color:var(--accent-text);border-color:var(--accent-border)}
+.tag-on{background:var(--accent-bg);color:var(--text);border-color:var(--accent-border)}
 .tag-empty{color:var(--text-3);border-style:dashed}
 .tag-link{font-size:12px;color:var(--accent-text)}
 .tag-link:hover{text-decoration:underline}
@@ -260,7 +247,7 @@ button.tag:hover:not(:disabled),a.tag:hover{border-color:var(--border-strong);co
    the height of their content. */
 .table-scroll{overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;min-width:0;position:relative}
 table{border-collapse:collapse;width:100%;text-align:left;font-size:13px}
-th{text-align:left;font:700 11px/14px var(--font);letter-spacing:1.4px;text-transform:uppercase;color:var(--text-2);background:var(--surface-2);padding:0 16px;height:40px;border-bottom:1px solid var(--border);white-space:nowrap}
+th{text-align:left;font:600 11px/14px var(--mono);letter-spacing:1.4px;text-transform:uppercase;color:var(--text-2);background:var(--surface-2);padding:0 16px;height:40px;border-bottom:1px solid var(--border);white-space:nowrap}
 td{padding:10px 16px;min-height:44px;border-bottom:1px solid var(--border);vertical-align:middle;line-height:1.45;overflow-wrap:anywhere}
 th:first-child,td:first-child{padding-left:20px}th:last-child,td:last-child{padding-right:20px}
 tr:last-child td{border-bottom:0}
@@ -310,8 +297,8 @@ output.notice{margin-top:1em}
 .notice strong{font-weight:600}
 .notice>svg{width:16px;height:16px;flex-shrink:0}
 .notice .spacer{flex:1}
-.notice.error,.notice-danger{border-color:var(--danger);background:var(--danger-bg)}.notice.error>svg,.notice-danger>svg{color:var(--danger)}
-.notice.success,.notice-success{border-color:var(--success);background:var(--success-bg)}.notice.success>svg,.notice-success>svg{color:var(--success)}
+.notice.error,.notice-danger{border-color:var(--border-strong);background:var(--surface-2)}.notice.error>svg,.notice-danger>svg{color:var(--text)}
+.notice.success,.notice-success{border-color:var(--border-strong);background:var(--surface-2)}.notice.success>svg,.notice-success>svg{color:var(--text)}
 .notice.warning,.notice-warning{border-color:var(--warning);background:var(--warning-bg)}.notice.warning>svg,.notice-warning>svg{color:var(--warning)}
 .notice>div{flex:1;min-width:0}
 .empty{padding:32px 16px;text-align:center;min-height:200px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px}
@@ -320,22 +307,26 @@ output.notice{margin-top:1em}
 .empty p{color:var(--text-2);font-size:12px;max-width:360px;margin:0}
 .empty .button{margin-top:8px}
 .loading{display:flex;align-items:center;justify-content:center;gap:12px;min-height:200px;font-size:13px;color:var(--text-2)}
-.spinner{width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--text);border-radius:50%;animation:spin .75s linear infinite}
+.spinner{width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--text);border-radius:50%;animation:spin var(--mv-dur-slow) linear infinite}
 .setup-progress{display:flex;align-items:center;gap:12px;color:var(--text-2)}
 @keyframes spin{to{transform:rotate(360deg)}}
 
 /* ---------- Dialogs / drawers ---------- */
-.dialog{background:var(--surface);color:var(--text);padding:0;width:min(560px,calc(100% - 32px));max-height:calc(100% - 40px);border:1px solid var(--border);border-radius:var(--radius-m);box-shadow:var(--shadow)}
+.dialog{--dialog-padding:20px;--dialog-gap:16px;background:var(--surface);color:var(--text);padding:0;width:min(560px,calc(100% - 32px));max-height:calc(100% - 40px);border:1px solid var(--border);border-radius:var(--radius-m);box-shadow:var(--shadow)}
 .dialog::backdrop{background:rgba(0,0,0,.45)}
 .dialog-heading{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border)}
 .dialog-heading h2{font-size:16px;letter-spacing:-.2px;margin:0}
-.dialog-body{padding:20px;display:flex;flex-direction:column;gap:16px}
+.dialog-body{padding:var(--dialog-padding);display:flex;flex-direction:column;gap:var(--dialog-gap);min-width:0}
 .dialog p{font-size:13px;color:var(--text-2)}
-.dialog-actions{display:flex;justify-content:flex-end;gap:8px;padding:12px 20px;border-top:1px solid var(--border);margin:20px -20px -20px}
-.dialog form,.dialog>div:not(.dialog-heading){padding:20px}
+.dialog-actions{display:flex;justify-content:flex-end;gap:8px;padding:12px var(--dialog-padding);border-top:1px solid var(--border);margin:var(--dialog-gap) calc(-1 * var(--dialog-padding)) calc(-1 * var(--dialog-padding))}
+.dialog>:where(form,div:not(.dialog-heading)){padding:var(--dialog-padding)}
 .dialog form>.notice{margin-top:16px}
 .dialog>.dialog-actions{margin:0}
-.dialog-body>p{margin:0;font-size:13px}
+.dialog-body>p{margin:0;font-size:13px;overflow-wrap:anywhere}
+.dialog-body>ul{margin-block:0}
+.dialog-body>ul li{overflow-wrap:anywhere}
+.dialog-body>form{padding:0}
+.dialog-body>.dialog-actions,.dialog .form-grid>.dialog-actions{margin-top:0}
 .dialog .fine-print{font-size:12px}
 .dialog.drawer{position:fixed;inset:0 0 0 auto;margin:0;height:100%;max-height:100%;width:min(480px,100%);border-radius:0;border:0;border-left:1px solid var(--border)}
 .dialog.drawer .dialog-heading{position:sticky;top:0;background:var(--surface)}
@@ -344,7 +335,7 @@ output.notice{margin-top:1em}
    empty space on a very large screen, and it takes the whole viewport below the
    sidebar breakpoint, where four fifths would leave a useless margin. */
 .dialog.wide{position:fixed;inset:0;margin:auto;width:min(80vw,1200px);max-width:min(80vw,1200px);height:80vh;max-height:80vh;border-radius:var(--radius-l);border:1px solid var(--border);box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden}
-.dialog.wide::backdrop{background:rgba(0,0,0,.55);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.dialog.wide::backdrop{background:rgba(0,0,0,.55)}
 .dialog.wide .dialog-heading{flex:0 0 auto}
 .dialog.wide>div:not(.dialog-heading){flex:1 1 auto;min-height:0;display:flex;flex-direction:column;padding:0}
 @media (max-width:900px){
@@ -386,7 +377,7 @@ output.notice{margin-top:1em}
 .overview-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:16px}
 .legend{display:flex;gap:14px;font-size:12px;color:var(--text-2);align-items:center;white-space:nowrap}
 .legend>span{display:inline-flex;align-items:center;gap:6px}
-.legend i{width:10px;height:10px;background:var(--text-3);border-radius:2px;display:inline-block}
+.legend i{width:10px;height:10px;background:var(--text-3);border-radius:var(--radius-s);display:inline-block}
 .legend .legend-blocked i{background:var(--danger)}
 .chart-svg{display:block;width:100%;height:auto;overflow:visible}
 .chart-svg .grid{stroke:var(--border)}
@@ -401,7 +392,7 @@ output.notice{margin-top:1em}
 .provider:last-child{border-bottom:0}
 .provider-name{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:500}
 .provider-name strong{font-weight:500;overflow-wrap:anywhere}
-.provider-track{height:4px;background:var(--surface-2);border:1px solid var(--border);border-radius:2px;overflow:hidden;display:flex}
+.provider-track{height:4px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-s);overflow:hidden;display:flex}
 .provider-track span{display:block;height:100%;background:var(--text-3)}
 .provider-track .blocked{background:var(--danger)}
 .provider-count{text-align:right;font-variant-numeric:tabular-nums;font-size:13px;font-weight:600;min-width:64px}
@@ -459,8 +450,8 @@ output.notice{margin-top:1em}
 @media(max-width:360px){.entry-header .brand-name{display:none}}
 .entry-main{display:flex;flex-direction:column;justify-content:center;gap:28px;padding:40px 64px 40px 0;max-width:900px}
 /* Eyebrow in the label tier, with the 22 x 2 px metal rule that signs v2.1. */
-.entry-main .eyebrow{display:flex;align-items:center;gap:10px;font:700 11px/14px var(--font);letter-spacing:1.4px;text-transform:uppercase;color:var(--accent-text);margin:0}
-.entry-main .eyebrow::before{content:'';width:22px;height:2px;flex:none;border-radius:1px;background:var(--metal)}
+.entry-main .eyebrow{display:flex;align-items:center;gap:10px;font:600 11px/14px var(--mono);letter-spacing:1.4px;text-transform:uppercase;color:var(--accent-text);margin:0}
+.entry-main .eyebrow::before{content:'';width:22px;height:2px;flex:none;border-radius:var(--radius-s);background:var(--metal)}
 .entry-main h1{font-size:clamp(44px,5.3vw,76px);font-weight:600;letter-spacing:-.04em;line-height:1.04;margin:0}
 .entry-main h1>span{color:var(--text-3)}
 /* First-run setup wizard: a form, not the hero of the entry page. */
@@ -497,9 +488,9 @@ output.notice{margin-top:1em}
   .vnav-item{flex-shrink:0}
   .mobile-bar{display:flex;align-items:center;gap:12px;height:52px;padding:0 16px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:25}
   .mobile-bar .brand{padding:0;flex:1}
-  .mobile-bar .brand img{width:24px;height:24px}
-  .sidebar{position:fixed;top:0;left:0;bottom:0;width:min(300px,86vw);transform:translateX(-100%);visibility:hidden;transition:transform .2s,visibility 0s linear .2s;box-shadow:none;z-index:40}
-  .sidebar.open{transform:none;visibility:visible;transition:transform .2s,visibility 0s linear 0s;box-shadow:var(--shadow)}
+  .mobile-bar .brand img{width:82px;height:24px}
+  .sidebar{position:fixed;top:0;left:0;bottom:0;width:min(300px,86vw);transform:translateX(-100%);visibility:hidden;transition:transform var(--mv-dur-base) var(--mv-ease-out),visibility 0s linear var(--mv-dur-base);box-shadow:none;z-index:40}
+  .sidebar.open{transform:none;visibility:visible;transition:transform var(--mv-dur-base) var(--mv-ease-out),visibility 0s linear 0s;box-shadow:var(--shadow)}
   .overlay.open{display:block;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:35}
   .sidebar .brand-close{display:inline-flex}
   .main{padding:0 16px 16px;gap:12px}
@@ -526,7 +517,7 @@ output.notice{margin-top:1em}
   .settings-actions .button{width:100%}
   .entry-main h1{letter-spacing:-.03em}
 }
-@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.001ms!important;transition-duration:.001ms!important;scroll-behavior:auto!important}}
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.001ms!important;animation-iteration-count:1!important;animation-delay:0s!important;transition-duration:.001ms!important;transition-delay:0s!important;scroll-behavior:auto!important}}
 
 .observability-form{display:grid;gap:16px}.observability-form fieldset{display:grid;gap:16px;min-width:0}.observability-streams{display:flex;flex-wrap:wrap;gap:16px}
 .observability-form>.settings-actions{margin:0;padding:12px 0 0}
@@ -562,8 +553,8 @@ output.notice{margin-top:1em}
 .catalog-footer .fine-print{margin:0;flex:1;min-width:220px}
 .catalog-editor>fieldset{margin:0;border:0;padding:0 0 20px;border-bottom:1px solid var(--border);min-width:0}
 .catalog-editor fieldset fieldset{min-width:0;padding:16px;border:1px solid var(--border);border-radius:var(--radius-m)}
-.catalog-editor .dialog-actions{position:sticky;bottom:-20px;background:var(--surface);z-index:1}
-.catalog-panel .icon-button.danger{color:var(--danger)}
+.catalog-editor .dialog-actions{position:sticky;bottom:0;background:var(--surface);z-index:1}
+.catalog-panel .icon-button.danger{color:var(--text-2)}
 .catalog-panel .icon-button:disabled{opacity:.4;cursor:not-allowed}
 @media(max-width:700px){
   .catalog-panel>.section-heading{flex-direction:column}
@@ -607,3 +598,16 @@ output.notice{margin-top:1em}
   .kpi,.chart-svg,.provider,tr{break-inside:avoid}
   thead{display:table-header-group}
 }
+
+/* A horizontal logo is clipped to its symbol in the optional icon rail. */
+@media(min-width:901px){.collapsed .brand{width:28px;overflow:hidden}.collapsed .brand img{max-width:none}}
+.entry-header .brand img{width:109px;height:32px}
+:is(button,a,input,select,textarea){transition:background-color var(--mv-dur-fast) var(--mv-ease-out),border-color var(--mv-dur-fast) var(--mv-ease-out),color var(--mv-dur-fast) var(--mv-ease-out)}
+:is(.shadow-nav-caption,.dlp-eyebrow,.fd-head,.fd-facet legend,.report-meta dt){font-family:var(--mono)}
+:is(.discovery-identifier,.catalog-identifier){font-family:var(--mono);font-size:13px}
+
+/* Technical values use the same readable data scale as their table row. */
+:is(td code,td .mono,td .cell-detail){font-size:13px}
+.platform-group>h3{font-family:var(--mono)}
+
+@media(prefers-reduced-motion:no-preference){::view-transition-old(root),::view-transition-new(root){animation-duration:var(--mv-dur-base);animation-timing-function:var(--mv-ease-out)}}

@@ -430,46 +430,48 @@ function CreateApiKeyDialog({
   if (created)
     return (
       <Dialog title={t("yourNewApiKey")} close={close}>
-        <p>
-          {t("copyThisKeyNowItWill")}
-        </p>
-        <div className="field">
-          <span className="label">{t("secretKey")}</span>
-          <div
-            style={{
-              padding: "10px 12px",
-              background: "var(--surface-2)",
-              border: "1px solid var(--border)",
-              borderRadius: "var(--radius-s)",
-            }}
-          >
-            <code className="mono">{created.secret}</code>
+        <div className="dialog-body">
+          <p>
+            {t("copyThisKeyNowItWill")}
+          </p>
+          <div className="field">
+            <span className="label">{t("secretKey")}</span>
+            <div
+              style={{
+                padding: "10px 12px",
+                background: "var(--surface-2)",
+                border: "1px solid var(--border)",
+                borderRadius: "var(--radius-s)",
+              }}
+            >
+              <code className="mono">{created.secret}</code>
+            </div>
           </div>
-        </div>
-        <div className="actions">
-          <button
-            className="button secondary"
-            onClick={async () => setCopied((await copyToClipboard(created.secret)) ? "done" : "failed")}
+          <div className="actions">
+            <button
+              className="button secondary"
+              onClick={async () => setCopied((await copyToClipboard(created.secret)) ? "done" : "failed")}
+            >
+              <Icon name={copied === "done" ? "check" : "copy"} />
+              {copied === "done" ? t("copied") : t("copyKey")}
+            </button>
+          </div>
+          {copied === "failed" && (
+            <Notice tone="warning">
+              {t("automaticCopyFailedSelectTheText")}
+            </Notice>
+          )}
+          <Notice
+            tone="warning"
+            title={t("youWillNotBeAbleTo")}
           >
-            <Icon name={copied === "done" ? "check" : "copy"} />
-            {copied === "done" ? t("copied") : t("copyKey")}
-          </button>
-        </div>
-        {copied === "failed" && (
-          <Notice tone="warning">
-            {t("automaticCopyFailedSelectTheText")}
+            {t("ifYouLoseItRevokeThis")}
           </Notice>
-        )}
-        <Notice
-          tone="warning"
-          title={t("youWillNotBeAbleTo")}
-        >
-          {t("ifYouLoseItRevokeThis")}
-        </Notice>
-        <div className="dialog-actions">
-          <button className="button primary" onClick={close}>
-            {t("done")}
-          </button>
+          <div className="dialog-actions">
+            <button className="button primary" onClick={close}>
+              {t("done")}
+            </button>
+          </div>
         </div>
       </Dialog>
     );

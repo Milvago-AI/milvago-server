@@ -207,6 +207,47 @@ export class ApiError extends Error {
     this.code = code;
   }
 }
+
+const dataReadTimeoutMs = 18_000;
+const jsonReadLimit = 16 * 1024 * 1024;
+const errorReadLimit = 64 * 1024;
+const readOnlyPosts = new Set(['/api/dlp/compile', '/api/dlp/evaluate', '/api/discovery/catalog/compile', '/api/discovery/catalog/evaluate', '/api/ai-governance/validate', '/api/ai-governance/systems/validate']);
+
+// Count streamed bytes, including when a proxy omits or understates Content-Length.
+async function boundedResponseText(response: Response, limit: number, signal?: AbortSignal): Promise<string> {
+  const abortError = () => signal?.reason ?? new DOMException('The request was aborted.', 'AbortError');
+  if (signal?.aborted) throw abortError();
+  if (!response.body) {
+    const body = await response.text();
+    if (new TextEncoder().encode(body).length > limit) throw new ApiError(413, 'response_too_large', 'Too much data was returned. Narrow the selected scope.');
+    return body;
+  }
+  const reader = response.body.getReader();
+  const cancel = () => { void reader.cancel(signal?.reason).catch(() => {}); };
+  signal?.addEventListener('abort', cancel, { once: true });
+  const decoder = new TextDecoder();
+  const parts: string[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      if (signal?.aborted) throw abortError();
+      const chunk = await reader.read();
+      if (signal?.aborted) throw abortError();
+      if (chunk.done) break;
+      size += chunk.value.byteLength;
+      if (size > limit) throw new ApiError(413, 'response_too_large', 'Too much data was returned. Narrow the selected scope.');
+      parts.push(decoder.decode(chunk.value, { stream: true }));
+    }
+    parts.push(decoder.decode());
+    return parts.join('');
+  } catch (error) {
+    void reader.cancel(error).catch(() => {});
+    throw error;
+  } finally {
+    signal?.removeEventListener('abort', cancel);
+    reader.releaseLock();
+  }
+}
 /**
  * The shared fetch beneath `request()`: same credentials/cache policy, same
  * `ok` check, same error-JSON parsing and the same 401 → `milvago:unauthorized`
@@ -249,11 +290,20 @@ export async function requestRaw(
   if (!response.ok) {
     // A body that parses but is not an object (`null`, a string, a number from a
     // proxy) must still yield an ApiError, not a TypeError on `error.error`.
-    const parsed: unknown = await response.json().catch(() => null);
-    const error: { error?: unknown; message?: unknown } =
-      parsed !== null && typeof parsed === "object" ? parsed : {};
     if (response.status === 401)
       window.dispatchEvent(new CustomEvent("milvago:unauthorized"));
+    let body = '';
+    try { body = await boundedResponseText(response, errorReadLimit, options.signal); }
+    catch (error) {
+      if (options.signal?.aborted) throw error;
+      // Authentication is known from the headers even if a gateway's error
+      // body is unreadable. Preserve the status, as with malformed error JSON.
+      if (error instanceof ApiError && response.status !== 401) throw error;
+    }
+    let parsed: unknown = null;
+    try { parsed = JSON.parse(body); } catch { /* A gateway may return HTML. */ }
+    const error: { error?: unknown; message?: unknown } =
+      parsed !== null && typeof parsed === "object" ? parsed : {};
     throw new ApiError(
       response.status,
       typeof error.error === "string" ? error.error : options.fallbackCode ?? "request_failed",
@@ -271,8 +321,27 @@ export async function request<T>(
     signal?: AbortSignal;
   } = {},
 ): Promise<T> {
-  const response = await requestRaw(path, options);
-  if (response.status === 204) return undefined as T;
-  const body = await response.text();
-  return body ? (JSON.parse(body) as T) : (undefined as T);
+  const method = (options.method ?? 'GET').toUpperCase();
+  const isRead = ['GET', 'HEAD'].includes(method) || (method === 'POST' && readOnlyPosts.has(path.split('?')[0]));
+  const controller = isRead ? new AbortController() : undefined;
+  let expired = false;
+  const externalAbort = () => controller?.abort(options.signal?.reason);
+  if (options.signal?.aborted) externalAbort();
+  else options.signal?.addEventListener('abort', externalAbort, { once: true });
+  const timer = controller ? window.setTimeout(() => {
+    if (!controller.signal.aborted) { expired = true; controller.abort(); }
+  }, dataReadTimeoutMs) : undefined;
+  try {
+    const signal = controller?.signal ?? options.signal;
+    const response = await requestRaw(path, { ...options, signal });
+    if (response.status === 204) return undefined as T;
+    const body = isRead ? await boundedResponseText(response, jsonReadLimit, signal) : await response.text();
+    return body ? (JSON.parse(body) as T) : (undefined as T);
+  } catch (error) {
+    if (expired) throw new ApiError(504, 'read_timeout', 'The data load took too long. Retry or narrow the selected scope.');
+    throw error;
+  } finally {
+    if (timer !== undefined) window.clearTimeout(timer);
+    options.signal?.removeEventListener('abort', externalAbort);
+  }
 }

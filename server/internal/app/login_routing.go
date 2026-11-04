@@ -163,7 +163,7 @@ func providerDomain(alias string, current map[string]any) string {
 // the domain link to this one later without proof.
 func (a *App) endPendingInvitation(ctx context.Context, tx pgx.Tx, realm, user, subject string) error {
 	var until *time.Time
-	if e := tx.QueryRow(ctx, `SELECT pending_invitation_until FROM users WHERE id=$1`, user).Scan(&until); e != nil {
+	if e := tx.QueryRow(ctx, `SELECT pending_invitation_until FROM users WHERE id=$1 FOR UPDATE`, user).Scan(&until); e != nil {
 		return e
 	}
 	if until == nil {
@@ -206,10 +206,7 @@ func (a *App) expirePendingInvitations(ctx context.Context) {
 	}
 	rows.Close()
 	for _, p := range due {
-		if a.clearInvitationRole(ctx, p.realm, p.subject) != nil {
-			continue
-		}
-		if _, e := a.db.Exec(ctx, `UPDATE users SET pending_invitation_until=NULL WHERE id=$1`, p.id); e != nil {
+		if e := a.expirePendingInvitation(ctx, p.id, p.realm, p.subject); e != nil {
 			a.log.Warn("pending invitation not closed", "error", e)
 		}
 	}

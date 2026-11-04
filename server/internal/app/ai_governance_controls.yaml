@@ -1,0 +1,34 @@
+version: 1
+id: milvago-nist-ai-rmf-1.0
+framework: NIST AI RMF 1.0
+source: https://airc.nist.gov/airmf-resources/airmf/5-sec-core/
+notice: Product mapping; neither certification nor a complete organizational risk assessment.
+controls:
+  - id: GOVERN-1.6
+    capability: inventory
+    coverage: partial
+    evidence: Observed software, services, environments and visibility limits. Business systems and unobserved environments require declaration.
+  - id: GOVERN-1.4
+    capability: scoped_authorizations
+    coverage: partial
+    evidence: Published presence and execution rules, accountable owner, purpose and device exceptions. Organizational governance remains manual.
+  - id: GOVERN-1.5
+    capability: periodic_review
+    coverage: partial
+    evidence: Review dates and decision history; responsible people must perform and document the review.
+  - id: GOVERN-2.1
+    capability: responsibilities
+    coverage: partial
+    evidence: Named rule owner and approval permissions; organizational responsibilities require manual review.
+  - id: MAP
+    capability: business_context
+    coverage: manual
+    evidence: Purpose can be declared. Data sensitivity, affected people, intended use and impact require a human assessment.
+  - id: MEASURE
+    capability: model_risk_assessment
+    coverage: not_covered
+    evidence: Discovery does not evaluate model fairness, safety, accuracy or all privacy risks.
+  - id: MANAGE
+    capability: treatment
+    coverage: partial
+    evidence: Deviations and expiring exceptions support treatment. Detection-only authorizations do not block execution.

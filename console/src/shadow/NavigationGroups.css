@@ -1,0 +1,3 @@
+.shadow-nav-caption{margin:16px 10px 8px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text-2)}
+.shadow-admin .vnav-item{width:100%}
+@media(max-width:900px){.shadow-admin .vnav>div{flex:none}.shadow-nav-caption{font-size:9px}}

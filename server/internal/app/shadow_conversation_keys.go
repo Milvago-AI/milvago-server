@@ -4,9 +4,13 @@ package app
 // when the opening exchange falls outside the selected period. RLS bounds every
 // input to the current organization. Scope is a server-owned SQL expression.
 func conversationKeys(scope string) string {
+	return conversationKeysFrom(scope, "shadow_events", "conversation_keys")
+}
+
+func conversationKeysFrom(scope, source, name string) string {
 	return `WITH conversation_events AS (
   SELECT id,device_id,provider,source,tool,occurred_at,kind,conversation_id,correlation_id
-  FROM shadow_events WHERE ` + scope + `),
+  FROM ` + source + ` WHERE ` + scope + `),
  correlation_links AS (
   SELECT device_id,provider,source,tool,correlation_id,min(conversation_id) AS conversation_id
   FROM conversation_events WHERE conversation_id<>'' AND correlation_id<>''
@@ -27,7 +31,7 @@ func conversationKeys(scope string) string {
   SELECT *,lead(initial_key) OVER chronology AS next_key
   FROM chatgpt_threads
   WINDOW chronology AS (PARTITION BY device_id,provider,source,tool ORDER BY started_at,initial_key)),
- conversation_keys AS (
+ ` + name + ` AS (
   SELECT e.id,e.device_id,
    CASE WHEN o.initial_key NOT LIKE 'conv:%' AND o.next_key LIKE 'conv:%'
    THEN o.next_key ELSE e.initial_key END AS group_key

@@ -43,6 +43,7 @@ var permissionCatalog = append([]string{
 	permMembersRead, permMembersManage, permRolesManage, permSettingsManage,
 	permPolicyManage, permInstallersManage, permContentRead, permContentPurge, permAuditRead,
 	permOrganizationsManage, permDirectoryManage, permReportsAggregate, permIdentityReveal, permIdentityErase,
+	permDiscoveryRead, permDiscoveryManage, permDiscoveryCatalogManage, permDiscoveryRun, permAIGovernanceApprove,
 }, observabilityPermissions...)
 
 // builtinRolePermissions defines the seeded, non-deletable roles.
@@ -78,8 +79,9 @@ var builtinRolePermissions = map[string][]string{
 		permOverviewRead, permEventsRead, permDevicesRead, permDevicesManage,
 		permMembersRead, permMembersManage, permSettingsManage, permPolicyManage,
 		permInstallersManage, permContentRead, permReportsAggregate,
+		permDiscoveryRead, permDiscoveryManage, permDiscoveryCatalogManage, permDiscoveryRun,
 	},
-	"viewer":   {permOverviewRead, permEventsRead, permDevicesRead, permReportsAggregate},
+	"viewer":   {permOverviewRead, permEventsRead, permDevicesRead, permReportsAggregate, permDiscoveryRead},
 	"reporter": {permOverviewRead, permReportsAggregate},
 }
 

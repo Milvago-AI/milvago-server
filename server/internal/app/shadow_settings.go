@@ -130,7 +130,11 @@ var shadowSections = []string{"enrollment", "collection", "services", "protectio
 // one; ingestion reads an unknown label as sensitivity "unknown" rather than refusing
 // it (shadow_endpoint.go, the classification block).
 var privacyTypes = []string{"email", "phone", "iban", "card", "social_id", "ssn_us", "ip"}
-var classificationTypes = []string{"email", "phone", "iban", "card", "social_id", "ssn_us", "ip", "source_code", "medical", "keyword"}
+
+// classificationChoices are what an administrator may select. "keyword" stays an event label
+// but is no choice: the engine always keeps it, so selecting it changed nothing.
+var classificationChoices = []string{"email", "phone", "iban", "card", "social_id", "ssn_us", "ip", "source_code", "medical"}
+var classificationTypes = append(slices.Clone(classificationChoices), "keyword")
 
 // defaultMedicalTerms are the built-in triggers for the "medical" label; administrators
 // can replace them under Shadow AI → Usage Sensitivity → Medical Terms.
@@ -142,7 +146,7 @@ func defaultMedicalTerms() []string {
 // catalogue, read from the same document the instance publishes: one source, so the
 // Services page cannot name a site the catalogue does not, nor state its domains in
 // another order -- `validateCatalogPolicy` compares those domains exactly, and the
-// hand-written list this replaced had drifted on notebooklm and perplexity.
+// hand-written list this replaced had drifted from it.
 var catalog = builtinServices()
 
 func builtinServices() []ServiceConfig {
@@ -288,8 +292,8 @@ func validateServiceShadow(c ShadowConfig) error {
 		seen[s.ID] = true
 		if s.Mode == "redirect" {
 			u, e := url.Parse(s.RedirectURL)
-			if e != nil || u.Host == "" || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-				return bad("Redirects require an HTTPS URL without credentials, query or fragment.")
+			if e != nil || u.Host == "" || u.Scheme != "https" || u.User != nil || u.Port() != "" || strings.HasSuffix(u.Host, ":") || u.RawQuery != "" || u.Fragment != "" {
+				return bad("Redirects require an HTTPS URL without credentials, port, query or fragment.")
 			}
 		}
 	}
@@ -359,7 +363,7 @@ func validateCustomPrivacyRule(v PrivacyRule, seen map[string]bool) error {
 }
 
 func validateClassificationShadow(c ShadowConfig) error {
-	if !validateSet(c.Classification.Browser, classificationTypes) || !validateSet(c.Classification.Coding, classificationTypes) || (Edition == "community" && len(c.Classification.Coding) > 0) {
+	if !validateSet(c.Classification.Browser, classificationChoices) || !validateSet(c.Classification.Coding, classificationChoices) || (Edition == "community" && len(c.Classification.Coding) > 0) {
 		return bad("Invalid classification categories for this edition.")
 	}
 	if len(c.Classification.MedicalTerms) > 100 {
@@ -438,12 +442,19 @@ func overlayShadow(base ShadowConfig, sections map[string]json.RawMessage) (Shad
 	raw, _ = json.Marshal(m)
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.DisallowUnknownFields()
-	if d.Decode(&base) != nil {
+	// Decode into fresh storage: overlaying must not mutate the parent slices.
+	var next ShadowConfig
+	if d.Decode(&next) != nil {
 		return base, bad("Invalid configuration fields.")
 	}
+	base = next
 	if base.Classification.MedicalTerms == nil {
 		base.Classification.MedicalTerms = defaultMedicalTerms()
 	}
+	// A policy saved while "keyword" was a classification choice still loads.
+	isKeyword := func(s string) bool { return s == "keyword" }
+	base.Classification.Browser = slices.DeleteFunc(base.Classification.Browser, isKeyword)
+	base.Classification.Coding = slices.DeleteFunc(base.Classification.Coding, isKeyword)
 	normalizeShadowModelAccess(&base)
 	return base, nil
 }
@@ -746,6 +757,9 @@ func (a *App) putShadowSettings(w http.ResponseWriter, r *http.Request, tx pgx.T
 	if old.Revision != body.Revision {
 		return apiError{409, "revision_conflict", "Configuration changed; reload before saving."}
 	}
+	if e = guardLegacyDLPWrite(r.Context(), tx, s.OrganizationID, old.Config, body.Config); e != nil {
+		return e
+	}
 	raw, _ := json.Marshal(body.Config)
 	inherit, _ := json.Marshal(body.InheritSections)
 	if _, e = tx.Exec(r.Context(), `INSERT INTO shadow_settings(organization_id,configuration,inherit_sections) VALUES($1,$2,$3) ON CONFLICT(organization_id) DO UPDATE SET configuration=excluded.configuration,inherit_sections=excluded.inherit_sections,revision=nextval('shadow_revision'),updated_at=now()`, s.OrganizationID, raw, inherit); e != nil {
@@ -858,6 +872,9 @@ func (a *App) putScopedShadow(w http.ResponseWriter, r *http.Request, tx pgx.Tx,
 		return e
 	}
 	if e = validateShadow(next); e != nil {
+		return e
+	}
+	if e = guardLegacyDLPWrite(r.Context(), tx, scope.target, old.Config, next); e != nil {
 		return e
 	}
 	if next.Collection.StoreContent && !old.Config.Collection.StoreContent {

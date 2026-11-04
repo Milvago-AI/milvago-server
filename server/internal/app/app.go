@@ -49,14 +49,19 @@ type App struct {
 	publicOIDCMu sync.Mutex
 	// realmOIDC holds the browser OIDC runtime of each organization realm other than the
 	// root one, which stays in publicOIDC (Enterprise: one Keycloak realm per organization).
-	realmOIDC     sync.Map
-	metrics       *appMetrics
-	metricsOnce   sync.Once
-	exportMetrics exportMetricSnapshot
-	exportHTTP    exportHTTPClient
-	ingestRate    ingestLimiter
-	publicRate    ingestLimiter
-	publicTotals  ingestLimiter
+	realmOIDC             sync.Map
+	metrics               *appMetrics
+	metricsOnce           sync.Once
+	exportMetrics         exportMetricSnapshot
+	exportHTTP            exportHTTPClient
+	ingestRate            ingestLimiter
+	deviceRouting         deviceRoutingCache
+	discoveryReads        discoveryReadCache
+	discoveryCompiles     discoveryCompileCache
+	discoveryFingerprints discoveryFingerprintCache
+	discoverySummaries    discoverySummaryRegistry
+	publicRate            ingestLimiter
+	publicTotals          ingestLimiter
 	// root caches the root organization once setup has named it (Enterprise exports).
 	root atomic.Pointer[string]
 	// mcpClients caches, per OAuth client, whether its tokens may open /mcp
@@ -124,9 +129,11 @@ var deviceBudget = map[string]int{
 	"/v1/events":         60,
 	"/v2/events":         60,
 	// One completion follows one submission, so it shares the ingestion budget.
-	"/v2/events/complete": 60,
-	"/v2/heartbeat":       20,
-	"/v1/inventory":       20,
+	"/v2/events/complete":   60,
+	"/v2/heartbeat":         20,
+	"/v1/inventory":         20,
+	"/v1/discovery/policy":  20,
+	"/v1/discovery/reports": 300,
 	// A deployment key is readable by anyone who can read the installer it is
 	// embedded in (installed on Linux it is 0640 root:milvago-agent since
 	// 2026-09-24, no longer world-readable). Approval policy is the real bound, but under
@@ -187,9 +194,11 @@ type Session struct {
 	// known account source ('local', 'sso' or 'ldap') derived from Keycloak.
 	Subject, IdentityType string
 	// Realm is the stored Keycloak realm of the account ("" for the root one).
-	Realm       string
-	MFA         bool
-	Permissions []string
+	Realm string
+	MFA   bool
+	// LoginTrusted satisfies only sign-in policy; it is never second-factor evidence.
+	LoginTrusted bool
+	Permissions  []string
 	// APIKeyID is empty for a browser session and holds the key's identity when
 	// the request authenticated with a bearer API key. The zero value is the
 	// unprivileged reading: nothing has to be set for a session to stay safe.
@@ -315,6 +324,8 @@ func New(ctx context.Context, c Config, p *pgxpool.Pool, logger *slog.Logger) (*
 	}
 	a.registerMetrics()
 	a.mux.HandleFunc("GET /auth/login", a.login)
+	a.mux.HandleFunc("GET /auth/login/device-trust", a.loginDeviceTrust)
+	a.mux.HandleFunc("POST /auth/login/device-trust", a.loginDeviceTrust)
 	a.mux.HandleFunc("GET /auth/callback", a.callback)
 	// logout destroys a cookie session, and profile is the human's identity
 	// provider account: it needs s.Subject and calls Keycloak on every read, so a
@@ -357,6 +368,8 @@ func New(ctx context.Context, c Config, p *pgxpool.Pool, logger *slog.Logger) (*
 	a.registerAPIKeyRoutes()
 	a.registerEditionRoutes()
 	a.registerShadowRoutes()
+	a.registerDLPRoutes()
+	a.registerDiscoveryRoutes()
 	a.registerDeviceGroupRoutes()
 	a.registerInstallerRoutes()
 	a.registerDirectoryRoutes()
@@ -385,6 +398,8 @@ func New(ctx context.Context, c Config, p *pgxpool.Pool, logger *slog.Logger) (*
 func (a *App) Handler() http.Handler {
 	a.registerMetrics()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r, cancel := dataReadRequest(r)
+		defer cancel()
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Frame-Options", "DENY")
@@ -392,7 +407,7 @@ func (a *App) Handler() http.Handler {
 		// no device API: say so rather than leave both to browser defaults.
 		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		if a.browserSecure() {
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000")
 		}
@@ -514,7 +529,7 @@ func (a *App) permissionsFor(ctx context.Context, tx pgx.Tx, s *Session, org str
 	// MFA requirement, as switching into it does: a parent signed in without a second
 	// factor could otherwise delete, rename or re-key a child that requires one
 	// (audit of 2026-09-24). A pinned credential never gets here for another org.
-	if org != s.OrganizationID && !s.MFA {
+	if org != s.OrganizationID && !s.MFA && !s.LoginTrusted {
 		required, e := organizationRequiresMFA(ctx, tx, org)
 		if e != nil {
 			return nil, e
@@ -579,7 +594,11 @@ func (a *App) sessionOnly(pattern, permission string, h apiHandler) {
 
 func (a *App) register(pattern, permission string, h apiHandler, mode credentialMode) {
 	a.routes = append(a.routes, registeredRoute{pattern, permission, mode})
-	a.mux.HandleFunc(pattern, a.handler(permission, h, mode))
+	handler := a.handler(permission, h, mode)
+	if pattern == "GET /api/discovery/applications" {
+		handler = discoverySummaryAdmissionHandler(&a.discoverySummaries, handler)
+	}
+	a.mux.HandleFunc(pattern, handler)
 }
 
 // handler builds the authentication and authorization chain for one route. It is
@@ -641,7 +660,20 @@ func (a *App) cookieRouteTx(r *http.Request, opaque string) (pgx.Tx, *Session, e
 	if e = a.readBody(r, budget); e != nil {
 		return nil, nil, e
 	}
+	// The credential, durable request budget and body are resolved before the
+	// summary can wait. Queued readers must not hold a tenant connection.
+	if e = acquireDiscoverySummaryAdmission(r.Context(), s.OrganizationID); e != nil {
+		return nil, nil, e
+	}
 	tx, e := tenantTx(r.Context(), a.db, s.OrganizationID)
+	if e == nil && summaryAdmissionFor(r.Context()) != nil {
+		// Waiting can outlive the browser credential or its sign-in evidence.
+		// Recheck locally; repeating loadSession could refresh OIDC tokens again.
+		if e = revalidateDiscoverySummarySession(r.Context(), tx, s); e != nil {
+			tx.Rollback(r.Context())
+			return nil, nil, e
+		}
+	}
 	return tx, s, e
 }
 
@@ -666,7 +698,7 @@ func (a *App) authorizeConsoleRequest(r *http.Request, tx pgx.Tx, s *Session, pe
 		return r, e
 	}
 	// A bearer key cannot supply MFA evidence; its creation required a session.
-	if requireMFA && s.APIKeyID == "" && !s.MFA && r.URL.Path != logoutPath {
+	if requireMFA && s.APIKeyID == "" && !s.MFA && !s.LoginTrusted && r.URL.Path != logoutPath {
 		return r, apiError{403, "mfa_required", "Sign in with multi-factor authentication."}
 	}
 	return r, nil
@@ -680,13 +712,17 @@ func (a *App) handler(permission string, h apiHandler, mode credentialMode) http
 		r = r.WithContext(context.WithValue(context.WithValue(r.Context(), routePermissionKey{}, permission), bodyHoldKey{}, hold))
 		tx, s, e := a.routeCredential(w, r, mode)
 		if e != nil {
-			a.fail(w, e)
+			endDiscoverySummaryAdmission(r.Context())
+			a.fail(w, dataReadFailure(r, e))
 			return
 		}
 		defer tx.Rollback(r.Context())
 		r, e = a.authorizeConsoleRequest(r, tx, s, permission)
 		if e != nil {
-			a.fail(w, e)
+			// End authority locks before an error can block on client I/O.
+			tx.Rollback(r.Context())
+			endDiscoverySummaryAdmission(r.Context())
+			a.fail(w, dataReadFailure(r, e))
 			return
 		}
 
@@ -706,12 +742,16 @@ func (a *App) handler(permission string, h apiHandler, mode credentialMode) http
 		// Reads: GET and HEAD, and MCP, which serves read tools only and commits their
 		// audit inside the handler.
 		if r.Method == "GET" || r.Method == "HEAD" || r.URL.Path == mcpPath {
-			held.end = func() { tx.Rollback(r.Context()) }
+			held.end = func() {
+				tx.Rollback(r.Context())
+				endDiscoverySummaryAdmission(r.Context())
+			}
 		}
 		if e := h(held, r, tx, s); e != nil {
-			a.fail(held, e)
+			a.fail(held, dataReadFailure(r, e))
 		}
 		tx.Rollback(r.Context())
+		endDiscoverySummaryAdmission(r.Context())
 		held.finish()
 	}
 }

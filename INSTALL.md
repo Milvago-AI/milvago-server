@@ -45,12 +45,12 @@ With installer 1.0.3 and later, an existing Docker command is checked before ins
 ## Install a specific version
 
 The repository copy of `install-private.sh` is a non-executable template. Download the installer,
-its checksum file, and its immutable release description anonymously from the public `v1.0.6`
+its checksum file, and its immutable release description anonymously from the public `v1.1.0`
 release:
 
 ```bash
 mkdir milvago-install && cd milvago-install
-release_url=https://github.com/Milvago-AI/milvago-server/releases/download/v1.0.6
+release_url=https://github.com/Milvago-AI/milvago-server/releases/download/v1.1.0
 curl -fLO "$release_url/install-private.sh"
 curl -fLO "$release_url/SHA256SUMS"
 curl -fLO "$release_url/release.json"
@@ -60,11 +60,11 @@ bash install-private.sh
 
 `wget` can replace each `curl -fLO` command. No GitHub CLI login, GitHub token, or registry
 credential is required. The server image is pulled anonymously from
-`ghcr.io/milvago-ai/milvago-server:1.0.6` using the exact digest recorded in `release.json`.
+`ghcr.io/milvago-ai/milvago-server:1.1.0` using the exact digest recorded in `release.json`.
 
 The release pipeline generates `install-private.sh`, `SHA256SUMS`, and `release.json` together.
 They bind the server version, full commit, image digest, and cosign signature verification to
-that release. `MILVAGO_VERSION`, when set, must equal `1.0.6`; the installer rejects a different
+that release. `MILVAGO_VERSION`, when set, must equal `1.1.0`; the installer rejects a different
 or floating value. It never uses `latest`.
 
 On a first standalone installation only, the installer obtains the public server source pinned to
@@ -131,13 +131,38 @@ sudo-capable installation account that is not in the `docker` group, and keep vo
 specific to its service. This installation does not promise rootless Docker. Docker `userns-remap`
 is not enabled or qualified: test host-network readiness probing and volume ownership before
 enabling it.
-On a later run, a URL already confirmed in the database is preserved. If the supplied or entered
-URL, including a switch between local and public mode, conflicts with it, the installer stops rather
-than silently changing the instance URL. Change the URL in **Administration > Settings**;
+On a later run, leaving `MILVAGO_PUBLIC_URL` unset and pressing Enter (or running without a
+terminal) reuses the URL already confirmed in the database. The new release's verified application
+image replaces the previous application image; the existing checkout, base Compose file, secrets
+and database volume are preserved. A database container removed by `docker compose down` is
+recreated against the configured volume before the stored URL is read. Generated installer Compose
+and gateway files are regenerated.
+An explicit `MILVAGO_PUBLIC_URL=''` still requests localhost. If a supplied or entered URL,
+including a switch between local and public mode, conflicts with the confirmed URL, the installer
+stops rather than silently changing it. An unreadable or incomplete existing database stops the
+update; restore it rather than substituting a new URL. Change the URL in **Administration > Settings**;
 this updates the console redirect and Keycloak through its private API. Already enrolled agents
 retain their prior URL and must be re-enrolled to move.
 
 If the final setup-wizard step returns `502` after an installation made with an earlier installer, rerun the current installer with the same public URL. It repairs the four required Keycloak service-account roles: `manage-clients`, `view-clients`, `manage-identity-providers`, and `view-identity-providers`; it does not grant `realm-admin`. The rerun preserves the database and existing accounts. A `502` can have other causes, so inspect the application and gateway logs when it persists after the rerun.
+
+## Database connection budget
+
+The supplied Compose application URL sets `pool_max_conns=12`, allowing up to 12 runtime
+database connections per application instance. Migration and identity connections are separate.
+Budget the total across all replicas and services against PostgreSQL's `max_connections`.
+
+Running the server with your own `DATABASE_URL`, or replacing the application's environment
+value in a Compose override, retains that URL's parameters. Change its existing `pool_max_conns`
+value when you need a different runtime budget. If the parameter is absent, add `?pool_max_conns=8`,
+or `&pool_max_conns=8` if the URL already has a query string. Smaller limits reduce the number of
+concurrent database requests. A custom URL without this parameter uses PGX's CPU-derived default
+and does not inherit the Compose limit.
+
+The installer preserves an existing checkout and its base `compose.yaml`; it regenerates
+`.local/generated/compose.private.yaml`. An image-only upgrade therefore keeps the base file's
+previous connection budget. Adopt the new value explicitly in the application's database URL
+or a separately applied operator-owned Compose override when upgrading.
 
 ## Build from source
 
@@ -145,7 +170,7 @@ If the final setup-wizard step returns `502` after an installation made with an 
 
 - Docker with Compose v2
 - Node.js 22 (for the local initialization script)
-- Go 1.27.2 only if you want to run the server suite outside the containers
+- Go 1.27.3 only if you want to run the server suite outside the containers
 
 ## 1. Generate a local configuration
 
@@ -199,7 +224,22 @@ application URL uses HTTPS.
 
 ## Endpoint agent and browser extension
 
+The new detection catalogue requires catalog engine `0.7.0` in both the agent and browser
+extension. Upgrade both together before activating this server's catalogue, including when
+the instance retains an older edited catalogue: this server conservatively signs every
+catalogue with that minimum. Agent `0.6.4` cannot apply the new catalogue. Its previous cached
+catalogue expires; an explicit upgrade-required refusal does not preserve detection forever.
+The agent and extension `0.7.44` are prepared in source and still await compatible signed
+packages and release qualification. This server image does not prove that they are installed.
+Do not promote the new public installer until its pinned agent bundle has been replaced with
+the qualified release and its exact verified hashes, signatures and versions.
+
 They live in their own repository. An image built from this source alone serves no extension (`/ext/*` answers `503 extension_unconfigured`) and no installer. The prepared installation script fetches and mounts the signed Community agent bundle separately.
+
+The Linux installation archive and the signed executable update are distinct artifacts. When
+upgrading from 0.6.x, run the full Linux installer to update the relay, updater and discovery
+service as well. A binary update replaces the core agent executable; it does not install or
+upgrade those system services.
 
 ## Running the tests
 

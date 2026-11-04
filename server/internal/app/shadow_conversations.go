@@ -38,6 +38,7 @@ type conversationCursor struct {
 // scanShadow and protectShadow unchanged: hostname aliasing, identity reveal and
 // the blanking of user and file names are not restated here, and cannot drift.
 type ConversationView struct {
+	DLPEvents   int       `json:"dlp_events"`
 	Key         string    `json:"key"`
 	StartedAt   time.Time `json:"started_at"`
 	LastAt      time.Time `json:"last_at"`
@@ -174,7 +175,7 @@ func (a *App) shadowConversations(w http.ResponseWriter, r *http.Request, tx pgx
 	if e := requireIndividual(r); e != nil {
 		return e
 	}
-	f, e := parseShadowFilter(r.URL.Query())
+	f, e := a.requestShadowFilter(r, tx, s)
 	if e != nil {
 		return e
 	}
@@ -191,13 +192,29 @@ func (a *App) shadowConversations(w http.ResponseWriter, r *http.Request, tx pgx
 	// the number under the pager can never describe a different set than the rows.
 	countArgs := append([]any{}, args...)
 	args = append(args, limit+1, offset)
-	groups := conversationKeys("true") + `, keyed AS (SELECT e.id,e.device_id,e.occurred_at,e.kind,e.action,e.model,e.effort,e.session,jsonb_array_length(e.files)>0 AS has_files,k.group_key` + shadowJoins + ` JOIN conversation_keys k ON k.device_id=e.device_id AND k.id=e.id WHERE ` + f.Where + ` AND NOT ` + attachmentOnly("e") + `),
-	g AS (SELECT device_id,group_key,min(occurred_at) AS started_at,max(occurred_at) AS last_at,
+	if _, e = tx.Exec(r.Context(), `SET LOCAL jit=off; SET LOCAL plan_cache_mode=force_custom_plan`); e != nil {
+		return e
+	}
+	keys := legacyConversationPageKeys(f) + `, list_groups AS (
+	 SELECT organization_id,device_id,group_key,max(occurred_at) AS last_at FROM conversation_keys
+	 GROUP BY organization_id,device_id,group_key HAVING count(*) FILTER(WHERE kind IN ('prompt','response'))>0)`
+	countQuery := keys + ` SELECT count(*) FROM list_groups`
+	countProjection, totalColumn := "", ""
+	if cursorWhere == "" {
+		countProjection, totalColumn = ",count(*) OVER() AS total", ",g.total"
+	}
+	keys += ", list_page AS MATERIALIZED (SELECT g.*" + countProjection + " FROM list_groups g" + cursorWhere +
+		fmt.Sprintf(` ORDER BY g.last_at DESC,g.device_id DESC,g.group_key DESC LIMIT $%d OFFSET $%d)`, len(args)-1, len(args)) +
+		`, page_keys AS MATERIALIZED (SELECT k.* FROM conversation_keys k JOIN list_page p
+		 ON p.organization_id=k.organization_id AND p.device_id=k.device_id AND p.group_key=k.group_key)`
+	groups := keys + `, keyed AS (SELECT e.organization_id,e.id,e.device_id,e.occurred_at,e.kind,e.action,e.model,e.effort,e.session,jsonb_array_length(e.files)>0 AS has_files,` + dlpHasEvidenceProjection + ` AS has_dlp,k.group_key FROM page_keys k` + conversationPageEventLookup("k", "id", "occurred_at") + `),
+	g AS (SELECT organization_id,device_id,group_key,min(occurred_at) AS started_at,max(occurred_at) AS last_at,
 		count(*) FILTER (WHERE kind='prompt') AS prompts,
 		count(*) FILTER (WHERE kind='response') AS responses,
 		count(*) FILTER (WHERE kind='navigation') AS navigations,
 		count(*) FILTER (WHERE action='blocked') AS blocked,
 		count(*) FILTER (WHERE action='redirected') AS redirected,
+        count(*) FILTER (WHERE has_dlp) AS dlp_events,
 		-- Attached to the THREAD, not to the last message: an attachment arrives with
 		-- the request, and the thread's last record is most often the response, which
 		-- carries none. Reading files off the last message alone would therefore have
@@ -210,7 +227,7 @@ func (a *App) shadowConversations(w http.ResponseWriter, r *http.Request, tx pgx
 		(array_agg(model ORDER BY occurred_at DESC,id DESC) FILTER (WHERE model<>''))[1] AS model,
 		(array_agg(effort ORDER BY occurred_at DESC,id DESC) FILTER (WHERE effort<>''))[1] AS effort,
 		(array_agg(session ORDER BY occurred_at DESC,id DESC) FILTER (WHERE session<>''))[1] AS session
-		FROM keyed GROUP BY device_id,group_key
+		FROM keyed GROUP BY organization_id,device_id,group_key
 		-- A group carrying no request and no response is a bare navigation: the fact
 		-- that a site was opened, not a conversation. Filtered in the aggregate, not
 		-- after the page, so the keyset cursor still returns full pages. The records
@@ -219,20 +236,24 @@ func (a *App) shadowConversations(w http.ResponseWriter, r *http.Request, tx pgx
 		-- 2026-09-14).
 		HAVING count(*) FILTER (WHERE kind IN ('prompt','response'))>0)
 	`
-	query := groups + `SELECT ` + shadowProjection + `,g.group_key,g.started_at,g.last_at,g.prompts,g.responses,g.navigations,g.blocked,g.redirected,coalesce(g.has_attachment,false),coalesce(g.model,''),coalesce(g.effort,''),coalesce(g.session,'')
-	FROM g JOIN shadow_events e ON e.device_id=g.device_id AND e.id=g.latest
+	groups += `, paged AS MATERIALIZED (SELECT g.*` + strings.ReplaceAll(totalColumn, "g.", "p.") + ` FROM g JOIN list_page p ON p.organization_id=g.organization_id AND p.device_id=g.device_id AND p.group_key=g.group_key)`
+	query := groups + ` SELECT ` + shadowProjection + `,g.group_key,g.started_at,g.last_at,g.prompts,g.responses,g.navigations,g.blocked,g.redirected,coalesce(g.has_attachment,false),coalesce(g.model,''),coalesce(g.effort,''),coalesce(g.session,''),g.dlp_events` + totalColumn + `
+	FROM paged g` + conversationPageEventLookup("g", "latest", "last_at") + `
 	JOIN devices d ON d.organization_id=e.organization_id AND d.id=e.device_id
-	LEFT JOIN collaborators c ON c.organization_id=e.organization_id AND c.id=e.collaborator_id` + cursorWhere +
-		fmt.Sprintf(` ORDER BY g.last_at DESC,g.device_id DESC,g.group_key DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
+	LEFT JOIN collaborators c ON c.organization_id=e.organization_id AND c.id=e.collaborator_id ORDER BY g.last_at DESC,g.device_id DESC,g.group_key DESC`
 	rows, e := tx.Query(r.Context(), query, args...)
 	if e != nil {
 		return e
 	}
 	defer rows.Close()
 	items := []ConversationView{}
+	var total int64
 	for rows.Next() {
 		var v ConversationView
-		dest := append(shadowDest(&v.Latest), &v.Key, &v.StartedAt, &v.LastAt, &v.Prompts, &v.Responses, &v.Navigations, &v.Blocked, &v.Redirected, &v.HasAttachment, &v.Model, &v.Effort, &v.Session)
+		dest := append(shadowDest(&v.Latest), &v.Key, &v.StartedAt, &v.LastAt, &v.Prompts, &v.Responses, &v.Navigations, &v.Blocked, &v.Redirected, &v.HasAttachment, &v.Model, &v.Effort, &v.Session, &v.DLPEvents)
+		if cursorWhere == "" {
+			dest = append(dest, &total)
+		}
 		if e = rows.Scan(dest...); e != nil {
 			return e
 		}
@@ -256,15 +277,13 @@ func (a *App) shadowConversations(w http.ResponseWriter, r *http.Request, tx pgx
 		}
 	}
 	body := map[string]any{"items": items, "next_cursor": next}
-	// How many conversations the filter matches, so the console can offer the pages
-	// that exist. Counted separately rather than as a window over the page: a page
-	// past the end returns no row, and a total carried on the rows would come back
-	// as zero exactly when the reader needs it to step back. A cursor names no
-	// position in a whole, so it is not answered with one.
+	// An empty offset page has no row carrying the exact window count. Its
+	// fallback counts only compact keys, without loading any event metadata.
 	if cursorWhere == "" {
-		var total int64
-		if e = tx.QueryRow(r.Context(), groups+`SELECT count(*) FROM g`, countArgs...).Scan(&total); e != nil {
-			return e
+		if len(items) == 0 {
+			if e = tx.QueryRow(r.Context(), countQuery, countArgs...).Scan(&total); e != nil {
+				return e
+			}
 		}
 		body["total"] = total
 	}
