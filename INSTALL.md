@@ -89,9 +89,9 @@ missing prerequisites require an unsupported package manager, the installer stop
 error; it does not claim support for every distribution or version.
 
 The base image contains the server and console only. The installer also downloads the pinned
-Community `0.6.4` Windows and Linux agent bundle anonymously from its public release, verifies its
-SHA-256, Ed25519 signatures, and manifest expiration (the prepared manifests are valid through 2027-09-29), then mounts the verified files read-only so the console can provide
-agent downloads. Version `0.6.4` is shared by the agent and browser extension in both editions.
+Community `0.7.44` Windows and Linux agent bundle anonymously from its public release, verifies its
+SHA-256, Ed25519 signatures, and manifest expiration, then mounts the verified files read-only so the console can provide
+agent downloads. Version `0.7.44` is shared by the Community agent and browser extension.
 The console delivers one Windows ZIP containing the immutable MSI, its matching script, an
 organization provisioning JSON and an installation `README.md`. The Windows MSI has no
 Authenticode publisher signature yet. The base image does not host a browser extension. Before a
@@ -131,7 +131,24 @@ sudo-capable installation account that is not in the `docker` group, and keep vo
 specific to its service. This installation does not promise rootless Docker. Docker `userns-remap`
 is not enabled or qualified: test host-network readiness probing and volume ownership before
 enabling it.
-On a later run, leaving `MILVAGO_PUBLIC_URL` unset and pressing Enter (or running without a
+
+## Updating an existing installation
+
+Back up the existing database and `.env`, then rerun the public installer with the Linux
+account used for the original installation:
+
+```bash
+curl -fsSL https://get.milvago.ai | bash
+```
+
+The default directory is `~/milvago-community`. For an installation in a custom directory,
+use its existing absolute path:
+
+```bash
+curl -fsSL https://get.milvago.ai | MILVAGO_DIR='/absolute/path/to/milvago-community' bash
+```
+
+Leaving `MILVAGO_PUBLIC_URL` unset and pressing Enter (or running without a
 terminal) reuses the URL already confirmed in the database. The new release's verified application
 image replaces the previous application image; the existing checkout, base Compose file, secrets
 and database volume are preserved. A database container removed by `docker compose down` is
@@ -229,10 +246,11 @@ extension. Upgrade both together before activating this server's catalogue, incl
 the instance retains an older edited catalogue: this server conservatively signs every
 catalogue with that minimum. Agent `0.6.4` cannot apply the new catalogue. Its previous cached
 catalogue expires; an explicit upgrade-required refusal does not preserve detection forever.
-The agent and extension `0.7.44` are prepared in source and still await compatible signed
-packages and release qualification. This server image does not prove that they are installed.
-Do not promote the new public installer until its pinned agent bundle has been replaced with
-the qualified release and its exact verified hashes, signatures and versions.
+The compatible signed Community agent and extension `0.7.44` are available in the
+[public agent release](https://github.com/Milvago-AI/milvago-agent/releases/tag/community-agent-v0.7.44)
+and are included in the bundle pinned by the public server installer. Deploy the compatible
+agent and extension together on managed devices; updating the server alone does not prove
+that those devices have been upgraded.
 
 They live in their own repository. An image built from this source alone serves no extension (`/ext/*` answers `503 extension_unconfigured`) and no installer. The prepared installation script fetches and mounts the signed Community agent bundle separately.
 

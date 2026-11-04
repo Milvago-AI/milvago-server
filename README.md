@@ -129,6 +129,27 @@ Configure and test a real SMTP server for invitations and password-reset email;
 Mailpit is disabled by default. See [INSTALL.md](INSTALL.md) for prerequisites,
 checksum verification, upgrades and building from source.
 
+### Update an existing installation
+
+Run the same command again with the Linux account used for the original installation:
+
+```bash
+curl -fsSL https://get.milvago.ai | bash
+```
+
+The default installation is in `~/milvago-community`. If you chose another directory,
+point the installer to that existing installation:
+
+```bash
+curl -fsSL https://get.milvago.ai | MILVAGO_DIR='/absolute/path/to/milvago-community' bash
+```
+
+The installer updates the application image while preserving the database, accounts,
+secrets and local configuration. Leave `MILVAGO_PUBLIC_URL` unset to reuse the URL already
+confirmed by the instance; a conflicting URL stops the update. Back up the database and
+`.env` before updating. See [Updating an existing installation](INSTALL.md#updating-an-existing-installation)
+for details.
+
 ## Community and Enterprise
 
 Community is free, open source and complete for a single organization. Without a licence it

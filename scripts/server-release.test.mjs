@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { releaseVersion, releaseImage, newerVersion, renderInstaller, unpublishedWorkflowRecovery } from './server-release.mjs';
+import { releaseVersion, releaseImage, newerVersion, renderInstaller, unpublishedWorkflowRecovery, requiresRelease } from './server-release.mjs';
 
 test('release versions exclude floating tags and ambiguous versions', () => {
   assert.equal(releaseVersion('1.0.0\n'),'1.0.0');
@@ -38,4 +38,14 @@ test('generated installers bind a version to a source commit and digest', () => 
   assert.throws(()=>renderInstaller(template,'1.1.0',sha,digest));
   assert.throws(()=>renderInstaller(template,'1.0.0',sha,'latest'));
   assert.throws(()=>renderInstaller(template+'@IMAGE@','1.0.0',sha,digest));
+});
+
+test('documentation and publication checks do not replace an immutable runtime release', () => {
+  const documentation=['README.md','INSTALL.md'];
+  assert.equal(requiresRelease(documentation),false);
+  assert.equal(requiresRelease([...documentation,'.github/workflows/ci.yml','scripts/server-release.mjs','scripts/server-release.test.mjs']),false);
+  assert.equal(requiresRelease([]),false);
+  for(const path of ['VERSION','install-private.sh','deploy/Dockerfile','.github/workflows/ghcr.yml','compose.yaml','licenses/NOTICE','server/internal/app/auth.go','console/src/main.tsx','README.md.bak','unknown']) {
+    assert.equal(requiresRelease([...documentation,path]),true);
+  }
 });
