@@ -31,6 +31,12 @@ export function unpublishedWorkflowRecovery(next, previous, tagged, paths) {
   return next === previous && !tagged && paths.length > 0 && paths.every(path => allowed.has(path));
 }
 
+export function requiresRelease(paths) {
+  // These files do not enter the runtime image or the published installer.
+  const publicationOnly = new Set(['README.md', 'INSTALL.md', '.github/workflows/ci.yml', 'scripts/server-release.mjs', 'scripts/server-release.test.mjs']);
+  return paths.some(path => !publicationOnly.has(path));
+}
+
 export function renderInstaller(template, version, revision, digest) {
   const image = releaseImage('main', version, revision);
   if (!/^sha256:[a-f0-9]{64}$/.test(digest)) throw new Error('Expected an immutable image digest.');
@@ -45,9 +51,25 @@ export function renderInstaller(template, version, revision, digest) {
 const gitExecutable = process.platform === 'win32' ? 'C:/Program Files/Git/cmd/git.exe' : '/usr/bin/git';
 const git = (...args) => execFileSync(gitExecutable, args, { encoding:'utf8', stdio:['ignore','pipe','pipe'] }).trim();
 
+function releaseRequired() {
+  let base;
+  if (process.env.GITHUB_BASE_REF === 'main') base = 'origin/main';
+  else if (process.env.GITHUB_EVENT_PATH) {
+    const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH,'utf8'));
+    if (/^[a-f0-9]{40}$/.test(event.before) && event.before !== '0'.repeat(40)) base = event.before;
+  }
+  // An unknown baseline must never suppress a release or its version checks.
+  if (!base) return true;
+  return requiresRelease(git('diff','--name-only','--no-renames',base,'HEAD').split('\n').filter(Boolean));
+}
+
 function check() {
   const version = releaseVersion(readFileSync('VERSION','utf8'));
   renderInstaller(readFileSync('install-private.sh','utf8'), version, 'a'.repeat(40), 'sha256:'+'b'.repeat(64));
+  if (!releaseRequired()) {
+    console.log('Publication-only change: retain the existing immutable release.');
+    return;
+  }
   const production = process.env.GITHUB_REF === 'refs/heads/main';
   if (production || process.env.GITHUB_BASE_REF === 'main') {
     const base = production ? 'HEAD^1' : 'origin/main';
@@ -103,7 +125,8 @@ function render() {
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const command = process.argv[2];
   if (command === 'check') check();
+  else if (command === 'scope') appendFileSync(process.env.GITHUB_OUTPUT,`release_required=${releaseRequired()}\n`);
   else if (command === 'metadata') await metadata();
   else if (command === 'render') render();
-  else throw new Error('Expected check, metadata or render.');
+  else throw new Error('Expected check, scope, metadata or render.');
 }

@@ -17,6 +17,8 @@ concurrency:
 jobs:
   release-policy:
     runs-on: ubuntu-24.04
+    outputs:
+      release_required: ${{ steps.scope.outputs.release_required }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -25,6 +27,9 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '26.13.0'
+      - name: Determine publication scope
+        id: scope
+        run: node scripts/server-release.mjs scope
       - run: node --test scripts/server-release.test.mjs scripts/installer-url.test.mjs scripts/installer-docker.test.mjs scripts/check-public-installer.test.mjs
       - run: node scripts/server-release.mjs check
       - run: node scripts/check-production-installer.mjs
@@ -32,7 +37,7 @@ jobs:
 
   dev-image:
     needs: [release-policy, distroless, console, server]
-    if: github.event_name == 'push' && github.repository == 'Milvago-AI/milvago-server' && github.ref == 'refs/heads/dev'
+    if: needs.release-policy.outputs.release_required == 'true' && github.event_name == 'push' && github.repository == 'Milvago-AI/milvago-server' && github.ref == 'refs/heads/dev'
     permissions:
       contents: read
       packages: write
@@ -41,7 +46,7 @@ jobs:
 
   release-image:
     needs: [release-policy, distroless, console, server]
-    if: github.event_name == 'push' && github.repository == 'Milvago-AI/milvago-server' && github.ref == 'refs/heads/main'
+    if: needs.release-policy.outputs.release_required == 'true' && github.event_name == 'push' && github.repository == 'Milvago-AI/milvago-server' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
       packages: write
