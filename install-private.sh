@@ -589,31 +589,37 @@ import { join } from 'node:path';
 
 const root = '/work';
 const target = join(root, '.local/installers');
-const expectedArchive = 'e11f973424549d3134cbb08d9f2a13d7a4b39d5ef08118872490f6c4f2fb5b4c';
+const expectedArchive = '045fa04d5019b9b4d999ea37f4157c3fb1a60720fb4f4b4721cfe8a7b420d6d6';
+const expectedArchiveSize = 27613801;
 const expected = {
   "windows": {
-    "name": "milvago-community-0.6.4-windows.msi",
-    "size": 5853184,
-    "sha256": "038837590789d6fd8975e14ff1e4feec7f8659f09ee93e9e4e9ba90fdcf9965b",
+    "name": "milvago-community-0.7.44-windows.msi",
+    "size": 11325440,
+    "sha256": "60884a56b6b98a913c921ed5d59903cd1376e98eb0f8815e97c32e782012f248",
     "format": "msi",
     "script": {
-      "name": "milvago-community-0.6.4-windows-install.ps1",
-      "size": 3455,
-      "sha256": "67d056e3ce6867612f3b3840dd3183e274c3a4d5a2ebbaf414640cb91cd21319"
+      "name": "milvago-community-0.7.44-windows-install.ps1",
+      "size": 4192,
+      "sha256": "2e895526597dfd78013b4b106c773fac1e5cc4814335bd1ad004eb4787a1f3cb"
     }
   },
   "linux": {
-    "name": "milvago-community-0.6.4-linux.tar.gz",
-    "size": 5564626,
-    "sha256": "51dda463ea30f3049819ed1b656cbee7a059f0019210dbe6aad73462c51a41ea",
-    "format": "binary"
+    "name": "milvago-community-0.7.44-linux.tar.gz",
+    "size": 11880195,
+    "sha256": "d7472eb4c5297a2c21840397864c8096c17ae1a05d8bd05f8b1d15c559c90891",
+    "format": "binary",
+    "update": {
+      "name": "milvago-community-0.7.44-linux",
+      "size": 12511800,
+      "sha256": "3ef60a966ce95448fa2d6bb9d9958d0258d6c40d3de8a714a3a6257243977ead"
+    }
   }
 };
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const requireValue = (condition, message) => { if (!condition) throw Error(message); };
 let stage;
 try {
-  const response = await fetch('https://github.com/Milvago-AI/milvago-agent/releases/download/community-agent-v0.6.4/community-agent-v0.6.4.tar.gz', {
+  const response = await fetch('https://github.com/Milvago-AI/milvago-agent/releases/download/community-agent-v0.7.44/community-agent-v0.7.44.tar.gz', {
     redirect: 'manual',
   });
   let archiveResponse = response;
@@ -625,7 +631,7 @@ try {
   }
   requireValue(archiveResponse.ok, 'Community agent release returned HTTP ' + archiveResponse.status);
   const archive = Buffer.from(await archiveResponse.arrayBuffer());
-  requireValue(archive.length < 32 * 1024 * 1024 && digest(archive) === expectedArchive,
+  requireValue(archive.length === expectedArchiveSize && archive.length < 32 * 1024 * 1024 && digest(archive) === expectedArchive,
     'Community agent archive digest does not match the pinned release');
   stage = mkdtempSync(join(root, '.local/generated/agent-release-'));
   const archivePath = join(stage, 'release.tar.gz');
@@ -636,7 +642,8 @@ try {
   requireValue(tar.status === 0, 'Community agent archive could not be extracted');
   const files = readdirSync(unpacked).sort();
   const wanted = ['community-linux-update.json', 'community-linux.json', 'community-windows-update.json',
-    'community-windows.json', expected.linux.name, expected.windows.name, expected.windows.script.name, 'release-public-key.txt'].sort();
+    'community-windows.json', expected.linux.name, expected.linux.update.name, expected.windows.name,
+    expected.windows.script.name, 'release-public-key.txt'].sort();
   requireValue(JSON.stringify(files) === JSON.stringify(wanted), 'Community agent archive contains unexpected files');
   const publicKey = readFileSync(join(unpacked, 'release-public-key.txt'), 'utf8').trim();
   requireValue(publicKey === process.env.MILVAGO_UPDATE_PUBLIC_KEY, 'Community update key differs from the pinned key');
@@ -646,17 +653,22 @@ try {
   });
   for (const [platform, item] of Object.entries(expected)) {
     const artifact = readFileSync(join(unpacked, item.name));
+    const updateItem = item.update ?? item;
+    const updateArtifact = readFileSync(join(unpacked, updateItem.name));
     const manifest = JSON.parse(readFileSync(join(unpacked, 'community-' + platform + '.json'), 'utf8'));
     const envelope = JSON.parse(readFileSync(join(unpacked, 'community-' + platform + '-update.json'), 'utf8'));
     const payload = Buffer.from(envelope.payload, 'base64');
     const release = JSON.parse(payload);
     requireValue(artifact.length === item.size && digest(artifact) === item.sha256 &&
-      manifest.version === '0.6.4' && manifest.artifact === item.name &&
+      manifest.version === '0.7.44' && manifest.artifact === item.name &&
       manifest.size === item.size && manifest.sha256 === item.sha256,
       'Community ' + platform + ' artifact verification failed');
     requireValue(verify(null, payload, key, Buffer.from(envelope.signature, 'base64')) &&
-      release.version === '0.6.4' && release.edition === 'community' && release.platform === platform &&
-      release.format === item.format && release.sha256 === item.sha256 && release.size === item.size &&
+      release.version === '0.7.44' && release.edition === 'community' && release.platform === platform &&
+      release.protocol === 2 && release.format === item.format &&
+      release.sha256 === updateItem.sha256 && release.size === updateItem.size &&
+      release.artifact === '/v2/update/artifact/' + updateItem.sha256 &&
+      updateArtifact.length === updateItem.size && digest(updateArtifact) === updateItem.sha256 &&
       Date.parse(release.expires_at) > Date.now(),
       'Community ' + platform + ' update signature or release has expired');
   }
@@ -678,7 +690,7 @@ try {
     chmodSync(next, 0o644);
     renameSync(next, join(target, name));
   }
-  console.log('Verified Community agent 0.6.4 for Windows and Linux.');
+  console.log('Verified Community agent 0.7.44 for Windows and Linux.');
 } catch (error) {
   console.error('Error: ' + error.message);
   process.exitCode = 1;
