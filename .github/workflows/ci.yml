@@ -25,7 +25,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '26.13.0'
-      - run: node --test scripts/server-release.test.mjs scripts/installer-url.test.mjs scripts/installer-docker.test.mjs
+      - run: node --test scripts/server-release.test.mjs scripts/installer-url.test.mjs scripts/installer-docker.test.mjs scripts/check-public-installer.test.mjs
       - run: node scripts/server-release.mjs check
       - run: node scripts/check-production-installer.mjs
       - run: node scripts/check-production-installer.mjs --localhost

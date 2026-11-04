@@ -1,0 +1,48 @@
+name: Qualify published Community installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published Community server version to qualify (1.1.0 only)
+        required: true
+        default: '1.1.0'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-installer-qualification-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    if: github.repository == 'Milvago-AI/milvago-server' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [fresh, upgrade105]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26.13.0'
+      - name: Exercise exact published installer bytes
+        env:
+          CHECK_PUBLIC_INSTALLER_VERSION: ${{ inputs.version }}
+          CHECK_PUBLIC_INSTALLER_SCENARIO: ${{ matrix.scenario }}
+        run: node scripts/check-public-installer.mjs
+      - name: Retain only safe qualification proof
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: public-installer-${{ matrix.scenario }}-${{ github.run_id }}
+          path: public-installer-proof/proof.json
+          if-no-files-found: error
+          retention-days: 14
+          include-hidden-files: false
