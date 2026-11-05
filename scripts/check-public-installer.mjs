@@ -10,12 +10,12 @@ const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 const requireValue=(condition,code)=>{if(!condition)throw Error(code);};
 
 export function qualificationVersion(value){
- requireValue(value==='1.1.0','unsupported_qualification_version');
+ requireValue(value==='1.1.1','unsupported_qualification_version');
  return value;
 }
 
 export function verifyPublicRelease(version,installer,metadata,sums){
- requireValue(version==='1.1.0'||version==='1.0.5','unsupported_asset_version');
+ requireValue(version==='1.1.1'||version==='1.0.5','unsupported_asset_version');
  const lines=sums.toString('utf8').trimEnd().split('\n');
  requireValue(lines.length===2,'invalid_checksum_list');
  const listed=new Map();

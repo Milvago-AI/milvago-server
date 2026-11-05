@@ -33,7 +33,8 @@ export function unpublishedWorkflowRecovery(next, previous, tagged, paths) {
 
 export function requiresRelease(paths) {
   // These files do not enter the runtime image or the published installer.
-  const publicationOnly = new Set(['README.md', 'INSTALL.md', '.github/workflows/ci.yml', 'scripts/server-release.mjs', 'scripts/server-release.test.mjs']);
+  const publicationOnly = new Set(['README.md', 'INSTALL.md', '.github/workflows/ci.yml', 'scripts/server-release.mjs', 'scripts/server-release.test.mjs',
+    '.github/workflows/public-installer-qualification.yml', 'scripts/check-public-installer.mjs', 'scripts/check-public-installer.test.mjs']);
   return paths.some(path => !publicationOnly.has(path));
 }
 
