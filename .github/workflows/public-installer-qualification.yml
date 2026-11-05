@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Published Community server version to qualify (1.1.0 only)
+        description: Published Community server version to qualify (1.1.1 only)
         required: true
-        default: '1.1.0'
+        default: '1.1.1'
         type: string
 
 permissions:

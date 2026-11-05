@@ -43,7 +43,8 @@ test('generated installers bind a version to a source commit and digest', () => 
 test('documentation and publication checks do not replace an immutable runtime release', () => {
   const documentation=['README.md','INSTALL.md'];
   assert.equal(requiresRelease(documentation),false);
-  assert.equal(requiresRelease([...documentation,'.github/workflows/ci.yml','scripts/server-release.mjs','scripts/server-release.test.mjs']),false);
+  assert.equal(requiresRelease([...documentation,'.github/workflows/ci.yml','scripts/server-release.mjs','scripts/server-release.test.mjs',
+    '.github/workflows/public-installer-qualification.yml','scripts/check-public-installer.mjs','scripts/check-public-installer.test.mjs']),false);
   assert.equal(requiresRelease([]),false);
   for(const path of ['VERSION','install-private.sh','deploy/Dockerfile','.github/workflows/ghcr.yml','compose.yaml','licenses/NOTICE','server/internal/app/auth.go','console/src/main.tsx','README.md.bak','unknown']) {
     assert.equal(requiresRelease([...documentation,path]),true);
