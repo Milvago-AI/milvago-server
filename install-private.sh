@@ -4,7 +4,7 @@
 main() {
 set -euo pipefail
 
-MILVAGO_RELEASE_VERSION='1.1.0'
+MILVAGO_RELEASE_VERSION='1.1.1'
 SOURCE_COMMIT='@SOURCE_COMMIT@'
 IMAGE='@IMAGE@'
 
@@ -397,8 +397,11 @@ read_stored_public_origin() {
   local existing_database=$1 ready=0 schema_state origin_row attempt
   [[ -n "$existing_database" ]] || fail 'The database container must be identified before reading its configuration.'
   run_docker start "$existing_database" >/dev/null || fail 'The existing database could not start.'
-  for attempt in {1..30}; do
-    if run_docker exec "$existing_database" pg_isready -U postgres >/dev/null 2>&1; then ready=1; break; fi
+  # First boot: the image entrypoint runs initdb and the init scripts (which create the
+  # milvago database) on a socket-only temporary server. Probe TCP so only the final
+  # server counts as ready.
+  for attempt in {1..90}; do
+    if run_docker exec "$existing_database" pg_isready -h 127.0.0.1 -U postgres -d milvago >/dev/null 2>&1; then ready=1; break; fi
     sleep 1
   done
   (( ready )) || fail 'The existing database did not become ready; its configuration was not read.'
