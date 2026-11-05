@@ -176,3 +176,8 @@ for(const options of [{inspectStatus:1},{initial:'',createStatus:1},{initial:'',
   const r=resolveDatabase(options);assert.notEqual(r.status,0);assert.ok(!r.stdout.includes('RESULT='));
  });
 }
+test('existing database readiness waits for the final TCP server, not the init-time socket server',()=>{
+ // The image entrypoint creates the milvago database on a socket-only temporary server.
+ assert.match(source,/pg_isready -h 127\.0\.0\.1 -U postgres -d milvago/);
+ assert.doesNotMatch(source,/pg_isready -U postgres >/);
+});
