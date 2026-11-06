@@ -36,7 +36,7 @@ services:
     ports:
       - "127.0.0.1:${MILVAGO_MAIL_PORT:-4081}:8025"
   identity:
-    image: quay.io/keycloak/keycloak:26.8.1@sha256:a78d6b79572168cb25886b80a8b5b8d4ed4390743e3eecb810538683e209dd6b
+    image: quay.io/keycloak/keycloak:26.8.2@sha256:3879c623248408de29a5303178b5816c77e8dfef3890c361f8c0bbeaa979ba3b
     command: [start, --import-realm]
     security_opt: [no-new-privileges:true]
     environment:
