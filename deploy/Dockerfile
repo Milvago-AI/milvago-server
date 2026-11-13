@@ -19,7 +19,7 @@ COPY --from=dlp /build/dlp-engine/target/wasm32-unknown-unknown/release/milvago_
 COPY --from=discovery /build/discovery-engine/target/wasm32-unknown-unknown/release/milvago_discovery_engine.wasm public/discovery_engine.wasm
 COPY deploy/theme/milvago/login/resources/js/milvago.js /build/deploy/theme/milvago/login/resources/js/milvago.js
 RUN npm test && npm run build
-FROM golang:1.27.3-trixie@sha256:c65ecfe613b539ac74c62a4c3b2c27e8f8a6076384c8f27e8a3c0f3be17cc385 AS api
+FROM golang:1.27.4-trixie@sha256:b54b2639de8c1bfe538ec5ffc45f29b1932235ac5f6d63c059853646677112d9 AS api
 WORKDIR /build/server
 COPY server/go.mod server/go.sum ./
 RUN go mod download
