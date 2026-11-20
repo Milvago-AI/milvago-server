@@ -9,7 +9,7 @@ WORKDIR /build/discovery-engine
 COPY discovery-engine/ ./
 RUN cargo test --locked && cargo build --release --locked --target wasm32-unknown-unknown
 
-FROM node:26.13.0-trixie-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS ui
+FROM node:26.13.1-trixie-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc AS ui
 WORKDIR /build/console
 RUN node -e 'if (process.versions.node !== "26.13.0") process.exit(1)'
 COPY console/package*.json ./
